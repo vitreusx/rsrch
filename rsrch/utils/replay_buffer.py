@@ -1,10 +1,10 @@
 import torch
 import torch.nn as nn
-from dataclasses import dataclass
+from typing import NamedTuple
+import abc
 
 
-@dataclass
-class TransitionBatch:
+class TransitionBatch(NamedTuple):
     obs: torch.Tensor
     act: torch.Tensor
     next_obs: torch.Tensor
