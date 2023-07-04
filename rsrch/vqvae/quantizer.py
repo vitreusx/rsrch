@@ -12,6 +12,7 @@ class Quantize(torch.autograd.Function):
         assert x.shape[-1] == E.shape[-1]
         layout, vector_dim = x.shape[:-1], x.shape[-1]
         x = x.reshape(-1, vector_dim)  # [N, D]
+        # |x-e_i|^2 = <x-e_i,x-e_i>=<x,x>-2<x,e_i>+<e_i,e_i>
         dists = -2 * (x @ E.T) + (E**2).sum(0).unsqueeze(0)  # [N, V]
         idxes = dists.argmin(1)  # [N,]
         values = E[idxes].reshape(*layout, vector_dim)

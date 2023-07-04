@@ -3,7 +3,7 @@ set -o errexit
 
 # Recreate conda-lock.yml file
 rm conda-lock.yml
-conda-lock --conda mamba
+conda-lock --mamba
 
 # We need to get the python packages installed by conda, and add them
 # to pyproject.toml. The reason being: otherwise, Poetry doesn't take
@@ -15,7 +15,7 @@ ENV_DIR="$(mktemp -d)"
 conda-lock install -p "${ENV_DIR}" --mamba conda-lock.yml
 conda activate "${ENV_DIR}"
 find $CONDA_PREFIX -name direct_url.json -delete
-python scripts/_fetch_env_vars.py | xargs conda env config vars set
+$(python scripts/_fetch_vars.py)
 conda activate ./env
 
 # Fetch the packages, see which ones can be added by poetry, and

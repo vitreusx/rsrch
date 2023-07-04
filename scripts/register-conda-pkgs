@@ -17,7 +17,7 @@ ENV_DIR="$(mktemp -d)"
 conda-lock install -p "${ENV_DIR}" --mamba conda-lock.yml
 conda activate "${ENV_DIR}"
 find $CONDA_PREFIX -name direct_url.json -delete
-python scripts/_fetch_env_vars.py | xargs conda env config vars set
+$(python scripts/_fetch_vars.py)
 conda activate ./env
 
 pip freeze |\

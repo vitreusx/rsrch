@@ -1,3 +1,4 @@
+name: rsrch
 channels:
   - conda-forge
   - nodefaults

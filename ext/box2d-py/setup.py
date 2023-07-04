@@ -195,6 +195,7 @@ setup_dict = dict(
                         },
     ext_modules      = [ pybox2d_extension ],
     cmdclass         = {'install': PostInstallHook},
+    setup_requires   = ["swig==4.1.1"],
 
 #   use_2to3         = (sys.version_info >= (3,)),
     )
