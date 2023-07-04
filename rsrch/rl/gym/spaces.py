@@ -1,3 +1,4 @@
+import typing
 from typing import SupportsFloat
 
 import numpy as np
@@ -7,7 +8,57 @@ from gymnasium.spaces import *
 from torch import Tensor
 
 
-class TensorBox(Space[Tensor]):
+class TensorSpace(Space[Tensor]):
+    def __init__(
+        self,
+        shape: typing.Sequence[int] | torch.Size | None = None,
+        dtype: torch.dtype | None = None,
+        device: torch.device | None = None,
+        seed: int | torch.Generator | None = None,
+    ):
+        super().__init__()
+        self._shape = None if shape is None else torch.Size(shape)
+        self.dtype = dtype
+        self.device = device
+
+        if isinstance(seed, (int, type(None))):
+            self._seed = seed
+            self._gen = None
+        elif isinstance(seed, torch.Generator):
+            self._seed = None
+            self._gen = seed
+
+    @property
+    def shape(self) -> torch.Size:
+        return self._shape
+
+    @property
+    def gen(self) -> torch.Generator:
+        if self._gen is None:
+            self._gen = torch.Generator(self.device)
+            if self._seed is not None:
+                self._gen = self._gen.manual_seed(self._seed)
+        return self._gen
+
+    def __getstate__(self):
+        state = dict(self.__dict__)
+        if state["_gen"] is not None:
+            # torch.Generator objects are not pickleable - save state
+            state["_gen_state"] = state["_gen"].get_state()
+            del state["_gen"]
+        return state
+
+    def __setstate__(self, state):
+        state = dict(state)
+        if "_gen_state" in state:
+            # Recover torch.Generator from saved state
+            device = state["device"]
+            gen = torch.Generator(device).set_state(state["_gen_state"])
+            state["_gen"] = gen
+        self.__dict__.update(state)
+
+
+class TensorBox(TensorSpace):
     def __init__(
         self,
         low: SupportsFloat | Tensor,
@@ -17,61 +68,53 @@ class TensorBox(Space[Tensor]):
         dtype: torch.dtype | None = None,
         seed: int | torch.Generator | None = None,
     ):
-        super().__init__()
-
-        self._shape: torch.Size
         if shape is not None:
-            self._shape = torch.Size(shape)
+            shape = torch.Size(shape)
         elif isinstance(low, Tensor):
-            self._shape = low.shape
+            shape = low.shape
         elif isinstance(high, Tensor):
-            self._shape = high.shape
+            shape = high.shape
         elif isinstance(low, SupportsFloat) and isinstance(high, SupportsFloat):
-            self._shape = torch.Size([1])
+            shape = torch.Size([1])
         else:
             raise ValueError(f"Invalid shape {shape}.")
 
         if isinstance(low, Tensor):
-            self.low = low
+            ...
         elif isinstance(low, SupportsFloat):
-            self.low = torch.full(self.shape, low, dtype=dtype, device=device)
+            low = torch.full(shape, low, dtype=dtype, device=device)
         else:
             raise ValueError(
                 f"low must be either Tensor or a float-like, is {type(low)}"
             )
-        assert self.low.shape == self.shape
+        assert low.shape == shape
 
         if isinstance(high, Tensor):
-            self.high = high
+            ...
         elif isinstance(high, SupportsFloat):
-            self.high = torch.full(self.shape, high, dtype=dtype, device=device)
+            high = torch.full(shape, high, dtype=dtype, device=device)
         else:
             raise ValueError(
                 f"high must be either Tensor or a float-like, is {type(high)}"
             )
-        assert self.high.shape == self.shape
+        assert high.shape == shape
 
-        self.dtype = dtype if dtype is not None else self.low.dtype
-        assert self.low.dtype == self.dtype
-        assert self.high.dtype == self.dtype
+        dtype = dtype if dtype is not None else low.dtype
+        assert low.dtype == dtype
+        assert high.dtype == dtype
 
-        self.device = torch.device(device) if device is not None else self.low.device
-        assert self.low.device == self.device
-        assert self.high.device == self.device
+        device = torch.device(device) if device is not None else low.device
+        assert low.device == device
+        assert high.device == device
 
-        if isinstance(seed, int):
-            self.gen = torch.Generator(self.device)
-            self.gen.manual_seed(seed)
-        elif isinstance(seed, torch.Generator):
-            self.gen = seed
-            assert self.gen.device == self.device
-        else:
-            self.gen = torch.Generator(self.device)
+        super().__init__(shape, dtype, device, seed)
+        self.low = low
+        self.high = high
 
         self.bounded_below = -torch.inf < self.low
         self.bounded_above = torch.inf > self.high
 
-        self.sample_dt = self.dtype if self.dtype.is_floating_point else torch.float32
+        self.sample_dt = dtype if self.dtype.is_floating_point else torch.float32
         self.eps = torch.finfo(self.sample_dt).tiny
 
         self._low_repr = self._short_repr(self.low)
@@ -140,14 +183,11 @@ class TensorBox(Space[Tensor]):
         sample = sample.to(dtype=self.dtype)
         return sample
 
-    def seed(self, seed: int | None = None) -> list[int]:
-        raise NotImplementedError
-
     def __repr__(self) -> str:
         return f"TensorBox({self._low_repr}, {self._high_repr}, {tuple(self.shape)}, {self.dtype})"
 
 
-class TensorDiscrete(Space[Tensor]):
+class TensorDiscrete(TensorSpace):
     def __init__(
         self,
         n: int,
@@ -155,22 +195,8 @@ class TensorDiscrete(Space[Tensor]):
         seed: int | torch.Generator | None = None,
         start: int = 0,
     ):
-        super().__init__()
+        super().__init__(shape=[], dtype=torch.int32, device=device, seed=seed)
         self.n, self.start = n, start
-
-        self.device = torch.device(device if device is not None else "cpu")
-
-        if isinstance(seed, int):
-            self.gen = torch.Generator(self.device)
-            self.gen.manual_seed(seed)
-        elif isinstance(seed, torch.Generator):
-            self.gen = seed
-            assert self.gen.device == self.device
-        else:
-            self.gen = torch.Generator(self.device)
-
-        self.dtype = torch.int32
-        self._shape = torch.Size([])
 
     @staticmethod
     def from_numpy(space: Discrete, device: torch.device = None):

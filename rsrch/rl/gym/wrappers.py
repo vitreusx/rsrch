@@ -1,9 +1,10 @@
 import torch
-from gymnasium.wrappers import *
+from gymnasium.wrappers import *  # pylint: disable=wildcat-import
 from torch import Tensor
 
 from rsrch.rl import gym
-from rsrch.rl.data import EpisodeBuffer, Step, StepBuffer
+from rsrch.rl.data.seq import SeqBuffer
+from rsrch.rl.data.step import Step, StepBuffer
 
 
 class CollectSteps(gym.Wrapper):
@@ -25,7 +26,7 @@ class CollectSteps(gym.Wrapper):
 
 
 class CollectEpisodes(gym.Wrapper):
-    def __init__(self, env: gym.Env, buffer: EpisodeBuffer):
+    def __init__(self, env: gym.Env, buffer: SeqBuffer):
         super().__init__(env)
         self._buffer = buffer
 

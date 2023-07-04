@@ -4,8 +4,8 @@ from typing import Optional
 
 import numpy as np
 
+from rsrch.rl import gym
 from rsrch.rl.spec import EnvSpec
-from rsrch.rl.wrappers import ToTensor
 
 from . import *
 
@@ -18,7 +18,7 @@ class Data_v0(Data):
 
     def val_env(self, device: torch.device = None) -> gym.Env:
         env = gym.make(self.name, render_mode="rgb_array")
-        env = ToTensor(env, device=device)
+        env = gym.wrappers.ToTensor(env, device=device)
         env.reset(seed=self.seed)
         return env
 

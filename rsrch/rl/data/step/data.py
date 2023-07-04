@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import typing
 from dataclasses import dataclass
-from typing import Any, Generic, List, TypeVar
+from typing import Generic, SupportsFloat, TypeVar
 
 import torch
 from torch import Tensor
 
-ObsType, ActType = TypeVar("ObsType"), TypeVar("ActType")
+ObsType = TypeVar("ObsType")
+ActType = TypeVar("ActType")
 
 
 @dataclass
@@ -14,8 +16,8 @@ class Step(Generic[ObsType, ActType]):
     obs: ObsType
     act: ActType
     next_obs: ObsType
-    reward: float
-    term: bool
+    reward: SupportsFloat
+    term: SupportsFloat
 
 
 @dataclass
@@ -23,8 +25,8 @@ class TensorStep(Step[Tensor, Tensor]):
     obs: Tensor
     act: Tensor
     next_obs: Tensor
-    reward: float
-    term: bool
+    reward: SupportsFloat
+    term: SupportsFloat
 
     @staticmethod
     def convert(step: Step) -> TensorStep:
@@ -54,7 +56,7 @@ class StepBatch:
     reward: Tensor
     term: Tensor
 
-    def to(self, device: torch.device):
+    def to(self, device: torch.device) -> StepBatch:
         return StepBatch(
             self.obs.to(device),
             self.act.to(device),
@@ -64,7 +66,10 @@ class StepBatch:
         )
 
     @staticmethod
-    def collate(batch: List[TensorStep]):
+    def collate_fn(batch: typing.Sequence[TensorStep]) -> StepBatch:
+        if not isinstance(batch, list):
+            batch = [*batch]
+
         obs = torch.stack([x.obs for x in batch])
         act = torch.stack([x.act for x in batch])
         next_obs = torch.stack([x.next_obs for x in batch])

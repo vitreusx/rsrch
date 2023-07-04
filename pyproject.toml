@@ -27,6 +27,7 @@ patchelf = "^0.17.2.1"
 mujoco = "<=2.3.3"
 ptflops = "^0.7"
 h5py = "^3.8.0"
+tensordict = "^0.1.2"
 
 [tool.poetry.group.dev]
 optional = true
@@ -56,3 +57,9 @@ profile = "black"
 
 [tool.pylint.format]
 max-line-length = "88"
+
+[tool.pylint."MESSAGES CONTROL"]
+disable = "invalid-name,missing-module-docstring"
+
+[tool.pylint.TYPECHECK]
+generated-members = "numpy.*, torch.*, np.*"

@@ -12,8 +12,8 @@ class Normal(nn.Module):
     def __init__(self, in_features: int, out_shape: torch.Size | int):
         super().__init__()
         if isinstance(out_shape, int):
-            out_shape = torch.Size([out_shape])
-        self.out_shape = out_shape
+            out_shape = [out_shape]
+        self.out_shape = torch.Size(out_shape)
         self.out_features = int(np.prod(out_shape))
         self.fc = nn.Linear(in_features, 2 * self.out_features)
 

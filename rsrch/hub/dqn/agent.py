@@ -1,13 +1,13 @@
 import torch
 from torch import Tensor
 
-from rsrch.rl import agent
+from rsrch.rl import agents
 from rsrch.utils.eval_ctx import eval_ctx
 
 from .types import QNetwork
 
 
-class QAgent(agent.Agent):
+class QAgent(agents.Agent):
     def __init__(self, Q: QNetwork):
         self.Q = Q
 

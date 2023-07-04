@@ -1,4 +1,4 @@
-from typing import Callable, Iterable, Protocol
+from typing import Callable, Protocol
 
 import numpy as np
 import torch
@@ -7,11 +7,9 @@ import torch.nn.functional as nn_F
 from torch import Tensor, nn
 from tqdm.auto import tqdm
 
-from rsrch.rl import agent, gym
-from rsrch.rl.data.buffer import StepBuffer
-from rsrch.rl.data.rollout import EpisodeRollout, StepRollout
-from rsrch.rl.data.step import StepBatch
-from rsrch.rl.utils import fix_log_prob_
+from rsrch.rl import agents, gym
+from rsrch.rl.data.seq import SeqRollout
+from rsrch.rl.data.step import StepBatch, StepBuffer, StepRollout
 from rsrch.rl.utils.polyak import Polyak
 from rsrch.utils import data
 from rsrch.utils.board import Board
@@ -28,16 +26,6 @@ class Data(Protocol):
 
 
 class Policy(nn.Module):
-    def __call__(self, obs: Tensor) -> D.Distribution:
-        return super().__call__(obs)
-
-
-class QNet(nn.Module):
-    def __call__(self, obs: Tensor, act: Tensor) -> Tensor:
-        return super().__call__(obs, act)
-
-
-class VNet(nn.Module):
     def __call__(self, obs: Tensor) -> Tensor:
         return super().__call__(obs)
 
@@ -45,20 +33,17 @@ class VNet(nn.Module):
         ...
 
 
-class MinQ(QNet):
-    def __init__(self, Qs: Iterable[QNet]):
-        super().__init__()
-        self.Qs = nn.ModuleList(Qs)
-
+class QNet(nn.Module):
     def __call__(self, obs: Tensor, act: Tensor) -> Tensor:
-        qs = [Q(obs, act) for Q in self.Qs]
-        return torch.min(torch.stack(qs), dim=0).values
+        return super().__call__(obs, act)
+
+    def clone(self):
+        ...
 
 
-class Agent(nn.Module, agent.Agent):
+class Agent(nn.Module, agents.Agent):
     pi: Policy
-    V: VNet
-    Q: MinQ
+    Q: QNet
 
     def reset(self):
         ...
@@ -68,27 +53,21 @@ class Agent(nn.Module, agent.Agent):
             return self.pi(obs.unsqueeze(0))[0]
 
 
-class Config:
-    env_name: str
-    seed: int
-    alpha: float
-
-
 class Trainer:
-    def __init__(self, conf: Config):
+    def __init__(self):
         self.replay_buf_size = int(1e5)
         self.batch_size = 128
         self.val_every_steps = int(10e3)
         self.env_iters_per_step = 1
         self.prefill = int(1e3)
         self.gamma = 0.99
-        self.device = torch.device("cuda:0")
+        self.device = torch.device("cuda")
         self.tau = 0.995
+        self.noise_std = 0.1
         self.val_episodes = 16
-        self.alpha = conf.alpha
 
-    def train(self, sac: Agent, sac_data: Data):
-        self.agent, self.data = sac, sac_data
+    def train(self, ddpg: Agent, ddpg_data: Data):
+        self.agent, self.data = ddpg, ddpg_data
 
         self.init_envs()
         self.init_data()
@@ -104,9 +83,16 @@ class Trainer:
     def init_data(self):
         self.replay_buf = StepBuffer(self.train_env, self.replay_buf_size)
         self.train_env = gym.wrappers.CollectSteps(self.train_env, self.replay_buf)
-        self.env_iter = iter(StepRollout(self.train_env, self.agent))
 
-        prefill_agent = agent.RandomAgent(self.train_env)
+        act_shape = self.train_env.action_space.shape
+        noise_mean = torch.zeros(*act_shape).to(self.device)
+        noise_std = self.noise_std * torch.ones(*act_shape).to(self.device)
+        noise_fn = lambda: D.Normal(noise_mean, noise_std)
+        train_agent = agents.WithNoise(self.agent, noise_fn)
+        self.env_iter = iter(StepRollout(self.train_env, train_agent))
+
+        prefill_agent = agents.RandomAgent(self.train_env)
+        prefill_agent = agents.ToTensor(prefill_agent, self.device)
         prefill_iter = iter(StepRollout(self.train_env, prefill_agent))
         while len(self.replay_buf) < self.prefill:
             _ = next(prefill_iter)
@@ -114,32 +100,28 @@ class Trainer:
         self.loader = data.DataLoader(
             dataset=self.replay_buf,
             batch_size=self.batch_size,
-            sampler=data.RandomInfiniteSampler(self.replay_buf),
+            sampler=data.InfiniteSampler(self.replay_buf),
             collate_fn=StepBatch.collate,
         )
         self.batch_iter = iter(self.loader)
 
     def init_model(self):
-        self.pi, self.V, self.Q = self.agent.pi, self.agent.V, self.agent.Q
+        self.pi, self.Q = self.agent.pi, self.agent.Q
 
         self.pi = self.pi.to(self.device)
         self.pi_optim = torch.optim.Adam(self.pi.parameters(), lr=1e-3)
-
-        self.V = self.V.to(self.device)
-        self.V_optim = torch.optim.Adam(self.V.parameters(), lr=1e-3)
-        self.target_V: VNet = self.V.clone()
-        self.V_polyak = Polyak(self.V, self.target_V, self.tau)
+        self.target_pi: Policy = self.pi.clone()
+        self.pi_polyak = Polyak(self.pi, self.target_pi, self.tau)
 
         self.Q = self.Q.to(self.device)
-        self.Q_opt_pairs = []
-        for Qi in self.Q.Qs:
-            Qi_optim = torch.optim.Adam(Qi.parameters(), lr=1e-3)
-            self.Q_opt_pairs.append((Qi, Qi_optim))
+        self.Q_optim = torch.optim.Adam(self.Q.parameters(), lr=1e-3)
+        self.target_Q: QNet = self.Q.clone()
+        self.Q_polyak = Polyak(self.Q, self.target_Q, self.tau)
 
     def init_extras(self):
         self.exp_dir = ExpDir()
         self.board = Board(root_dir=self.exp_dir / "board")
-        self.pbar = tqdm(desc="SAC")
+        self.pbar = tqdm(desc="DDPG")
 
     def loop(self):
         self.step_idx = 0
@@ -179,52 +161,26 @@ class Trainer:
 
         batch: StepBatch = next(self.batch_iter).to(self.device)
 
-        # Value net loss
-        self.V.train()
-        v_preds = self.V(batch.obs)
-        cur_policy = self.pi(batch.obs)
-        with eval_ctx(self.Q):
-            cur_act = cur_policy.sample()
-            logp = cur_policy.log_prob(cur_act)
-            v_targets = self.Q(batch.obs, cur_act) - self.alpha * logp
-        V_loss = nn_F.mse_loss(v_preds, v_targets)
+        preds = self.Q(batch.obs, batch.act)
+        with torch.no_grad():
+            next_act = self.target_pi(batch.next_obs)
+            next_preds = self.target_Q(batch.next_obs, next_act)
+            gamma = self.gamma * (1.0 - batch.term.float())
+            targets = batch.reward + gamma * next_preds
+        critic_loss = nn_F.mse_loss(preds, targets)
 
-        self.V_optim.zero_grad(set_to_none=True)
-        V_loss.backward()
-        self.V_optim.step()
+        self.Q_optim.zero_grad(set_to_none=True)
+        critic_loss.backward()
+        self.Q_optim.step()
+        self.Q_polyak.step()
 
-        self.board.add_scalar("train/V_loss", V_loss, step=self.step_idx)
+        self.board.add_scalar("train/critic_loss", critic_loss, step=self.step_idx)
 
-        # Q net loss
-        with eval_ctx(self.target_V):
-            gamma_t = self.gamma * (1.0 - batch.term.float())
-            q_targets = batch.reward + gamma_t * self.target_V(batch.next_obs)
-
-        for i, (Qi, Qi_optim) in enumerate(self.Q_opt_pairs):
-            Qi.train()
-            q_preds = Qi(batch.obs, batch.act)
-            Qi_loss = nn_F.mse_loss(q_preds, q_targets)
-
-            Qi_optim.zero_grad(set_to_none=True)
-            Qi_loss.backward()
-            Qi_optim.step()
-
-            self.board.add_scalar(f"train/Q{i}_loss", Qi_loss, step=self.step_idx)
-
-        # Policy net loss
-        self.pi.train()
-        cur_act_r = cur_policy.rsample()
-        pi_logits = cur_policy.log_prob(cur_act_r)
-
-        with eval_ctx(self.Q, no_grad=False):
-            pi_target = self.Q(batch.obs, cur_act_r)
-        pi_loss = (pi_logits - pi_target).mean()
+        actor_loss = -self.Q(batch.obs, self.pi(batch.obs)).mean()
 
         self.pi_optim.zero_grad(set_to_none=True)
-        pi_loss.backward()
+        actor_loss.backward()
         self.pi_optim.step()
+        self.pi_polyak.step()
 
-        self.board.add_scalar("train/pi_loss", pi_loss, step=self.step_idx)
-
-        # Value net - Polyak step
-        self.V_polyak.step()
+        self.board.add_scalar("train/actor_loss", actor_loss, step=self.step_idx)

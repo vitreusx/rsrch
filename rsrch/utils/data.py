@@ -85,10 +85,19 @@ def random_split(
     return [Subset(ds, idxes[start:end]) for start, end in zip(pivots[:-1], pivots[1:])]
 
 
-class RandomInfiniteSampler:
-    def __init__(self, ds: Sized):
+class InfiniteSampler:
+    def __init__(self, ds: Sized, shuffle: bool = False):
         self.ds = ds
+        self.shuffle = shuffle
 
     def __iter__(self):
-        while True:
-            yield np.random.randint(len(self.ds))
+        if self.shuffle:
+            while True:
+                yield np.random.randint(len(self.ds))
+        else:
+            idx = 0
+            while len(self.ds) > 0:
+                if idx >= len(self.ds):
+                    idx = 0
+                yield idx
+                idx += 1

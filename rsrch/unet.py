@@ -1,7 +1,7 @@
-import torch
-import torch.nn as nn
-from torch import Tensor
 from typing import List, Tuple
+
+import torch
+from torch import Tensor, nn
 
 
 class Down(nn.Module):

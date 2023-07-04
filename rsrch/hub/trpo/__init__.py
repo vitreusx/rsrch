@@ -15,7 +15,7 @@ from scipy.sparse.linalg import LinearOperator, cg
 from torch import Tensor, autograd, nn
 from tqdm.auto import tqdm
 
-from rsrch.rl import agent, gym, wrappers
+from rsrch.rl import agents, gym, wrappers
 from rsrch.rl.data import EpisodeRollout, StepBatch, StepRollout
 from rsrch.rl.data import transforms as T
 from rsrch.rl.data.step import TensorStep

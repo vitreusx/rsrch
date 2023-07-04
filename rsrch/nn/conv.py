@@ -1,5 +1,9 @@
 import torch
-import torch.nn as nn
+from torch import Tensor, nn
+
+
+class ConvBlock(nn.Module):
+    ...
 
 
 class ConvNet(nn.Sequential):

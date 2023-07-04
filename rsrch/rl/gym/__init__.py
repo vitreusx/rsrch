@@ -1,4 +1,4 @@
-from gymnasium import *  # isort: skip
+from gymnasium import *
 
 del spaces, wrappers
 from . import spaces, wrappers

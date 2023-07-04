@@ -60,7 +60,7 @@ class ValueNet_v0(ValueNet):
         return self.net(obs).squeeze(-1)
 
 
-class Agent_v0(nn.Module, agent.Agent):
+class Agent_v0(nn.Module, agents.Agent):
     def __init__(self, spec: EnvSpec):
         super().__init__()
         self.pi = Policy_v0(spec)

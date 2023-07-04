@@ -12,7 +12,7 @@ import torch.nn as nn
 from torch import Tensor, nn
 from tqdm.auto import tqdm, trange
 
-import rsrch.rl.agent as agent
+import rsrch.rl.agents as agents
 import rsrch.rl.gym as gym
 import rsrch.utils.data as data
 from rsrch.rl import wrappers
@@ -96,10 +96,10 @@ class DQNTrainer:
         val_env = dqn_data.val_env(self.device)
         train_env = dqn_data.train_env(self.device)
 
-        rand_agent = agent.RandomAgent(val_env)
-        rand_agent = agent.ToTensor(rand_agent, self.device)
-        train_agent = agent.EpsAgent(QAgent(dqn.Q), rand_agent, self.max_eps)
-        val_agent = agent.EpsAgent(QAgent(dqn.Q), rand_agent, self.val_eps)
+        rand_agent = agents.RandomAgent(val_env)
+        rand_agent = agents.ToTensor(rand_agent, self.device)
+        train_agent = agents.EpsAgent(QAgent(dqn.Q), rand_agent, self.max_eps)
+        val_agent = agents.EpsAgent(QAgent(dqn.Q), rand_agent, self.val_eps)
 
         replay_buffer = StepBuffer(train_env, self.buffer_capacity)
         train_env = wrappers.CollectSteps(train_env, replay_buffer)
@@ -126,7 +126,7 @@ class DQNTrainer:
         amp_enabled = amp_dtype != torch.float32
         scaler = torch.cuda.amp.GradScaler(enabled=amp_enabled)
 
-        eps_sched = agent.EpsScheduler(
+        eps_sched = agents.EpsScheduler(
             train_agent, self.max_eps, self.min_eps, self.eps_step_decay
         )
         polyak = Polyak(dqn.Q, dqn.target_Q, self.tau)
