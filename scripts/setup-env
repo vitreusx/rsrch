@@ -4,13 +4,12 @@ set -o errexit
 # Set up the conda env
 conda-lock install -n rsrch --mamba conda-lock.yml
 conda activate rsrch
+
 # This fixes versions for conda-installed packages
 find $CONDA_PREFIX -name direct_url.json -delete
 
 # Set the environment variables from environment.yml
-$(python scripts/_set_vars.py)
-conda activate rsrch
+$(python scripts/set_vars.py)
 
 # Set up poetry stuff
-pip install -r requirements.txt
 poetry install

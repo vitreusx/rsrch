@@ -16,12 +16,16 @@ def main():
     with open(args.env_file, "r") as env_file:
         env_yml = safe_load(env_file)
 
+    cmds = []
+
     cmd = ["conda", "env", "config", "vars", "set"]
     for key, value in env_yml["variables"].items():
         cmd += [f'{key}="{value}"']
+    cmds += [shlex.join(cmd)]
+    
+    cmds += ["conda activate rsrch"]
 
-    cmd = shlex.join(cmd)
-    print(cmd)
+    print("\n".join(cmds))
 
 
 if __name__ == "__main__":

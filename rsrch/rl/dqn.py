@@ -190,12 +190,12 @@ def dqn():
         return env
 
     def make_env(train: bool):
-        # return gym.make("CartPole-v1")
-        return make_atari_env("Pong-v4", train)
+        return gym.make("CartPole-v1")
+        # return make_atari_env("Pong-v4", train)
 
     train_env, val_env = make_env(train=True), make_env(train=False)
-    env_seed = 42
-    obs, info = train_env.reset(seed=env_seed)
+    # env_seed = 42
+    obs, info = train_env.reset()
 
     batch_size = 128
     train_frames = int(1e6)
@@ -215,7 +215,8 @@ def dqn():
         device = torch.device("cpu")
 
     replay_buffer = ReplayBuffer(train_env, capacity=buffer_capacity, device=device)
-    QNet = AtariQNet
+    # QNet = AtariQNet
+    QNet = ProprioQNet
     Q = QNet(train_env).to(device)
     target_Q = QNet(train_env).to(device)
 
