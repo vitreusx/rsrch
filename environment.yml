@@ -1,0 +1,14 @@
+name: rsrch
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.10.*
+  - mamba
+  - pip
+  - setuptools
+  - poetry=1.3.2
+  - swig
+
+platforms:
+  - linux-64
