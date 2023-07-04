@@ -17,7 +17,16 @@ black = "^23.1.0"
 ipywidgets = "^8.0.4"
 setuptools = "*"
 conda-lock = "*"
+torch = "~2.0"
+torchvision = "~0.15"
+
+[tool.poetry.group.dev.dependencies]
+ipykernel = "^6.22.0"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.conda-lock]
+channels = ["conda-forge"]
+platforms = ["linux-64"]

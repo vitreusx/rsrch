@@ -1,13 +1,12 @@
 import torch
-import torch.utils.data as data
+import rsrch.utils.data as data
 import os
 from pathlib import Path
-from dataclasses import dataclass
+from typing import NamedTuple
 from PIL import Image
 
 
-@dataclass
-class Item:
+class Item(NamedTuple):
     name: str
     image: Image.Image
 
@@ -20,7 +19,7 @@ class FontAwesome(data.Dataset[Item]):
         self.resolution = resolution
 
         self._image_dir = self.root / color / "png" / f"{resolution}"
-        self._image_paths = [*self._image_dir.iterdir()]
+        self._image_paths = sorted([*self._image_dir.iterdir()])
 
     def __len__(self):
         return len(self._image_paths)

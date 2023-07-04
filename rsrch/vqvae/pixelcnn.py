@@ -72,7 +72,6 @@ class PixelCNN(nn.Module):
         channels = [
             in_channels,
             *([hidden_dim] * (num_layers - 1)),
-            self._final_nc,
         ]
 
         layers = []

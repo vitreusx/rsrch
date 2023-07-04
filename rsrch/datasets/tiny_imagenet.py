@@ -1,14 +1,12 @@
 import torch
-import torch.utils.data as data
+import rsrch.utils.data as data
 import os
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, NamedTuple
 from PIL import Image
-from dataclasses import dataclass
 
 
-@dataclass
-class Item:
+class Item(NamedTuple):
     image: Image.Image
     idx: Optional[int] = None
     name: Optional[str] = None
