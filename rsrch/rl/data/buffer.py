@@ -1,10 +1,10 @@
-from typing import Sequence, Union
+import tempfile
+from typing import Protocol, Sequence, Union
 
 import numpy as np
 import torch
 
 import rsrch.utils.data as data
-from rsrch.rl import gym
 from rsrch.rl.spec import EnvSpec
 
 from .step import *
@@ -78,17 +78,61 @@ class StepBuffer(data.Dataset[Step]):
             return Step(obs, act, next_obs, reward, term)
 
 
-class EpisodeBuffer(data.Dataset[ListTrajectory]):
-    def __init__(self, capacity: int):
+class TrajectoryStore(Protocol):
+    def save(self, seq: ListTrajectory) -> Trajectory:
+        ...
+
+    def free(self, seq: Trajectory):
+        ...
+
+
+class RAMStore(Trajectory):
+    def save(self, seq):
+        return seq
+
+    def free(self, seq):
+        pass
+
+
+class DiskStore(Trajectory):
+    def __init__(self, dest_dir: str | os.PathLike):
+        self.file_dir = Path(dest_dir)
+
+    def save(self, seq: ListTrajectory):
+        with tempfile.NamedTemporaryFile(
+            suffix=".h5", dir=self.file_dir, delete=False
+        ) as dest_file:
+            dest_path = dest_file.name
+        return H5Seq.create_from(seq, dest_path)
+
+    def free(self, seq: H5Seq):
+        del seq._file
+        seq._path.unlink()
+
+
+class EpisodeBuffer(data.Dataset[Trajectory]):
+    def __init__(self, capacity: int, store: TrajectoryStore = RAMStore()):
         self._episodes = np.empty((capacity,), dtype=object)
         self._ep_idx = -1
-        self.size = 0
+        self.size, self._loop = 0, False
         self.capacity = capacity
+        self.store = store
 
     def on_reset(self, obs):
-        self._ep_idx = (self._ep_idx + 1) % self.capacity
+        if self._ep_idx >= 0:
+            self._cur_ep = self.store.save(self._cur_ep)
+            self._episodes[self._ep_idx] = self._cur_ep
+
+        self._ep_idx += 1
+        if self._ep_idx + 1 >= self.capacity:
+            self._loop = True
+            self._ep_idx = 0
         self.size = min(self.size + 1, self.capacity)
+
         self._cur_ep = ListTrajectory(obs=[obs], act=[None], reward=[0.0], term=False)
+
+        if self._loop:
+            self.store.free(self._episodes[self._ep_idx])
         self._episodes[self._ep_idx] = self._cur_ep
 
     def on_step(self, act, next_obs, reward, term, trunc):

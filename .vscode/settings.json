@@ -12,7 +12,7 @@
     "editor.wordWrap": "bounded",
     "editor.wordWrapColumn": 88,
     "black-formatter.importStrategy": "fromEnvironment",
-    "python.formatting.provider": "black",
+    "python.formatting.provider": "none",
     "python.linting.pylintEnabled": false,
     "python.linting.enabled": false,
     "notebook.formatOnSave.enabled": true

@@ -26,6 +26,7 @@ mujoco-py = "^2.1.2.14"
 patchelf = "^0.17.2.1"
 mujoco = "<=2.3.3"
 ptflops = "^0.7"
+h5py = "^3.8.0"
 
 [tool.poetry.group.dev]
 optional = true

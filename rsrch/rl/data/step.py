@@ -1,28 +1,40 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, List
+from typing import Any, Generic, List, TypeVar
 
 import torch
 from torch import Tensor
 
+ObsType, ActType = TypeVar("ObsType"), TypeVar("ActType")
+
 
 @dataclass
-class Step:
-    obs: Any
-    act: Any
-    next_obs: Any
+class Step(Generic[ObsType, ActType]):
+    obs: ObsType
+    act: ActType
+    next_obs: ObsType
     reward: float
     term: bool
 
 
 @dataclass
-class TensorStep:
+class TensorStep(Step[Tensor, Tensor]):
     obs: Tensor
     act: Tensor
     next_obs: Tensor
     reward: float
     term: bool
+
+    @staticmethod
+    def convert(step: Step) -> TensorStep:
+        return TensorStep(
+            obs=torch.as_tensor(step.obs),
+            act=torch.as_tensor(step.act),
+            next_obs=torch.as_tensor(step.next_obs),
+            reward=step.reward,
+            term=step.term,
+        )
 
     def to(self, device: torch.device) -> TensorStep:
         return TensorStep(
@@ -32,16 +44,6 @@ class TensorStep:
             reward=self.reward,
             term=self.term,
         )
-
-
-def to_tensor_step(step: Step) -> TensorStep:
-    return TensorStep(
-        obs=torch.as_tensor(step.obs),
-        act=torch.as_tensor(step.act),
-        next_obs=torch.as_tensor(step.next_obs),
-        reward=step.reward,
-        term=step.term,
-    )
 
 
 @dataclass

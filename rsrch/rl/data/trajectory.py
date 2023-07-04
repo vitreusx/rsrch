@@ -4,15 +4,18 @@ import abc  # pylint: disable=missing-module-docstring
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Sequence
+from typing import Any, Generic, List, Protocol, Sequence, TypeVar
 
+import h5py
 import numpy as np
 import torch
 import torch.nn.utils.rnn as rnn
 from torch import Tensor
 
+ObsType, ActType = TypeVar("ObsType"), TypeVar("ActType")
 
-class Trajectory(abc.ABC):
+
+class Trajectory(abc.ABC, Generic[ObsType, ActType]):
     """Generic trajectory class.
 
     The layout of the arrays is as follows:
@@ -24,9 +27,9 @@ class Trajectory(abc.ABC):
     If `term`, the final observation `o_t` comes from a terminal state of the MDP.
     """
 
-    obs: Sequence
-    act: Sequence
-    reward: Sequence
+    obs: Sequence[ObsType]
+    act: Sequence[ActType | None]
+    reward: Sequence[float]
     term: bool
 
     def __len__(self):
@@ -59,13 +62,41 @@ class ListTrajectory(Trajectory):
 
 
 @dataclass
-class TensorTrajectory(Trajectory):
+class NumpyTrajectory(Trajectory[np.ndarray, np.ndarray]):
+    obs: np.ndarray
+    act: np.ndarray
+    reward: np.ndarray
+    term: bool
+
+    @staticmethod
+    def convert(seq: Trajectory) -> NumpyTrajectory:
+        obs = np.stack([np.asarray(x) for x in seq.obs])
+        act = [np.asarray(x) for x in seq.act[:-1]]
+        act.append(act[0])
+        act = np.stack(act)
+        reward = np.asarray(seq.reward)
+        return NumpyTrajectory(obs, act, reward, seq.term)
+
+
+@dataclass
+class TensorTrajectory(Trajectory[Tensor, Tensor]):
     """A Tensor-based trajectory. The shapes of the tensors are (L, ...)."""
 
     obs: Tensor
     act: Tensor
     reward: Tensor
     term: bool
+
+    @staticmethod
+    def convert(seq: Trajectory) -> TensorTrajectory:
+        """Convert arbitrary trajectory to Tensor-based version."""
+
+        obs = torch.stack([torch.as_tensor(x) for x in seq.obs])
+        # Since act[-1] may be undefined, we set it to act[0]
+        act = torch.stack([torch.as_tensor(x) for x in seq.act[:-1]])
+        act = torch.cat([act, act[:1]], 0)
+        reward = torch.as_tensor(seq.reward)
+        return TensorTrajectory(obs, act, reward, seq.term)
 
     def to(self, device: torch.device) -> TensorTrajectory:
         return TensorTrajectory(
@@ -74,17 +105,6 @@ class TensorTrajectory(Trajectory):
             reward=self.reward.to(device),
             term=self.term,
         )
-
-
-def to_tensor_seq(seq: Trajectory) -> TensorTrajectory:
-    """Convert arbitrary trajectory to Tensor-based version."""
-
-    obs = torch.stack([torch.as_tensor(x) for x in seq.obs])
-    # Since act[-1] may be undefined, we set it to act[0]
-    act = torch.stack([torch.as_tensor(x) for x in seq.act[:-1]])
-    act = torch.cat([act, act[:1]], 0)
-    reward = torch.as_tensor(seq.reward)
-    return TensorTrajectory(obs, act, reward, seq.term)
 
 
 @dataclass
@@ -133,7 +153,7 @@ class MultiStepBatch:
 
     @staticmethod
     def collate_fn(batch: List[TensorTrajectory]):
-        """Collate a batch of :class:`TensorTrajectory` items into :class:`MultiStepBatch`. This function does not check if the items have equal sequence length."""
+        """Collate a batch of :class:`TensorTrajectory` items into :class:`MultiStepBatch`. NOTE: This function does not check if the items have equal sequence length."""
 
         obs = torch.stack([seq.obs for seq in batch], dim=1)
         act = torch.stack([seq.act for seq in batch], dim=1)
@@ -144,3 +164,27 @@ class MultiStepBatch:
             device=obs.device,
         )
         return MultiStepBatch(obs, act, reward, term)
+
+
+class H5Seq(Trajectory[np.memmap, np.memmap]):
+    def __init__(self, file: h5py.File | os.PathLike | str):
+        if isinstance(file, h5py.File):
+            self._file = file
+        elif isinstance(file, (os.PathLike, str)):
+            self._file = h5py.File(file, mode="r")
+        self._path = Path(self._file.filename)
+
+        self.obs = self._file["obs"]
+        self.act = self._file["act"]
+        self.reward = self._file["reward"]
+        self.term = self._file["term"][0]
+
+    @staticmethod
+    def create_from(seq: Sequence, dest: os.PathLike) -> H5Seq:
+        np_seq = NumpyTrajectory.convert(seq)
+        with h5py.File(dest, mode="w") as h5_file:
+            h5_file.create_dataset("obs", data=np_seq.obs)
+            h5_file.create_dataset("act", data=np_seq.act)
+            h5_file.create_dataset("reward", data=np_seq.reward)
+            h5_file.create_dataset("term", data=np.array([np_seq.term]))
+        return H5Seq(dest)
