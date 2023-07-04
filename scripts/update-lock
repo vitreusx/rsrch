@@ -1,0 +1,42 @@
+#!/usr/bin/bash
+set -o errexit
+
+# Recreate conda-lock.yml file
+rm conda-lock.yml
+conda-lock --conda mamba
+
+# We need to get the python packages installed by conda, and add them
+# to pyproject.toml. The reason being: otherwise, Poetry doesn't take
+# the versions of packages which conda packages need into account, and
+# thereby may break some dependencies.
+
+# Set up a clean conda env in order to get conda-installed packages
+ENV_DIR="$(mktemp -d)"
+conda-lock install -p "${ENV_DIR}" --mamba conda-lock.yml
+conda activate "${ENV_DIR}"
+find $CONDA_PREFIX -name direct_url.json -delete
+python scripts/_fetch_env_vars.py | xargs conda env config vars set
+conda activate ./env
+
+# Fetch the packages, see which ones can be added by poetry, and
+# add them to 'conda' group in pyproject.toml
+
+filter_pkg() {
+    name="$1"
+    pkg="$2"
+
+    err="$(poetry show "${name}" 2>&1 1>/dev/null)"
+    if [[ ${#err} == 0 ]]; then
+        echo $pkg
+    fi
+}
+export -f filter_pkg
+
+pip freeze |\
+    xargs python scripts/_parse_freeze.py |\
+    parallel -n2 filter_pkg |\
+    xargs poetry add --group conda --lock
+
+# Recreate poetry.lock
+rm poetry.lock
+poetry lock

@@ -1,4 +1,0 @@
-#!/usr/bin/bash
-set -o errexit
-conda-lock --conda mamba
-poetry lock

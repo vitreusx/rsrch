@@ -1,4 +1,7 @@
 {
     "python.formatting.provider": "black",
-    "editor.formatOnSave": true
+    "editor.formatOnSave": true,
+    "terminal.integrated.env.linux": {
+        "PATH": "${env:PATH}" /* This is done so that $HOME/.local/bin is not loaded. */
+    }
 }
