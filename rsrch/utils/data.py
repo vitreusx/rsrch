@@ -1,11 +1,14 @@
 from __future__ import annotations
+
+from typing import Callable, Generic, Sequence, Sized, Tuple, TypeVar, Union
+
+import numpy as np
 import torch
 import torch.utils.data as data
 from torch.utils.data import *
-from typing import Generic, Callable, TypeVar, Sequence, Union, Sized
-import numpy as np
+from torch.utils.data.dataloader import _collate_fn_t, _worker_init_fn_t
 
-X, Y = TypeVar("X"), TypeVar("Y")
+X, Y, Idx = TypeVar("X"), TypeVar("Y"), TypeVar("Idx")
 
 
 class Dataset(Generic[X], data.Dataset[X]):
@@ -54,6 +57,18 @@ class Subset(Dataset[X]):
     def __getitem__(self, idx) -> X:
         idx = self._idxes[idx]
         return self._ds[idx]
+
+
+class Indexed(Dataset[Tuple[Idx, X]]):
+    def __init__(self, ds: Dataset[X]):
+        super().__init__()
+        self._ds = ds
+
+    def __len__(self):
+        return len(self._ds)
+
+    def __getitem__(self, idx: Idx):
+        return idx, self._ds[idx]
 
 
 def random_split(

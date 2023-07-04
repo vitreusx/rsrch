@@ -1,9 +1,9 @@
-import gymnasium as gym
 import torch
 from gymnasium.wrappers import *
 from torch import Tensor
 
-from rsrch.rl.data.buffer import EpisodeBuffer, Step, StepBuffer
+from rsrch.rl import gym
+from rsrch.rl.data import EpisodeBuffer, Step, StepBuffer
 
 
 class CollectSteps(gym.Wrapper):
@@ -45,11 +45,23 @@ class ToTensor(gym.Wrapper):
         super().__init__(env)
         self.device = device
         self.dtype = dtype
-        if self.dtype is not None:
-            np_dtype = torch.empty([], dtype=dtype).numpy().dtype
-            self.observation_space.dtype = np_dtype
-            if isinstance(self.action_space.dtype, gym.spaces.Box):
-                self.action_space.dtype = np_dtype
+
+        self.action_space = self._convert_space(env.action_space)
+        self.observation_space = self._convert_space(env.observation_space)
+
+    def _convert_space(self, space: gym.Space):
+        if isinstance(space, gym.spaces.Box):
+            return gym.spaces.TensorBox.from_numpy(
+                space, dtype=self.dtype, device=self.device
+            )
+        elif isinstance(space, gym.spaces.Discrete):
+            return gym.spaces.TensorDiscrete.from_numpy(space, device=self.device)
+        elif isinstance(space, (gym.spaces.TensorBox, gym.spaces.TensorDiscrete)):
+            return space
+        else:
+            raise ValueError(
+                f"Converting space type {type(space)} to Tensor is not supported."
+            )
 
     def reset(self, *, seed=None, options=None):
         obs, info = self.env.reset(seed=seed, options=options)
@@ -58,11 +70,10 @@ class ToTensor(gym.Wrapper):
 
     def step(self, action: Tensor):
         action = action.cpu()
-        if isinstance(self.action_space, gym.spaces.Discrete):
+        if isinstance(self.action_space, gym.spaces.TensorDiscrete):
             action = action.item()
         else:
-            if self.dtype is not None:
-                action = action.to(dtype=self.dtype)
+            action = action.to(dtype=self.dtype)
             action = action.numpy()
 
         obs, reward, term, trunc, info = self.env.step(action)

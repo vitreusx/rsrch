@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Any, List, Protocol
+from typing import Any, List
+
 import torch
 from torch import Tensor
 
@@ -11,16 +14,34 @@ class Step:
     next_obs: Any
     reward: float
     term: bool
-    trunc: bool
 
 
-class TensorStep(Protocol):
+@dataclass
+class TensorStep:
     obs: Tensor
     act: Tensor
     next_obs: Tensor
     reward: float
     term: bool
-    trunc: bool
+
+    def to(self, device: torch.device) -> TensorStep:
+        return TensorStep(
+            obs=self.obs.to(device),
+            act=self.act.to(device),
+            next_obs=self.next_obs.to(device),
+            reward=self.reward,
+            term=self.term,
+        )
+
+
+def to_tensor_step(step: Step) -> TensorStep:
+    return TensorStep(
+        obs=torch.as_tensor(step.obs),
+        act=torch.as_tensor(step.act),
+        next_obs=torch.as_tensor(step.next_obs),
+        reward=step.reward,
+        term=step.term,
+    )
 
 
 @dataclass
@@ -30,7 +51,6 @@ class StepBatch:
     next_obs: Tensor
     reward: Tensor
     term: Tensor
-    trunc: Tensor
 
     def to(self, device: torch.device):
         return StepBatch(
@@ -39,7 +59,6 @@ class StepBatch:
             self.next_obs.to(device),
             self.reward.to(device),
             term=self.term.to(device),
-            trunc=self.trunc.to(device),
         )
 
     @staticmethod
@@ -51,6 +70,5 @@ class StepBatch:
         device = obs.device
         reward = torch.tensor([x.reward for x in batch], device=device)
         term = torch.tensor([x.term for x in batch], device=device)
-        trunc = torch.tensor([x.trunc for x in batch], device=device)
 
-        return StepBatch(obs, act, next_obs, reward, term, trunc)
+        return StepBatch(obs, act, next_obs, reward, term)

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 
-class SimpleConvNet(nn.Sequential):
+class ConvNet(nn.Sequential):
     def __init__(
         self,
         *,

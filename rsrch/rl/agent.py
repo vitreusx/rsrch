@@ -1,7 +1,11 @@
-from typing import Protocol
-from rsrch.rl.env_spec import EnvSpec
+from typing import Callable, Protocol
+
 import numpy as np
 import torch
+import torch.distributions as D
+from torch import Tensor
+
+from rsrch.rl.spec import EnvSpec
 
 
 class Agent(Protocol):
@@ -23,6 +27,19 @@ class RandomAgent(Agent):
         return self.action_space.sample()
 
 
+class WithNoise(Agent):
+    def __init__(self, base: Agent, noise_fn: Callable[[], D.Distribution]):
+        self.base = base
+        self.noise_fn = noise_fn
+
+    def reset(self):
+        self.noise = self.noise_fn()
+        return self.base.reset()
+
+    def act(self, obs):
+        return self.base.act(obs) + self.noise.sample()
+
+
 class ToTensor(Agent):
     def __init__(self, base: Agent, device=None):
         self.base = base
@@ -31,8 +48,8 @@ class ToTensor(Agent):
     def reset(self):
         return self.base.reset()
 
-    def act(self, obs):
-        action = self.base.act(obs)
+    def act(self, obs: Tensor) -> Tensor:
+        action = self.base.act(obs.cpu().numpy())
         return torch.as_tensor(action, device=self.device)
 
 

@@ -9,11 +9,16 @@ def update(source: nn.Module, target: nn.Module, tau: float):
 
 
 class Polyak:
-    def __init__(self, source: nn.Module, target: nn.Module, tau: float):
+    def __init__(
+        self, source: nn.Module, target: nn.Module, tau: float, every: int = 1
+    ):
         self.source = source
         self.target = target
         self.tau = tau
-    
-    def step(self):
-        update(self.source, self.target, self.tau)
-        return self
+        self._step, self._last, self.every = 0, 0, every
+
+    def step(self, n=1):
+        self._step += n
+        while self._step - self._last >= self.every:
+            update(self.source, self.target, self.tau)
+            self._last += self.every

@@ -1,13 +1,14 @@
-import torch.utils.tensorboard as tensorboard
-from pathlib import Path
 import os
-import torchvision.transforms.functional as F
-import torch
-from moviepy.editor import *
+from pathlib import Path
+from typing import List, Protocol, Union
+
 import numpy as np
-from slugify import slugify
-from typing import Protocol, Union, List
+import torch
+import torch.utils.tensorboard as tensorboard
+import torchvision.transforms.functional as F
+from moviepy.editor import *
 from PIL import Image
+from slugify import slugify
 
 
 class NullBoard:

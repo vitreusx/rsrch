@@ -1,11 +1,14 @@
-from .step import *
-from .trajectory import *
-import rsrch.utils.data as data
-from rsrch.rl.env_spec import EnvSpec
+from typing import Sequence, Union
+
+import gymnasium as gym
 import numpy as np
 import torch
-import gymnasium as gym
-from typing import Union, Sequence
+
+import rsrch.utils.data as data
+from rsrch.rl.spec import EnvSpec
+
+from .step import *
+from .trajectory import *
 
 
 class StepBuffer(data.Dataset[Step]):
@@ -17,7 +20,6 @@ class StepBuffer(data.Dataset[Step]):
         self.next_obs = torch.empty_like(self.obs)
         self.reward = self._buffer_for(dtype=torch.float)
         self.term = self._buffer_for(dtype=torch.bool)
-        self.trunc = self._buffer_for(dtype=torch.bool)
 
         self._cursor = self._size = 0
 
@@ -47,7 +49,6 @@ class StepBuffer(data.Dataset[Step]):
         self.next_obs[idx] = self._convert(step.next_obs, self.next_obs)
         self.reward[idx] = step.reward
         self.term[idx] = step.term
-        self.trunc[idx] = step.trunc
 
         self._cursor = (self._cursor + 1) % self._capacity
         if self._size < self._capacity:
@@ -64,7 +65,6 @@ class StepBuffer(data.Dataset[Step]):
         next_obs = self.next_obs[idx]
         reward = self.reward[idx]
         term = self.term[idx]
-        trunc = self.trunc[idx]
 
         if isinstance(idx, Sequence):
             idx = torch.as_tensor(idx)
@@ -73,15 +73,13 @@ class StepBuffer(data.Dataset[Step]):
             is_batch = False
 
         if is_batch:
-            return StepBatch(obs, act, next_obs, reward, term, trunc)
+            return StepBatch(obs, act, next_obs, reward, term)
         else:
-            return Step(obs, act, next_obs, reward, term, trunc)
+            return Step(obs, act, next_obs, reward, term)
 
 
 class EpisodeBuffer(data.Dataset[ListTrajectory]):
     def __init__(self, capacity: int):
-        super().__init__()
-
         self._episodes = np.empty((capacity,), dtype=object)
         self._ep_idx = -1
         self.size = 0
@@ -90,10 +88,7 @@ class EpisodeBuffer(data.Dataset[ListTrajectory]):
     def on_reset(self, obs):
         self._ep_idx = (self._ep_idx + 1) % self.capacity
         self.size = min(self.size + 1, self.capacity)
-
-        self._cur_ep = ListTrajectory(
-            obs=[obs], act=[None], reward=[0.0], term=False, trunc=True
-        )
+        self._cur_ep = ListTrajectory(obs=[obs], act=[None], reward=[0.0], term=False)
         self._episodes[self._ep_idx] = self._cur_ep
 
     def on_step(self, act, next_obs, reward, term, trunc):
@@ -102,13 +97,9 @@ class EpisodeBuffer(data.Dataset[ListTrajectory]):
         self._cur_ep.obs.append(next_obs)
         self._cur_ep.reward.append(reward)
         self._cur_ep.term = term
-        if term or trunc:
-            self._cur_ep.trunc = trunc
 
     def __len__(self):
         return self.size
 
     def __getitem__(self, idx):
-        if idx > self.size:
-            raise IndexError()
-        return self._episodes[idx]
+        return self._episodes[: self.size][idx]

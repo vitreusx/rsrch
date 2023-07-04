@@ -1,10 +1,19 @@
 {
-    "python.formatting.provider": "none",
     "editor.formatOnSave": true,
     "terminal.integrated.env.linux": {
         "PATH": "${env:PATH}" /* This is done so that $HOME/.local/bin is not loaded. */
     },
     "[python]": {
-        "editor.defaultFormatter": "ms-python.black-formatter"
-    }
+        "editor.defaultFormatter": "ms-python.black-formatter",
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": true
+        }
+    },
+    "editor.wordWrap": "bounded",
+    "editor.wordWrapColumn": 88,
+    "black-formatter.importStrategy": "fromEnvironment",
+    "python.formatting.provider": "black",
+    "python.linting.pylintEnabled": false,
+    "python.linting.enabled": false,
+    "notebook.formatOnSave.enabled": true
 }
