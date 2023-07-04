@@ -1,0 +1,19 @@
+schema: '2.0'
+stages:
+  unzip:
+    cmd: unzip -qq -d datasets datasets/tiny-imagenet-200.zip
+    deps:
+    - path: datasets/tiny-imagenet-200.zip
+      md5: 90528d7ca1a48142e341f4ef8d21d0de
+      size: 248100043
+    outs:
+    - path: datasets/tiny-imagenet-200
+      md5: b77cf489c79bf7b1e382cad937a1a18f.dir
+      size: 239648330
+      nfiles: 120203
+  download:
+    cmd: wget -O datasets/tiny-imagenet-200.zip http://cs231n.stanford.edu/tiny-imagenet-200.zip
+    outs:
+    - path: datasets/tiny-imagenet-200.zip
+      md5: 90528d7ca1a48142e341f4ef8d21d0de
+      size: 248100043

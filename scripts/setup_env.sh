@@ -1,5 +1,3 @@
-#!/usr/bin/env bash
-env_name="$1"
 conda create -p ./env --file conda-linux-64.lock
 conda activate ./env
 pip install -r requirements.txt

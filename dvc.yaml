@@ -1,0 +1,11 @@
+stages:
+  download:
+    cmd: wget -O datasets/tiny-imagenet-200.zip http://cs231n.stanford.edu/tiny-imagenet-200.zip
+    outs:
+      - datasets/tiny-imagenet-200.zip
+  unzip:
+    cmd: unzip -qq -d datasets datasets/tiny-imagenet-200.zip
+    deps:
+      - datasets/tiny-imagenet-200.zip
+    outs:
+      - datasets/tiny-imagenet-200
