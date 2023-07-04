@@ -7,13 +7,12 @@ import torch.nn.functional as nn_F
 from torch import Tensor, nn
 from tqdm.auto import tqdm
 
-from rsrch.rl import agent, gym, wrappers
+from rsrch.rl import agent, gym
 from rsrch.rl.data.buffer import StepBuffer
 from rsrch.rl.data.rollout import EpisodeRollout, StepRollout
 from rsrch.rl.data.step import StepBatch
 from rsrch.rl.utils import fix_log_prob_
 from rsrch.rl.utils.polyak import Polyak
-from rsrch.rl.wrappers import CollectSteps
 from rsrch.utils import data
 from rsrch.utils.board import Board
 from rsrch.utils.eval_ctx import eval_ctx
@@ -83,7 +82,7 @@ class Trainer:
         self.env_iters_per_step = 1
         self.prefill = int(1e3)
         self.gamma = 0.99
-        self.device = torch.device("cuda")
+        self.device = torch.device("cuda:0")
         self.tau = 0.995
         self.val_episodes = 16
         self.alpha = conf.alpha
@@ -104,11 +103,10 @@ class Trainer:
 
     def init_data(self):
         self.replay_buf = StepBuffer(self.train_env, self.replay_buf_size)
-        self.train_env = CollectSteps(self.train_env, self.replay_buf)
+        self.train_env = gym.wrappers.CollectSteps(self.train_env, self.replay_buf)
         self.env_iter = iter(StepRollout(self.train_env, self.agent))
 
         prefill_agent = agent.RandomAgent(self.train_env)
-        prefill_agent = agent.ToTensor(prefill_agent, self.device)
         prefill_iter = iter(StepRollout(self.train_env, prefill_agent))
         while len(self.replay_buf) < self.prefill:
             _ = next(prefill_iter)
@@ -157,7 +155,7 @@ class Trainer:
         for ep_idx in range(self.val_episodes):
             cur_env = self.val_env
             if ep_idx == 0:
-                cur_env = wrappers.RenderCollection(cur_env)
+                cur_env = gym.wrappers.RenderCollection(cur_env)
 
             ep_source = EpisodeRollout(cur_env, self.agent, num_episodes=1)
             episode = next(iter(ep_source))

@@ -17,7 +17,7 @@ class Data_v0(Data):
 
     def val_env(self, device=None) -> gym.Env:
         env = gym.make(self.name, render_mode="rgb_array")
-        env = wrappers.ToTensor(env, device=device, dtype=torch.float32)
+        env = gym.wrappers.ToTensor(env, device=device, dtype=torch.float32)
         env.reset(seed=self.seed)
         return env
 
@@ -30,13 +30,11 @@ class Policy_v0(Policy):
         super().__init__()
         self.spec = spec
 
-        assert isinstance(spec.observation_space, gym.spaces.Box)
+        assert isinstance(spec.observation_space, gym.spaces.TensorBox)
         in_features = int(np.prod(spec.observation_space.shape))
 
-        assert isinstance(spec.action_space, gym.spaces.Box)
-        self._act_shape = spec.action_space.shape
-        min_act_v = torch.from_numpy(spec.action_space.low)
-        max_act_v = torch.from_numpy(spec.action_space.high)
+        assert isinstance(spec.action_space, gym.spaces.TensorBox)
+        min_v, max_v = spec.action_space.low, spec.action_space.high
 
         self.main = nn.Sequential(
             nn.Flatten(),
@@ -44,7 +42,7 @@ class Policy_v0(Policy):
             nn.ReLU(inplace=True),
             nn.Linear(128, 128),
             nn.ReLU(inplace=True),
-            dh.SquashedNormal(128, min_act_v, max_act_v),
+            dh.SquashedNormal(128, min_v, max_v),
         )
 
     def forward(self, obs: Tensor) -> D.Distribution:
@@ -56,10 +54,10 @@ class QNet_v0(QNet):
         super().__init__()
         self.spec = spec
 
-        assert isinstance(spec.observation_space, gym.spaces.Box)
+        assert isinstance(spec.observation_space, gym.spaces.TensorBox)
         obs_dim = int(np.prod(spec.observation_space.shape))
 
-        assert isinstance(spec.action_space, gym.spaces.Box)
+        assert isinstance(spec.action_space, gym.spaces.TensorBox)
         act_dim = int(np.prod(spec.action_space.shape))
 
         self.main = nn.Sequential(

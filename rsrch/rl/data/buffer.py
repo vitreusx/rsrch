@@ -1,10 +1,10 @@
 from typing import Sequence, Union
 
-import gymnasium as gym
 import numpy as np
 import torch
 
 import rsrch.utils.data as data
+from rsrch.rl import gym
 from rsrch.rl.spec import EnvSpec
 
 from .step import *
@@ -25,13 +25,13 @@ class StepBuffer(data.Dataset[Step]):
 
     def _buffer_for(self, space=None, dtype=None):
         if space is not None:
-            if isinstance(space, (gym.spaces.Box, gym.spaces.Discrete)):
-                x = np.empty(space.shape, dtype=space.dtype)
-                x = torch.from_numpy(x)
-                x = torch.empty(self._capacity, *x.shape, dtype=x.dtype)
+            if hasattr(space, "dtype"):
+                assert isinstance(space.dtype, torch.dtype)
+                x = torch.empty(self._capacity, *space.shape, dtype=space.dtype)
             else:
                 x = torch.empty(self._capacity, dtype=object)
         else:
+            assert dtype is not None
             x = torch.empty(self._capacity, dtype=dtype)
         return x
 
