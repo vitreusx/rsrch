@@ -10,6 +10,9 @@ from typing import Optional
 import torch.nn as nn
 from .utils import eval_ctx
 import torch.nn.functional as F
+import copy
+from tqdm.auto import tqdm
+from itertools import count
 
 
 @dataclass
@@ -40,7 +43,9 @@ class TransitionBatch:
 
 
 class ReplayBuffer:
-    def __init__(self, env: gym.Env, capacity: int):
+    def __init__(
+        self, env: gym.Env, capacity: int, device: Optional[torch.device] = None
+    ):
         assert isinstance(env.observation_space, gym.spaces.Box)
         obs_type = env.observation_space.dtype
         self.obs = np.empty((capacity, *env.observation_space.shape), dtype=obs_type)
@@ -53,11 +58,11 @@ class ReplayBuffer:
         self.next_obs = np.empty_like(self.obs)
         self.done = np.empty((capacity,), dtype=np.float32)
 
-        self.obs = torch.from_numpy(self.obs)
-        self.act = torch.from_numpy(self.act)
-        self.reward = torch.from_numpy(self.reward)
-        self.next_obs = torch.from_numpy(self.next_obs)
-        self.done = torch.from_numpy(self.done)
+        self.obs = torch.from_numpy(self.obs).to(device=device)
+        self.act = torch.from_numpy(self.act).to(device=device)
+        self.reward = torch.from_numpy(self.reward).to(device=device)
+        self.next_obs = torch.from_numpy(self.next_obs).to(device=device)
+        self.done = torch.from_numpy(self.done).to(device=device)
 
         self.capacity = capacity
         self.size = 0
@@ -84,7 +89,30 @@ class ReplayBuffer:
         )
 
 
-class QNetwork(nn.Module):
+class ProprioQNet(nn.Module):
+    def __init__(self, env: gym.Env):
+        super().__init__()
+
+        assert isinstance(env.observation_space, gym.spaces.Box)
+        in_features = np.prod(env.observation_space.shape)
+
+        assert isinstance(env.action_space, gym.spaces.Discrete)
+        self.num_actions = int(env.action_space.n)
+
+        self.net = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(in_features, 512),
+            nn.ReLU(inplace=True),
+            nn.Linear(512, 256),
+            nn.ReLU(inplace=True),
+            nn.Linear(256, self.num_actions),
+        )
+
+    def forward(self, obs: torch.Tensor):
+        return self.net(obs)
+
+
+class AtariQNet(nn.Module):
     def __init__(self, env: gym.Env):
         super().__init__()
 
@@ -111,7 +139,7 @@ class QNetwork(nn.Module):
 
 
 class GreedyAgent:
-    def __init__(self, Q: QNetwork):
+    def __init__(self, Q: nn.Module):
         self.Q = Q
 
     def act(self, obs: torch.Tensor) -> int:
@@ -121,7 +149,7 @@ class GreedyAgent:
 
 
 class EpsGreedyAgent:
-    def __init__(self, Q: QNetwork, eps: float):
+    def __init__(self, Q: nn.Module, eps: float):
         self.Q = Q
         self.greedy = GreedyAgent(self.Q)
         self.eps = eps
@@ -133,49 +161,60 @@ class EpsGreedyAgent:
             return self.greedy.act(obs)
 
 
+def polyak_update(target: nn.Module, source: nn.Module, tau: float):
+    for target_p, source_p in zip(target.parameters(), source.parameters()):
+        new_val = tau * target_p.data + (1.0 - tau) * source_p.data
+        target_p.data.copy_(new_val)
+
+
 def dqn():
     def make_env(train: bool):
-        env_name = "Seaquest-v4"
-        env = gym.make(env_name, frameskip=1)
-        frame_skip = 3 if "SpaceInvaders" in env_name else 4
-        env = AtariPreprocessing(
-            env=env,
-            noop_max=0,
-            frame_skip=frame_skip,
-            screen_size=84,
-            terminal_on_life_loss=False,
-            grayscale_obs=True,
-            grayscale_newaxis=False,
-            scale_obs=False,
-        )
-        env = FrameStack(env, num_stack=4)
-        env = TransformObservation(env, np.asarray)
-        if train:
-            env = TransformReward(env, np.sign)
+        # env_name = "Seaquest-v4"
+        # env = gym.make(env_name, frameskip=1)
+        # frame_skip = 3 if "SpaceInvaders" in env_name else 4
+        # env = AtariPreprocessing(
+        #     env=env,
+        #     noop_max=0,
+        #     frame_skip=frame_skip,
+        #     screen_size=84,
+        #     terminal_on_life_loss=False,
+        #     grayscale_obs=True,
+        #     grayscale_newaxis=False,
+        #     scale_obs=False,
+        # )
+        # env = FrameStack(env, num_stack=4)
+        # env = TransformObservation(env, np.asarray)
+        # if train:
+        #     env = TransformReward(env, np.sign)
+        env_name = "CartPole-v1"
+        env = gym.make(env_name)
         return env
 
     train_env, val_env = make_env(train=True), make_env(train=False)
     env_seed = 42
     obs, info = train_env.reset(seed=env_seed)
 
-    batch_size = 32
-    train_frames = int(10e6)
-    val_every = int(1e5)
+    batch_size = 64
+    train_frames = int(1e6)
+    val_every = int(25e3)
     val_episodes = 32
     buffer_capacity = int(1e5)
-    max_eps, min_eps = 1.0, 0.1
+    max_eps, min_eps = 1.0, 0.05
     val_eps = 0.05
     gamma = 0.99
+    tau = 0.999
 
-    replay_buffer = ReplayBuffer(train_env, capacity=buffer_capacity)
-    Q = QNetwork(train_env)
+    device = torch.device("cuda:0")
+
+    replay_buffer = ReplayBuffer(train_env, capacity=buffer_capacity, device=device)
+    # Q = AtariQNet(train_env).to(device)
+    Q = ProprioQNet(train_env)
+    target_Q = copy.deepcopy(Q)
+    Q, target_Q = Q.to(device), target_Q.to(device)
+
     Q_optim = torch.optim.RMSprop(Q.parameters())
-
     train_agent = EpsGreedyAgent(Q, eps=max_eps)
     val_agent = EpsGreedyAgent(Q, eps=val_eps)
-
-    device = torch.device("cpu")
-    idx_seq = torch.arange(batch_size).to(device)
 
     def to_tensor(x, dtype=None):
         return torch.as_tensor(x, dtype=dtype, device=device)
@@ -203,16 +242,17 @@ def dqn():
 
         batch = replay_buffer.sample(batch_size).to(device)
 
-        Q_optim.zero_grad()
-
-        value_pred = Q(batch.obs)[idx_seq, batch.act]
+        value_pred = Q(batch.obs).gather(1, batch.act.unsqueeze(0)).squeeze(0)
         with torch.no_grad():
-            next_reward = torch.argmax(Q(batch.next_obs), dim=1)
+            next_reward = target_Q(batch.next_obs).argmax(dim=1)
         target = batch.reward + (1.0 - batch.done) * gamma * next_reward
-        Q_loss = F.mse_loss(value_pred, target)
+        loss = F.mse_loss(value_pred, target)
 
-        Q_loss.backward()
+        Q_optim.zero_grad()
+        loss.backward()
         Q_optim.step()
+
+        polyak_update(target_Q, Q, tau)
 
     def val_step():
         ep_returns = []
@@ -237,8 +277,8 @@ def dqn():
         )
 
     while True:
-        # if step % val_every == 0:
-        #     val_step()
+        if step % val_every == 0:
+            val_step()
         if should_stop():
             break
         train_step()
