@@ -4,6 +4,18 @@ import torch
 from torch import nn
 
 
+def freeze(*nets: nn.Module):
+    for net in nets:
+        net.requires_grad_ = False
+        net.eval()
+
+
+def unfreeze(*nets: nn.Module):
+    for net in nets:
+        net.requires_grad_ = True
+        net.train()
+
+
 @contextmanager
 def eval_ctx(*nets: nn.Module, no_grad=True):
     prev = [net.training for net in nets]

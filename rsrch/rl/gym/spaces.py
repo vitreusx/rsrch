@@ -1,4 +1,6 @@
+import abc
 import typing
+from abc import ABCMeta
 from typing import SupportsFloat
 
 import numpy as np
@@ -104,8 +106,8 @@ class TensorBox(TensorSpace):
         assert high.dtype == dtype
 
         device = torch.device(device) if device is not None else low.device
-        assert low.device == device
-        assert high.device == device
+        assert low.device.type == device.type
+        assert high.device.type == device.type
 
         super().__init__(shape, dtype, device, seed)
         self.low = low

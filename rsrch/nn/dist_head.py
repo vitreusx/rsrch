@@ -1,11 +1,12 @@
-import math
+from typing import Literal
 
 import numpy as np
 import torch
-import torch.distributions as D
-import torch.distributions.constraints as C
 import torch.nn as nn
 from torch import Tensor
+
+import rsrch.distributions as D
+import rsrch.distributions.constraints as C
 
 
 class Normal(nn.Module):
@@ -24,32 +25,8 @@ class Normal(nn.Module):
         log_std = log_std.reshape(len(x), *self.out_shape)
         std = torch.exp(log_std)
         # This gets us a batch of normal distributions N(mean[i], std[i]^2 I)
-        res_dist = D.Independent(D.Normal(mean, std), 1)
+        res_dist = D.Independent(D.Normal(mean, std), len(self.out_shape))
         return res_dist
-
-
-class SafeTanhTransform(D.Transform):
-    domain = C.real
-    codomain = C.interval(-1.0, 1.0)
-    bijective = True
-    sign = +1
-
-    eps = 1e-8
-    min_v, max_v = -1.0 + eps, 1.0 - eps
-    log2 = math.log(2)
-
-    def __eq__(self, other):
-        return isinstance(other, SafeTanhTransform)
-
-    def _call(self, x: Tensor):
-        return x.tanh()
-
-    def _inverse(self, y: Tensor):
-        y = y.clamp(self.min_v, self.max_v)
-        return y.atanh()
-
-    def log_abs_det_jacobian(self, x: Tensor, y: Tensor):
-        return 2.0 * (self.log2 - x - nn.functional.softplus(-2.0 * x))
 
 
 class SquashedNormal(Normal):
@@ -65,32 +42,11 @@ class SquashedNormal(Normal):
         normal: D.Distribution = super().forward(x)
         squash_fn = D.ComposeTransform(
             [
-                SafeTanhTransform(cache_size=1),
+                D.SafeTanhTransform(cache_size=1),
                 D.AffineTransform(self._loc, self._scale),
             ]
         )
-        return D.TransformedDistribution(normal, squash_fn)
-
-
-class Cast01Transform(D.Transform):
-    domain = C.real
-    codomain = C.boolean
-
-    def __init__(self, prev_dt: torch.dtype):
-        super().__init__()
-        self.prev_dt = prev_dt
-
-    def __eq__(self, other):
-        return isinstance(other, Cast01Transform) and self.prev_dt == other.prev_dt
-
-    def _call(self, x: Tensor):
-        return x.bool()
-
-    def _inverse(self, y: Tensor):
-        return y.to(dtype=self.prev_dt)
-
-    def log_abs_det_jacobian(self, x, y):
-        return 1.0
+        return D.TransformedDistribution(normal, squash_fn, validate_args=False)
 
 
 class Bernoulli(nn.Module):
@@ -100,16 +56,59 @@ class Bernoulli(nn.Module):
 
     def forward(self, x: Tensor) -> D.Distribution:
         logits: Tensor = self.net(x).ravel()
-        dist = D.Bernoulli(logits=logits)
-        t = Cast01Transform(prev_dt=logits.dtype)
-        return D.TransformedDistribution(dist, t)
+        return D.Bernoulli(logits=logits)
 
 
 class Categorical(nn.Module):
+    def __init__(self, in_features: int, num_classes: int):
+        super().__init__()
+        self.in_features = in_features
+        self.num_classes = num_classes
+        self.fc = nn.Linear(in_features, num_classes)
+
+    def forward(self, x: Tensor) -> D.Categorical:
+        logits: Tensor = self.fc(x)
+        return D.Categorical(logits=logits)
+
+
+class ToDistribution(nn.Module):
+    def __init__(self, t: type, attr: str):
+        super().__init__()
+        self.t = t
+        self.attr = attr
+
+    def forward(self, x: Tensor):
+        return self.t(**{self.attr: x})
+
+
+class CategoricalFromLogits(nn.Module):
+    def forward(self, x: Tensor) -> D.Categorical:
+        return D.Categorical(logits=x)
+
+
+class OHST(nn.Module):
     def __init__(self, in_features: int, num_classes: int):
         super().__init__()
         self.fc = nn.Linear(in_features, num_classes)
 
     def forward(self, x: Tensor) -> D.Categorical:
         logits: Tensor = self.fc(x)
-        return D.Categorical(logits=logits)
+        return D.OneHotCategoricalStraightThrough(logits=logits)
+
+
+class OHSTFromLogits(nn.Module):
+    def forward(self, x: Tensor) -> D.Categorical:
+        return D.OneHotCategoricalStraightThrough(logits=x)
+
+
+class MultiheadOHST(nn.Module):
+    def __init__(self, in_features: int, out_features: int, num_classes: int):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.num_classes = num_classes
+        self.net = nn.Linear(in_features, out_features)
+
+    def forward(self, x: Tensor) -> D.MultiheadOHST:
+        logits: Tensor = self.net(x)
+        return D.MultiheadOHST(self.out_features, self.num_classes, logits=logits)

@@ -8,7 +8,7 @@ from torch import Tensor, nn
 from tqdm.auto import tqdm
 
 from rsrch.rl import agents, gym
-from rsrch.rl.data.seq import SeqRollout
+from rsrch.rl.data.seq import Episodes
 from rsrch.rl.data.step import StepBatch, StepBuffer, StepRollout
 from rsrch.rl.utils.polyak import Polyak
 from rsrch.utils import data
@@ -155,7 +155,7 @@ class Trainer:
             if ep_idx == 0:
                 cur_env = gym.wrappers.RenderCollection(cur_env)
 
-            ep_source = SeqRollout(cur_env, self.agent, num_episodes=1)
+            ep_source = Episodes(cur_env, self.agent, num_episodes=1)
             episode = next(iter(ep_source))
             ep_R = sum(episode.reward)
             val_ep_returns.append(ep_R)

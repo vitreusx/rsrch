@@ -136,6 +136,20 @@ class H5Seq(Sequence[np.memmap, np.memmap]):
 
 
 @dataclass
+class SeqBatchStep:
+    """A slice of SeqBatch representing a single step."""
+
+    obs: Tensor
+    act: Tensor | None
+    prev_act: Tensor | None
+    reward: Tensor
+    term: Tensor
+
+    def __len__(self):
+        return len(self.obs)
+
+
+@dataclass
 class PackedSeqBatch:
     """A batch of variable-length Tensor trajectories."""
 
@@ -148,11 +162,24 @@ class PackedSeqBatch:
         return len(self.obs.batch_sizes)
 
     @property
+    def step_batches(self):
+        for step_idx in range(len(self)):
+            obs = self.obs.data[self.obs_idxes[step_idx]]
+            act = None
+            if step_idx < len(self) - 1:
+                act = self.act.data[self.act_idxes[step_idx]]
+            prev_act, reward = None, None
+            if step_idx > 0:
+                prev_act = self.act.data[self.act_idxes[step_idx - 1]]
+                reward = self.reward.data[self.reward_idxes[step_idx - 1]]
+            term = self.term.data[self.term_idxes[step_idx]]
+            yield SeqBatchStep(obs, act, prev_act, reward, term)
+
+    @property
     def obs_idxes(self) -> list[slice]:
         """Get the index slices for consecutive steps for accessing obs.data."""
-
         if not hasattr(self, "_obs_idxes"):
-            ends = torch.cumsum(self.obs.batch_sizes)
+            ends = torch.cumsum(self.obs.batch_sizes, 0)
             starts = ends - self.obs.batch_sizes
             self._obs_idxes = [slice(start, end) for start, end in zip(starts, ends)]
         return self._obs_idxes
@@ -160,10 +187,9 @@ class PackedSeqBatch:
     @property
     def act_idxes(self) -> list[slice]:
         """Get the index slices for consecutive steps for accessing act.data."""
-
         if not hasattr(self, "_act_idxes"):
-            ends = torch.cumsum(self.obs.batch_sizes)
-            starts = ends - self.obs.batch_sizes
+            ends = torch.cumsum(self.act.batch_sizes, 0)
+            starts = ends - self.act.batch_sizes
             self._act_idxes = [slice(start, end) for start, end in zip(starts, ends)]
         return self._act_idxes
 
@@ -177,12 +203,14 @@ class PackedSeqBatch:
         """Get the index slices for consecutive steps for accessing term.data."""
         return self.obs_idxes
 
-    def to(self, device: torch.device) -> PackedSeqBatch:
+    def to(
+        self, device: torch.device | None = None, dtype: torch.dtype | None = None
+    ) -> PackedSeqBatch:
         return PackedSeqBatch(
-            obs=self.obs.to(device),
-            act=self.act.to(device),
-            reward=self.reward.to(device),
-            term=self.term.to(device),
+            obs=self.obs.to(device=device),
+            act=self.act.to(device=device),
+            reward=self.reward.to(device=device),
+            term=self.term.to(device=device),
         )
 
     @staticmethod

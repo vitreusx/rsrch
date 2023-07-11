@@ -5,15 +5,8 @@ import torch
 import torch.distributions as D
 from torch import Tensor
 
+from rsrch.rl.api import Agent
 from rsrch.rl.spec import EnvSpec
-
-
-class Agent(Protocol):
-    def reset(self):
-        ...
-
-    def act(self, obs):
-        ...
 
 
 class RandomAgent(Agent):

@@ -34,3 +34,12 @@ class ToTensorStep(nn.Module, Transform):
 
     def forward(self, step: Step) -> TensorStep:
         return F.to_tensor_step(step)
+
+
+class ToDevice(nn.Module, Transform):
+    def __init__(self, device: torch.device | None = None):
+        super().__init__()
+        self.device = device
+
+    def forward(self, x):
+        return x.to(device=self.device)

@@ -8,7 +8,7 @@ from torch import Tensor, nn
 from tqdm.auto import tqdm
 
 from rsrch.rl import agents, gym
-from rsrch.rl.data.seq import SeqRollout
+from rsrch.rl.data.seq import Episodes
 from rsrch.rl.data.step import StepBatch, StepBuffer, StepRollout
 from rsrch.rl.utils.polyak import Polyak
 from rsrch.utils import data

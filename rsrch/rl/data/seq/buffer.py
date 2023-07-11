@@ -2,6 +2,7 @@ import numpy as np
 
 from rsrch.utils import data
 
+from ..step import Step
 from .data import ListSeq, Sequence
 from .store import RAMStore, Store
 
@@ -14,6 +15,7 @@ class SeqBuffer(data.Dataset[Sequence]):
         self.size, self._loop = 0, False
         self.capacity = capacity
         self.store = store
+        self._needs_reset = True
 
     @property
     def episodes(self):
@@ -41,6 +43,16 @@ class SeqBuffer(data.Dataset[Sequence]):
         self._cur_ep.obs.append(next_obs)
         self._cur_ep.reward.append(reward)
         self._cur_ep.term.append(term)
+
+    def add(self, step: Step, done: bool):
+        if self._needs_reset:
+            self.on_reset(step.obs)
+            self._needs_reset = False
+
+        trunc = done and not step.term
+        self.on_step(step.act, step.next_obs, step.reward, step.term, trunc)
+        if done:
+            self._needs_reset = True
 
     def __len__(self):
         return self.size

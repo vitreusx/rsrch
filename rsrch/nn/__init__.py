@@ -1,11 +1,11 @@
-from typing import Callable, Concatenate, Generic, ParamSpec, TypeVar
-
+from torch import Tensor
 from torch.nn import *
 
-P = ParamSpec("P")
-Ret = TypeVar("Ret")
 
+class OneHot(Module):
+    def __init__(self, num_classes: int):
+        super().__init__()
+        self.num_classes = num_classes
 
-class TypedModule(Module, Generic[P, Ret]):
-    forward: Callable[P, Ret]
-    __call__: Callable[Concatenate["TypedModule", P], Ret]
+    def forward(self, x: Tensor) -> Tensor:
+        return functional.one_hot(x, self.num_classes)

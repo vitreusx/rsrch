@@ -101,3 +101,24 @@ class InfiniteSampler:
                     idx = 0
                 yield idx
                 idx += 1
+
+
+class Pipeline:
+    def __init__(self, *stages):
+        self.ds = stages[0]
+        self.transforms = stages[1:]
+
+    def __len__(self):
+        return len(self.ds)
+
+    def __getitem__(self, idx):
+        return self.apply(self.ds[idx])
+
+    def apply(self, x):
+        for func in self.transforms:
+            x = func(x)
+        return x
+
+    def __iter__(self):
+        for x in self.ds:
+            yield self.apply(x)
