@@ -37,7 +37,6 @@ torchvision = "^0.15"
 tensordict = "^0.1.2"
 gymnasium = { version = "^0.28.1", extras = ["accept-rom-license", "all"] }
 poethepoet = "^0.21.0"
-opencv-python-headless = "^4.8.0.74"
 
 [tool.poetry.group.ext]
 optional = true
@@ -75,6 +74,16 @@ shell = """
     --index-url https://download.pytorch.org/whl/${cuda}
 """
 args = [{ name = "cuda", default = "cu117" }]
+
+[tool.poe.tasks.fix-opencv]
+shell = """
+  export OPENCV=$(\
+    poetry export -f requirements.txt \
+    | grep -E "opencv-python==[^ ]*" -o \
+    | sed -E 's/opencv-python==(.*)/\\1/')
+  pip uninstall -y opencv-python
+  pip install -U opencv-python-headless==${OPENCV}
+"""
 
 [build-system]
 requires = ["poetry-core>=1.5"]
