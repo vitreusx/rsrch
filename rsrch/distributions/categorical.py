@@ -123,8 +123,16 @@ class Categorical(Distribution):
         if not isinstance(sample_shape, torch.Size):
             sample_shape = torch.Size(sample_shape)
         probs_2d = self.probs.reshape(-1, self._num_events)
-        samples_2d = torch.multinomial(probs_2d, sample_shape.numel(), True).T
+        if sample_shape.numel() == 1:
+            samples_2d = self._multinomial1(probs_2d).T
+        else:
+            samples_2d = torch.multinomial(probs_2d, sample_shape.numel(), True).T
         return samples_2d.reshape(self._extended_shape(sample_shape))
+
+    def _multinomial1(self, probs_2d: torch.Tensor):
+        q = torch.empty_like(probs_2d).exponential_(1)
+        q = probs_2d / q
+        return q.argmax(dim=-1, keepdim=True)
 
     def log_prob(self, value):
         if self._validate_args:
