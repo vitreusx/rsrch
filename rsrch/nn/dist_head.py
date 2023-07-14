@@ -25,7 +25,8 @@ class Normal(nn.Module):
         log_std = log_std.reshape(len(x), *self.out_shape)
         std = torch.exp(log_std)
         # This gets us a batch of normal distributions N(mean[i], std[i]^2 I)
-        res_dist = D.Independent(D.Normal(mean, std), len(self.out_shape))
+        res_dist = D.Normal(mean, std)
+        res_dist = D.Independent(res_dist, len(self.out_shape))
         return res_dist
 
 
@@ -46,7 +47,7 @@ class SquashedNormal(Normal):
                 D.AffineTransform(self._loc, self._scale),
             ]
         )
-        return D.TransformedDistribution(normal, squash_fn, validate_args=False)
+        return D.TransformedDistribution(normal, squash_fn)
 
 
 class Bernoulli(nn.Module):
@@ -81,11 +82,6 @@ class ToDistribution(nn.Module):
         return self.t(**{self.attr: x})
 
 
-class CategoricalFromLogits(nn.Module):
-    def forward(self, x: Tensor) -> D.Categorical:
-        return D.Categorical(logits=x)
-
-
 class OHST(nn.Module):
     def __init__(self, in_features: int, num_classes: int):
         super().__init__()
@@ -94,11 +90,6 @@ class OHST(nn.Module):
     def forward(self, x: Tensor) -> D.Categorical:
         logits: Tensor = self.fc(x)
         return D.OneHotCategoricalStraightThrough(logits=logits)
-
-
-class OHSTFromLogits(nn.Module):
-    def forward(self, x: Tensor) -> D.Categorical:
-        return D.OneHotCategoricalStraightThrough(logits=x)
 
 
 class MultiheadOHST(nn.Module):

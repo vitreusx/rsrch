@@ -1,11 +1,14 @@
 {
     "configurations": [
         {
-            "name": "Dreamer",
+            "name": "Dreamer v2",
             "type": "python",
             "request": "launch",
-            "module": "rsrch.hub.dreamer",
-            "justMyCode": true
+            "module": "rsrch.hub.dreamer.v2_opt",
+            "pythonArgs": [
+                "-O"
+            ],
+            "justMyCode": false
         },
     ]
 }

@@ -9,7 +9,6 @@ class ConvBlock(nn.Module):
 class ConvNet(nn.Sequential):
     def __init__(
         self,
-        *,
         in_channels: int = None,
         input_shape: torch.Size = None,
         depth=4,

@@ -203,9 +203,7 @@ class PackedSeqBatch:
         """Get the index slices for consecutive steps for accessing term.data."""
         return self.obs_idxes
 
-    def to(
-        self, device: torch.device | None = None, dtype: torch.dtype | None = None
-    ) -> PackedSeqBatch:
+    def to(self, device: torch.device | None = None) -> PackedSeqBatch:
         return PackedSeqBatch(
             obs=self.obs.to(device=device),
             act=self.act.to(device=device),
@@ -228,7 +226,7 @@ class PackedSeqBatch:
         return PackedSeqBatch(obs, act, reward, term)
 
 
-@tensorclass
+@dataclass
 class PaddedSeqBatch:
     """A batch of equal-length Tensor trajectories. The shapes of the tensors are (L, B, ...)"""
 
@@ -237,12 +235,36 @@ class PaddedSeqBatch:
     reward: Tensor
     term: Tensor
 
+    @property
+    def step_batches(self):
+        for step in range(len(self)):
+            obs = self.obs[step]
+            act = None
+            if step < len(self) - 1:
+                act = self.act[step]
+            prev_act, reward = None, None
+            if step > 0:
+                prev_act = self.act[step - 1]
+                reward = self.reward[step - 1]
+            term = self.term[step]
+            yield SeqBatchStep(obs, act, prev_act, reward, term)
+
+    def __len__(self):
+        return self.obs.shape[1]
+
+    def to(self, device=None):
+        return PaddedSeqBatch(
+            self.obs.to(device),
+            self.act.to(device),
+            self.reward.to(device),
+            self.term.to(device),
+        )
+
     @staticmethod
     def collate_fn(batch: List[TensorSeq]):
         """Collate a batch of :class:`TensorSeq` items into :class:`MultiStepBatch`. NOTE: This function does not check if the items have equal sequence length."""
-
         obs = torch.stack([seq.obs for seq in batch], dim=1)
         act = torch.stack([seq.act for seq in batch], dim=1)
         reward = torch.stack([seq.reward for seq in batch], dim=1)
         term = torch.stack([seq.term for seq in batch], dim=1)
-        return PaddedSeqBatch(obs, act, reward, term, batch_size=[len(batch)])
+        return PaddedSeqBatch(obs, act, reward, term)

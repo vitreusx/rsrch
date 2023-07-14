@@ -1,0 +1,152 @@
+torch.Size([1, 192, 5, 5])
+torch.Size([1, 96, 13, 13])
+torch.Size([1, 48, 30, 30])
+torch.Size([1, 1, 64, 64])
+Warning! No positional inputs found for a module, assuming batch size is 1.
+VisEncoder2(
+  1.55 M, 100.000% Params, 30.67 MMac, 100.000% MACs, 
+  (main): Sequential(
+    1.55 M, 100.000% Params, 30.67 MMac, 100.000% MACs, 
+    (0): Conv2d(816, 0.053% Params, 784.18 KMac, 2.557% MACs, 1, 48, kernel_size=(4, 4), stride=(2, 2))
+    (1): ELU(0, 0.000% Params, 46.13 KMac, 0.150% MACs, alpha=1.0)
+    (2): Conv2d(73.82 k, 4.764% Params, 14.47 MMac, 47.177% MACs, 48, 96, kernel_size=(4, 4), stride=(2, 2))
+    (3): ELU(0, 0.000% Params, 18.82 KMac, 0.061% MACs, alpha=1.0)
+    (4): Conv2d(295.1 k, 19.042% Params, 10.62 MMac, 34.638% MACs, 96, 192, kernel_size=(4, 4), stride=(2, 2))
+    (5): ELU(0, 0.000% Params, 6.91 KMac, 0.023% MACs, alpha=1.0)
+    (6): Conv2d(1.18 M, 76.142% Params, 4.72 MMac, 15.390% MACs, 192, 384, kernel_size=(4, 4), stride=(2, 2))
+    (7): ELU(0, 0.000% Params, 1.54 KMac, 0.005% MACs, alpha=1.0)
+    (8): Flatten(0, 0.000% Params, 0.0 Mac, 0.000% MACs, start_dim=1, end_dim=-1)
+  )
+)
+self.rssm.obs_enc: #FLOPS = 30.67 MMac, #Params = 1.55 M
+Warning! No positional inputs found for a module, assuming batch size is 1.
+ActionEncoder(0, 0.000% Params, 0.0 Mac, 0.000% MACs, )
+self.rssm.act_enc: #FLOPS = 0.0 Mac, #Params = 0
+Warning! No positional inputs found for a module, assuming batch size is 1.
+ActionDecoder(0, 0.000% Params, 0.0 Mac, 0.000% MACs, )
+self.rssm.act_dec: #FLOPS = 0.0 Mac, #Params = 0
+Warning! No positional inputs found for a module, assuming batch size is 1.
+RecurModel(
+  4.8 M, 100.000% Params, 4.81 MMac, 100.000% MACs, 
+  (fc): Sequential(
+    417.2 k, 8.696% Params, 417.6 KMac, 8.690% MACs, 
+    (0): Linear(417.2 k, 8.696% Params, 417.2 KMac, 8.682% MACs, in_features=1042, out_features=400, bias=True)
+    (1): Identity(0, 0.000% Params, 0.0 Mac, 0.000% MACs, )
+    (2): ELU(0, 0.000% Params, 400.0 Mac, 0.008% MACs, alpha=1.0)
+  )
+  (cell): GRUCell(4.38 M, 91.304% Params, 4.39 MMac, 91.310% MACs, 400, 1024)
+)
+self.rssm.recur_model: #FLOPS = 4.81 MMac, #Params = 4.8 M
+Warning! No positional inputs found for a module, assuming batch size is 1.
+ReprModel(
+  1.44 M, 100.000% Params, 1.44 MMac, 100.000% MACs, 
+  (net): Sequential(
+    1.44 M, 100.000% Params, 1.44 MMac, 100.000% MACs, 
+    (0): Linear(1.02 M, 71.386% Params, 1.02 MMac, 71.366% MACs, in_features=2560, out_features=400, bias=True)
+    (1): Identity(0, 0.000% Params, 0.0 Mac, 0.000% MACs, )
+    (2): ELU(0, 0.000% Params, 400.0 Mac, 0.028% MACs, alpha=1.0)
+    (3): MultiheadOHST(
+      410.62 k, 28.614% Params, 410.62 KMac, 28.606% MACs, 
+      (net): Linear(410.62 k, 28.614% Params, 410.62 KMac, 28.606% MACs, in_features=400, out_features=1024, bias=True)
+    )
+  )
+)
+self.rssm.repr_model: #FLOPS = 1.44 MMac, #Params = 1.44 M
+Warning! No positional inputs found for a module, assuming batch size is 1.
+TransPred(
+  820.62 k, 100.000% Params, 821.02 KMac, 100.000% MACs, 
+  (net): Sequential(
+    820.62 k, 100.000% Params, 821.02 KMac, 100.000% MACs, 
+    (0): Linear(410.0 k, 49.962% Params, 410.0 KMac, 49.938% MACs, in_features=1024, out_features=400, bias=True)
+    (1): Identity(0, 0.000% Params, 0.0 Mac, 0.000% MACs, )
+    (2): ELU(0, 0.000% Params, 400.0 Mac, 0.049% MACs, alpha=1.0)
+    (3): MultiheadOHST(
+      410.62 k, 50.038% Params, 410.62 KMac, 50.014% MACs, 
+      (net): Linear(410.62 k, 50.038% Params, 410.62 KMac, 50.014% MACs, in_features=400, out_features=1024, bias=True)
+    )
+  )
+)
+self.rssm.trans_pred: #FLOPS = 821.02 KMac, #Params = 820.62 k
+Warning! No positional inputs found for a module, assuming batch size is 1.
+RewardModel(
+  820.4 k, 100.000% Params, 820.8 KMac, 100.000% MACs, 
+  (net): Sequential(
+    820.4 k, 100.000% Params, 820.8 KMac, 100.000% MACs, 
+    (0): Linear(819.6 k, 99.902% Params, 819.6 KMac, 99.854% MACs, in_features=2048, out_features=400, bias=True)
+    (1): Identity(0, 0.000% Params, 0.0 Mac, 0.000% MACs, )
+    (2): ELU(0, 0.000% Params, 400.0 Mac, 0.049% MACs, alpha=1.0)
+    (3): Normal(
+      802, 0.098% Params, 802.0 Mac, 0.098% MACs, 
+      (fc): Linear(802, 0.098% Params, 802.0 Mac, 0.098% MACs, in_features=400, out_features=2, bias=True)
+    )
+  )
+)
+self.rssm.rew_pred: #FLOPS = 820.8 KMac, #Params = 820.4 k
+Warning! No positional inputs found for a module, assuming batch size is 1.
+TermModel(
+  820.0 k, 100.000% Params, 820.4 KMac, 100.000% MACs, 
+  (net): Sequential(
+    820.0 k, 100.000% Params, 820.4 KMac, 100.000% MACs, 
+    (0): Linear(819.6 k, 99.951% Params, 819.6 KMac, 99.902% MACs, in_features=2048, out_features=400, bias=True)
+    (1): Identity(0, 0.000% Params, 0.0 Mac, 0.000% MACs, )
+    (2): ELU(0, 0.000% Params, 400.0 Mac, 0.049% MACs, alpha=1.0)
+    (3): Bernoulli(
+      401, 0.049% Params, 401.0 Mac, 0.049% MACs, 
+      (net): Linear(401, 0.049% Params, 401.0 Mac, 0.049% MACs, in_features=400, out_features=1, bias=True)
+    )
+  )
+)
+self.rssm.term_pred: #FLOPS = 820.4 KMac, #Params = 820.0 k
+Warning! No positional inputs found for a module, assuming batch size is 1.
+VisDecoder3(
+  11.15 M, 100.000% Params, 421.85 MMac, 100.000% MACs, 
+  (fc): Linear(3.15 M, 28.230% Params, 3.15 MMac, 0.746% MACs, in_features=2048, out_features=1536, bias=True)
+  (main): Sequential(
+    8.0 M, 71.770% Params, 418.7 MMac, 99.254% MACs, 
+    (0): ConvTranspose2d(7.37 M, 66.133% Params, 184.32 MMac, 43.694% MACs, 1536, 192, kernel_size=(5, 5), stride=(2, 2))
+    (1): ConvTranspose2d(460.9 k, 4.134% Params, 77.89 MMac, 18.464% MACs, 192, 96, kernel_size=(5, 5), stride=(2, 2))
+    (2): ELU(0, 0.000% Params, 16.22 KMac, 0.004% MACs, alpha=1.0)
+    (3): ConvTranspose2d(165.94 k, 1.488% Params, 149.34 MMac, 35.402% MACs, 96, 48, kernel_size=(6, 6), stride=(2, 2))
+    (4): ELU(0, 0.000% Params, 43.2 KMac, 0.010% MACs, alpha=1.0)
+    (5): ConvTranspose2d(1.73 k, 0.016% Params, 7.08 MMac, 1.679% MACs, 48, 1, kernel_size=(6, 6), stride=(2, 2))
+    (6): ELU(0, 0.000% Params, 4.1 KMac, 0.001% MACs, alpha=1.0)
+  )
+)
+self.obs_pred: #FLOPS = 421.85 MMac, #Params = 11.15 M
+Warning! No positional inputs found for a module, assuming batch size is 1.
+Actor(
+  1.15 M, 100.000% Params, 1.15 MMac, 100.000% MACs, 
+  (stem): FullyConnected(
+    1.14 M, 99.371% Params, 1.14 MMac, 99.371% MACs, 
+    (0): Linear(819.2 k, 71.432% Params, 819.2 KMac, 71.383% MACs, in_features=2048, out_features=400, bias=False)
+    (1): Identity(0, 0.000% Params, 0.0 Mac, 0.000% MACs, )
+    (2): ELU(0, 0.000% Params, 400.0 Mac, 0.035% MACs, alpha=1.0)
+    (3): Linear(160.0 k, 13.952% Params, 160.0 KMac, 13.942% MACs, in_features=400, out_features=400, bias=False)
+    (4): Identity(0, 0.000% Params, 0.0 Mac, 0.000% MACs, )
+    (5): ELU(0, 0.000% Params, 400.0 Mac, 0.035% MACs, alpha=1.0)
+    (6): Linear(160.4 k, 13.987% Params, 160.4 KMac, 13.977% MACs, in_features=400, out_features=400, bias=True)
+  )
+  (head): OHST(
+    7.22 k, 0.629% Params, 7.22 KMac, 0.629% MACs, 
+    (fc): Linear(7.22 k, 0.629% Params, 7.22 KMac, 0.629% MACs, in_features=400, out_features=18, bias=True)
+  )
+)
+self.actor: #FLOPS = 1.15 MMac, #Params = 1.15 M
+Warning! No positional inputs found for a module, assuming batch size is 1.
+Critic(
+  1.14 M, 100.000% Params, 1.14 MMac, 100.000% MACs, 
+  (net): FullyConnected(
+    1.14 M, 100.000% Params, 1.14 MMac, 100.000% MACs, 
+    (0): Linear(819.2 k, 71.885% Params, 819.2 KMac, 71.809% MACs, in_features=2048, out_features=400, bias=False)
+    (1): Identity(0, 0.000% Params, 0.0 Mac, 0.000% MACs, )
+    (2): ELU(0, 0.000% Params, 400.0 Mac, 0.035% MACs, alpha=1.0)
+    (3): Linear(160.0 k, 14.040% Params, 160.0 KMac, 14.025% MACs, in_features=400, out_features=400, bias=False)
+    (4): Identity(0, 0.000% Params, 0.0 Mac, 0.000% MACs, )
+    (5): ELU(0, 0.000% Params, 400.0 Mac, 0.035% MACs, alpha=1.0)
+    (6): Linear(160.0 k, 14.040% Params, 160.0 KMac, 14.025% MACs, in_features=400, out_features=400, bias=False)
+    (7): Identity(0, 0.000% Params, 0.0 Mac, 0.000% MACs, )
+    (8): ELU(0, 0.000% Params, 400.0 Mac, 0.035% MACs, alpha=1.0)
+    (9): Linear(401, 0.035% Params, 401.0 Mac, 0.035% MACs, in_features=400, out_features=1, bias=True)
+  )
+)
+self.critic: #FLOPS = 1.14 MMac, #Params = 1.14 M

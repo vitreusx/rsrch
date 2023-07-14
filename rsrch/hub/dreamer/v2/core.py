@@ -52,18 +52,6 @@ class Agent(nn.Module, rl_api.Agent):
             return act[0]
 
 
-@contextmanager
-def NullProfiler():
-    class _NullProfiler:
-        def step(self):
-            ...
-
-    try:
-        yield _NullProfiler()
-    finally:
-        ...
-
-
 class Dreamer(ABC):
     def train(self):
         self.setup()
@@ -130,18 +118,10 @@ class Dreamer(ABC):
     def setup_extras(self):
         self.exp_dir: ExpDir = ...
         self.board: Board = ...
-        self.detect_anomaly: bool = ...
-        self.prof_enabled: bool = ...
-        self.prof_cycles: int = ...
-        self.prof_wait: int = ...
-        self.prof_warmup: int = ...
-        self.prof_active: int = ...
 
     def train_loop(self):
         self.step = 0
         self.step_pbar = tqdm(desc="Step", total=self.max_steps, leave=False)
-
-        torch.autograd.set_detect_anomaly(self.detect_anomaly)
 
         with self.create_profiler() as self.prof:
             while True:
@@ -154,50 +134,6 @@ class Dreamer(ABC):
                 self.prof.step()
                 self.step += 1
                 self.step_pbar.update()
-
-    def create_profiler(self):
-        if not self.prof_enabled:
-            return NullProfiler()
-
-        prof_activities = [ProfilerActivity.CPU]
-        if self.device.type == "cuda":
-            prof_activities.append(ProfilerActivity.CUDA)
-
-        prof_sched = schedule(
-            wait=self.prof_wait,
-            warmup=self.prof_warmup,
-            active=self.prof_active,
-            repeat=self.prof_cycles,
-        )
-
-        def export_trace(p):
-            trace_dest = (
-                self.exp_dir.path / "traces" / f"trace.step_num={p.step_num}.json"
-            )
-            trace_dest.parent.mkdir(parents=True, exist_ok=True)
-            p.export_chrome_trace(str(trace_dest))
-
-        def export_stack(p):
-            stack_dest = (
-                self.exp_dir.path / "stacks" / f"stack.step_num={p.step_num}.json"
-            )
-            stack_dest.parent.mkdir(parents=True, exist_ok=True)
-            metric = f"self_{self.device.type}_time_total"
-            p.export_stacks(stack_dest, metric)
-
-        def on_trace_ready(p):
-            export_trace(p)
-            export_stack(p)
-
-        return profile(
-            activities=prof_activities,
-            schedule=prof_sched,
-            on_trace_ready=on_trace_ready,
-            record_shapes=True,
-            profile_memory=True,
-            with_stack=True,
-            with_flops=True,
-        )
 
     @property
     def is_val_epoch(self):

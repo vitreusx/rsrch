@@ -1,82 +1,87 @@
+from typing import Optional
+
 import torch
-import torch.distributions as D
 from torch import Tensor
 from torch.distributions import *
 
 from rsrch.utils.detach import detach, register_detach
 
+from .categorical import *
+from .one_hot_categorical import *
 from .transforms import *
 
 
-@register_detach(D.Categorical)
-def _detach_cat(rv: D.Categorical):
+@register_detach(Categorical)
+def _detach_cat(rv: Categorical):
     if "logits" in rv.__dict__:
         logits = rv.logits.detach()
-        return D.Categorical(logits=logits, validate_args=rv._validate_args)
+        return Categorical(logits=logits, validate_args=rv._validate_args)
     else:
         probs = rv.probs.detach()
-        return D.Categorical(probs=probs, validate_args=rv._validate_args)
+        return Categorical(probs=probs, validate_args=rv._validate_args)
 
 
-@register_detach(D.Normal)
-def _detach_normal(rv: D.Normal):
-    return D.Normal(
+@register_detach(Normal)
+def _detach_normal(rv: Normal):
+    return Normal(
         loc=rv.loc.detach(),
         scale=rv.scale.detach(),
         validate_args=rv._validate_args,
     )
 
 
-@register_detach(D.Independent)
-def _detach_ind(rv: D.Independent):
-    return D.Independent(
+@register_detach(Independent)
+def _detach_ind(rv: Independent):
+    return Independent(
         base_distribution=detach(rv.base_dist),
         reinterpreted_batch_ndims=rv.reinterpreted_batch_ndims,
         validate_args=rv._validate_args,
     )
 
 
-@register_detach(D.TransformedDistribution)
-def _detach_transformed(rv: D.TransformedDistribution):
-    return D.TransformedDistribution(
+@register_detach(TransformedDistribution)
+def _detach_transformed(rv: TransformedDistribution):
+    return TransformedDistribution(
         base_distribution=detach(rv.base_dist),
         transforms=rv.transforms,
         validate_args=rv._validate_args,
     )
 
 
-class MultiheadOHST(D.Distribution):
+class MultiheadOHST(Distribution):
     arg_constraints = {}
 
     def __init__(
         self,
         enc_dim: int,
         num_classes: int,
-        *,
-        probs: Tensor | None = None,
-        logits: Tensor | None = None,
+        probs: Optional[Tensor] = None,
+        logits: Optional[Tensor] = None,
     ):
         self.enc_dim = enc_dim
         assert enc_dim % num_classes == 0
         num_heads = enc_dim // num_classes
         self.num_heads = num_heads
         self.num_classes = num_classes
-        if logits is not None:
-            self.logits = logits
-        else:
-            self.probs = probs
+        self.probs = probs
+        self.logits = logits
 
-        x: Tensor = probs if probs is not None else logits
-        batch_shape, event_shape = x.shape[:-1], x.shape[-1]
-        assert event_shape == num_heads * num_classes
-        super().__init__(batch_shape, event_shape)
+        batch_shape, event_shape = torch.Size([]), torch.Size([])
+        if probs is not None:
+            batch_shape, event_shape = probs.shape[:-1], probs.shape[-1:]
+        elif logits is not None:
+            batch_shape, event_shape = logits.shape[:-1], logits.shape[-1:]
 
-        OHST = D.OneHotCategoricalStraightThrough
+        assert event_shape[0] == num_heads * num_classes
+        self._batch_shape = batch_shape
+        self._event_shape = event_shape
+
+        OHST = OneHotCategoricalStraightThrough
         if logits is not None:
             self._unwrapped = OHST(logits=self._split(logits))
         else:
             self._unwrapped = OHST(probs=self._split(probs))
-        self._base = D.Independent(self._unwrapped, 1)
+        self._base = Independent(self._unwrapped, 1)
 
     def log_prob(self, value: Tensor) -> Tensor:
         return self._base.log_prob(self._split(value))
@@ -94,14 +99,14 @@ class MultiheadOHST(D.Distribution):
         return x.reshape(*x.shape[:-1], self.num_heads, self.num_classes)
 
 
-@D.register_kl(MultiheadOHST, MultiheadOHST)
+@register_kl(MultiheadOHST, MultiheadOHST)
 def _multihead_ohst_kl(p: MultiheadOHST, q: MultiheadOHST):
-    return D.kl_divergence(p._base, q._base)
+    return kl_divergence(p._base, q._base)
 
 
 @register_detach(MultiheadOHST)
 def _detach_mh_ohst(rv: MultiheadOHST):
-    if "logits" in rv.__dict__:
+    if rv.logits is not None:
         kw = dict(logits=rv.logits.detach())
     else:
         kw = dict(probs=rv.probs.detach())
