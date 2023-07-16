@@ -297,14 +297,14 @@ class Dreamer(ABC):
         unfreeze(self.rssm)
         seq_batch = next(self.train_batches)
 
-        loss, (wm_phase_hs, wm_phase_zs) = self._optimize_world_model(seq_batch)
+        loss, (self.init_hs, self.init_zs) = self._optimize_world_model(seq_batch)
+
+        self.wm_optim.zero_grad(set_to_none=True)
 
         for name, value in loss.items():
             self.board.add_scalar(f"train/{name}_loss", value)
 
-        self.init_hs = torch.cat(wm_phase_hs).detach()
-        self.init_zs = torch.cat(wm_phase_zs).detach()
-
+    # @torch.compile
     def _optimize_world_model(self, seq_batch: PaddedSeqBatch):
         cur_h = self.rssm.prior_h
         cur_h = cur_h.expand(self.batch_size, *cur_h.shape)
@@ -312,40 +312,49 @@ class Dreamer(ABC):
         cur_z = cur_z.expand(self.batch_size, *cur_z.shape)
 
         loss = {"kl": 0.0, "obs": 0.0, "term": 0.0, "rew": 0.0}
-        wm_phase_hs, wm_phase_zs = [], []
+        hs, zs = [], []
+        repr_rvs, trans_rvs = [], []
 
-        for step, step_batch in enumerate(seq_batch.step_batches):
+        for step, step_batch in enumerate(seq_batch.batches):
             if step > 0:
                 enc_act = self.rssm.act_enc(step_batch.prev_act)
                 cur_h = self.rssm.recur_model(cur_h, cur_z, enc_act)
 
             enc_obs = self.rssm.obs_enc(step_batch.obs)
             repr_z_rv = self.rssm.repr_model(cur_h, enc_obs)
+            repr_rvs.append(repr_z_rv)
             trans_z_rv = self.rssm.trans_pred(cur_h)
-            loss["kl"] += self.beta * self.mixed_kl_loss(repr_z_rv, trans_z_rv).mean()
+            trans_rvs.append(trans_z_rv)
 
             cur_z = trans_z_rv.rsample()
-            wm_phase_hs.append(cur_h)
-            wm_phase_zs.append(cur_z)
+            hs.append(cur_h)
+            zs.append(cur_z)
 
-            obs_rv = self.obs_pred(cur_h, cur_z)
-            loss["obs"] += -obs_rv.log_prob(step_batch.obs).mean()
-            term_rv = self.rssm.term_pred(cur_h, cur_z)
-            term_fp = step_batch.term.type_as(cur_h)
-            loss["term"] += -term_rv.log_prob(term_fp).mean()
+        repr_rvs, trans_rvs = torch.cat(repr_rvs), torch.cat(trans_rvs)
+        loss["kl"] = self.beta * self.mixed_kl_loss(repr_rvs, trans_rvs).mean()
 
-            if step > 0:
-                rew_rv = self.rssm.rew_pred(cur_h, cur_z)
-                loss["rew"] += -rew_rv.log_prob(step_batch.reward).mean()
+        hs, zs = torch.cat(hs), torch.cat(zs)
 
-        loss = {key: val / self.batch_seq_len for key, val in loss.items()}
+        obs_rv = self.obs_pred(hs, zs)
+        obs = seq_batch.obs.flatten(end_dim=1)
+        loss["obs"] = -obs_rv.log_prob(obs).mean()
+
+        term_rv = self.rssm.term_pred(hs, zs)
+        term = seq_batch.term.type_as(cur_h).flatten(end_dim=1)
+        loss["term"] = -term_rv.log_prob(term).mean()
+
+        # First-step rewards are undefined, so we skip them
+        rew = seq_batch.reward.flatten(end_dim=1)
+        rew_rv = self.rssm.rew_pred(hs[-len(rew) :], zs[-len(rew) :])
+        loss["rew"] = -rew_rv.log_prob(rew).mean()
+
         loss["wm"] = sum(loss.values())
 
         self.wm_optim.zero_grad(set_to_none=True)
         loss["wm"].backward()
         self.wm_optim.step()
 
-        return loss, (wm_phase_hs, wm_phase_zs)
+        return loss, (hs.detach(), zs.detach())
 
     def mixed_kl_loss(self, post, prior):
         stop_post = D.kl_divergence(detach(post), prior)
@@ -361,7 +370,7 @@ class Dreamer(ABC):
 
         while True:
             r.append(self.rssm.rew_pred(cur_hs, cur_zs).mean)
-            term.append(self.rssm.term_pred(cur_hs, cur_zs).sample())
+            term.append(self.rssm.term_pred(cur_hs, cur_zs).mean)
             v.append(self.critic(cur_hs, cur_zs))
             vt.append(self.target_critic(cur_hs, cur_zs))
 
@@ -386,7 +395,8 @@ class Dreamer(ABC):
                 next_vt = (1.0 - self.gae_lambda) * vt[
                     step + 1
                 ] + self.gae_lambda * gae_vt[step + 1]
-            gae_vt[step] = r[step] + self.gamma * term[step] * next_vt
+            gamma_t = self.gamma * (1.0 - term[step])
+            gae_vt[step] = r[step] + gamma_t * next_vt
 
         gae_vt = torch.stack(gae_vt)
         v, gae_vt = v[:-1], gae_vt[:-1]
@@ -399,7 +409,7 @@ class Dreamer(ABC):
 
         vpg_loss = -self.rho * logp * (gae_vt - v).detach()
         direct_loss = -(1.0 - self.rho) * gae_vt
-        entropy_reg = self.eta * logp
+        entropy_reg = -self.eta * logp
         actor_loss = (vpg_loss + direct_loss + entropy_reg).mean()
 
         self.actor_optim.zero_grad(set_to_none=True)

@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import List, Tuple
+
 import torch
 from torch.distributions import constraints, register_kl
 from torch.distributions.distribution import Distribution
@@ -113,6 +117,33 @@ class OneHotCategorical(Distribution):
             values = values.expand((n,) + self.batch_shape + (n,))
         return values
 
+    @classmethod
+    def _torch_cat(
+        cls,
+        dists: List[OneHotCategorical] | Tuple[OneHotCategorical, ...],
+        dim: int = 0,
+    ):
+        dim = range(len(dists[0].batch_shape)).index(dim)
+        if "probs" in dists[0].__dict__:
+            probs = torch.cat([d.probs for d in dists], dim)
+            return cls(probs=probs)
+        else:
+            logits = torch.cat([d.logits for d in dists], dim)
+            return cls(logits=logits)
+
+    @classmethod
+    def __torch_function__(cls, func, types, args=(), kwargs=None):
+        if kwargs is None:
+            kwargs = {}
+
+        if not all(issubclass(t, OneHotCategorical) for t in types):
+            return NotImplemented
+
+        if func == torch.cat:
+            return cls._torch_cat(*args, **kwargs)
+
+        return NotImplemented
+
 
 class OneHotCategoricalStraightThrough(OneHotCategorical):
     r"""
@@ -126,8 +157,13 @@ class OneHotCategoricalStraightThrough(OneHotCategorical):
 
     def rsample(self, sample_shape=torch.Size()):
         samples = self.sample(sample_shape)
-        probs = self._categorical.probs  # cached via @lazy_property
-        return samples + (probs - probs.detach())
+        if "logits" in self._categorical.__dict__:
+            logits = self._categorical.logits
+            zero = logits - logits.detach()
+        else:
+            probs = self._categorical.probs
+            zero = probs - probs.detach()
+        return samples + zero
 
 
 @register_kl(OneHotCategorical, OneHotCategorical)

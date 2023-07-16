@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import List, Tuple
+
 import torch
 from torch import Tensor, nan
 from torch.distributions import constraints, register_kl
@@ -37,7 +41,10 @@ class Categorical(Distribution):
         probs (Tensor): event probabilities
         logits (Tensor): event log probabilities (unnormalized)
     """
-    arg_constraints = {"probs": constraints.simplex, "logits": constraints.real_vector}
+    arg_constraints = {
+        "probs": constraints.simplex,
+        "logits": constraints.real_vector,
+    }
     has_enumerate_support = True
 
     def __init__(self, probs=None, logits=None, validate_args=None):
@@ -155,6 +162,31 @@ class Categorical(Distribution):
         if expand:
             values = values.expand((-1,) + self._batch_shape)
         return values
+
+    @classmethod
+    def _torch_cat(
+        cls, dists: List[Categorical] | Tuple[Categorical, ...], dim: int = 0
+    ):
+        dim = range(len(dists[0].batch_shape)).index(dim)
+        if "probs" in dists[0].__dict__:
+            probs = torch.cat([d.probs for d in dists], dim)
+            return cls(probs=probs)
+        else:
+            logits = torch.cat([d.logits for d in dists], dim)
+            return cls(logits=logits)
+
+    @classmethod
+    def __torch_function__(cls, func, types, args=(), kwargs=None):
+        if kwargs is None:
+            kwargs = {}
+
+        if not all(issubclass(t, Categorical) for t in types):
+            return NotImplemented
+
+        if func == torch.cat:
+            return cls._torch_cat(*args, **kwargs)
+
+        return NotImplemented
 
 
 @register_kl(Categorical, Categorical)

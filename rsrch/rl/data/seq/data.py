@@ -227,6 +227,21 @@ class PackedSeqBatch:
 
 
 @dataclass
+class SeqStepBatch:
+    """A slice of SeqBatch representing a single timestep."""
+
+    obs: Tensor
+    act: Tensor | None
+    next_obs: Tensor | None
+    prev_act: Tensor | None
+    reward: Tensor
+    term: Tensor
+
+    def __len__(self):
+        return len(self.obs)
+
+
+@dataclass
 class PaddedSeqBatch:
     """A batch of equal-length Tensor trajectories. The shapes of the tensors are (L, B, ...)"""
 
@@ -236,18 +251,19 @@ class PaddedSeqBatch:
     term: Tensor
 
     @property
-    def step_batches(self):
-        for step in range(len(self)):
+    def batches(self):
+        for step in range(len(self.obs)):
             obs = self.obs[step]
-            act = None
-            if step < len(self) - 1:
+            act, next_obs = None, None
+            if step < len(self.obs) - 1:
                 act = self.act[step]
+                next_obs = self.obs[step + 1]
             prev_act, reward = None, None
             if step > 0:
                 prev_act = self.act[step - 1]
                 reward = self.reward[step - 1]
             term = self.term[step]
-            yield SeqBatchStep(obs, act, prev_act, reward, term)
+            yield SeqStepBatch(obs, act, next_obs, prev_act, reward, term)
 
     def __len__(self):
         return self.obs.shape[1]

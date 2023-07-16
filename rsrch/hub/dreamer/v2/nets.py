@@ -148,7 +148,7 @@ class VisDecoder(nn.Module):
         z = self.fc_net(z)
         x_hat = z.reshape(len(z), *self.conv_shape)
         x_hat = self.conv_net(x_hat)
-        return D.Independent(D.Normal(x_hat, 1.0), 3)
+        return D.Normal(x_hat, 1.0, event_dims=3)
 
 
 class ProprioEncoder(fc.FullyConnected, api.ObsEncoder):

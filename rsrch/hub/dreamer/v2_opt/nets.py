@@ -141,7 +141,7 @@ class VisDecoder(nn.Module):
         z = self.fc_net(z)
         x_hat = z.reshape(len(z), *self.conv_shape)
         x_hat = self.conv_net(x_hat)
-        return D.Independent(D.Normal(x_hat, 1.0), 3)
+        return D.Normal(x_hat, 1.0, 3)
 
 
 class VisEncoder2(nn.Module, api.ObsEncoder):
@@ -244,7 +244,7 @@ class VisDecoder2(nn.Module, api.VarPred):
         x = self.fc(x)
         x = x.reshape(len(x), *self.conv_in_shape)
         x = self.main(x)
-        return D.Independent(D.Normal(x, 1.0), 3)
+        return D.Normal(x, 1.0, event_dims=3)
 
 
 class VisDecoder3(nn.Module, api.VarPred):
@@ -301,7 +301,7 @@ class VisDecoder3(nn.Module, api.VarPred):
         x = x.reshape(len(x), *self.conv_in_shape)
         x = self.main(x)
         x, scale = torch.broadcast_tensors(x, self.scale)
-        return D.Independent(D.Normal(x, scale), 3)
+        return D.Normal(x, scale, event_dims=3)
 
 
 class ProprioEncoder(fc.FullyConnected, api.ObsEncoder):

@@ -26,6 +26,9 @@ class Dreamer(core.Dreamer):
         self.train_every = 16
         self.per_env_conf()
 
+        torch.set_float32_matmul_precision("high")
+        torch.backends.cuda.matmul.allow_tf32 = True
+
         self.device = torch.device("cuda")
         self.buf_capacity = int(1e5)
         self.buf_prefill_steps = int(1e3)
