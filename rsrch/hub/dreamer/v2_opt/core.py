@@ -113,6 +113,7 @@ class Dreamer(ABC):
         self.copy_critic_every: int = ...
         self.action_repeat: int = ...
         self.train_every: int = ...
+        self.log_every: int = ...
 
     @abstractmethod
     def setup_data(self):
@@ -128,9 +129,8 @@ class Dreamer(ABC):
         self.wm_optim: torch.optim.Optimizer = ...
         self.critic: api.Critic = ...
         self.target_critic: api.Critic = ...
-        self.critic_optim: torch.optim.Optimizer = ...
         self.actor: api.Actor = ...
-        self.actor_optim: torch.optim.Optimizer = ...
+        self.ac_optim: torch.optim.Optimizer = ...
 
     def _post_setup_models(self):
         self.critic_polyak = Polyak(
@@ -271,6 +271,10 @@ class Dreamer(ABC):
     def is_finished(self):
         return self.step >= self.max_steps
 
+    @property
+    def should_log(self):
+        return self.step % self.log_every == 0
+
     def val_epoch(self):
         self.val_pbar = tqdm(desc="Val Epoch", total=self.val_episodes, leave=False)
         all_returns = []
@@ -301,8 +305,9 @@ class Dreamer(ABC):
 
         self.wm_optim.zero_grad(set_to_none=True)
 
-        for name, value in loss.items():
-            self.board.add_scalar(f"train/{name}_loss", value)
+        if self.should_log:
+            for name, value in loss.items():
+                self.board.add_scalar(f"train/{name}_loss", value)
 
     # @torch.compile
     def _optimize_world_model(self, seq_batch: PaddedSeqBatch):
@@ -315,12 +320,17 @@ class Dreamer(ABC):
         hs, zs = [], []
         repr_rvs, trans_rvs = [], []
 
-        for step, step_batch in enumerate(seq_batch.batches):
+        all_enc_obs = self.rssm.obs_enc(seq_batch.obs.flatten(end_dim=1))
+        all_enc_obs = all_enc_obs.reshape(-1, self.batch_size, *all_enc_obs.shape[1:])
+        all_enc_act = self.rssm.act_enc(seq_batch.act.flatten(end_dim=1))
+        all_enc_act = all_enc_act.reshape(-1, self.batch_size, *all_enc_act.shape[1:])
+
+        for step in range(self.batch_seq_len + 1):
             if step > 0:
-                enc_act = self.rssm.act_enc(step_batch.prev_act)
+                enc_act = all_enc_act[step - 1]
                 cur_h = self.rssm.recur_model(cur_h, cur_z, enc_act)
 
-            enc_obs = self.rssm.obs_enc(step_batch.obs)
+            enc_obs = all_enc_obs[step]
             repr_z_rv = self.rssm.repr_model(cur_h, enc_obs)
             repr_rvs.append(repr_z_rv)
             trans_z_rv = self.rssm.trans_pred(cur_h)
@@ -362,30 +372,46 @@ class Dreamer(ABC):
         return self.alpha * stop_post + (1.0 - self.alpha) * stop_prior
 
     def optimize_policy(self):
-        freeze(self.rssm, self.target_critic)
+        freeze(self.rssm)
 
-        r, v, vt, logp, term = [], [], [], [], []
+        hs, zs, act_rvs, acts = [], [], [], []
         cur_hs, cur_zs = self.init_hs, self.init_zs
+        num_seq = len(cur_hs)
         step = 0
 
         while True:
-            r.append(self.rssm.rew_pred(cur_hs, cur_zs).mean)
-            term.append(self.rssm.term_pred(cur_hs, cur_zs).mean)
-            v.append(self.critic(cur_hs, cur_zs))
-            vt.append(self.target_critic(cur_hs, cur_zs))
-
+            hs.append(cur_hs)
+            zs.append(cur_zs)
             if step >= self.horizon:
                 break
 
             enc_act_rv = self.actor(cur_hs, cur_zs)
             enc_act = enc_act_rv.rsample()
-            logp.append(enc_act_rv.log_prob(enc_act))
+            act_rvs.append(enc_act_rv)
+            acts.append(enc_act)
             cur_hs = self.rssm.recur_model(cur_hs, cur_zs, enc_act)
             cur_zs = self.rssm.trans_pred(cur_hs).rsample()
 
             step += 1
 
-        r, v, vt, logp, term = (torch.stack(x) for x in [r, v, vt, logp, term])
+        hs, zs = torch.cat(hs), torch.cat(zs)
+
+        r = self.rssm.rew_pred(hs, zs).mean
+        r = r.reshape(-1, num_seq, *r.shape[1:])
+
+        term = self.rssm.term_pred(hs, zs).mean
+        term = term.reshape(-1, num_seq, *term.shape[1:])
+
+        v = self.critic(hs, zs)
+        v = v.reshape(-1, num_seq, *v.shape[1:])
+
+        with eval_ctx(self.target_critic):
+            vt = self.target_critic(hs, zs)
+            vt = vt.reshape(-1, num_seq, *vt.shape[1:])
+
+        act_rvs, acts = torch.cat(act_rvs), torch.cat(acts)
+        logp = act_rvs.log_prob(acts)
+        logp = logp.reshape(-1, num_seq, *logp.shape[1:])
 
         gae_vt = [None for _ in range(self.horizon + 1)]
         for step in reversed(range(self.horizon + 1)):
@@ -403,18 +429,15 @@ class Dreamer(ABC):
 
         critic_loss = nn.functional.mse_loss(v, gae_vt)
 
-        self.critic_optim.zero_grad(set_to_none=True)
-        critic_loss.backward(retain_graph=True)
-        self.critic_optim.step()
-
         vpg_loss = -self.rho * logp * (gae_vt - v).detach()
         direct_loss = -(1.0 - self.rho) * gae_vt
         entropy_reg = -self.eta * logp
         actor_loss = (vpg_loss + direct_loss + entropy_reg).mean()
 
-        self.actor_optim.zero_grad(set_to_none=True)
-        actor_loss.backward()
-        self.actor_optim.step()
+        self.ac_optim.zero_grad(set_to_none=True)
+        (critic_loss + actor_loss).backward()
+        self.ac_optim.step()
 
-        self.board.add_scalar("train/critic_loss", critic_loss)
-        self.board.add_scalar("train/actor_loss", actor_loss)
+        if self.should_log:
+            self.board.add_scalar("train/critic_loss", critic_loss)
+            self.board.add_scalar("train/actor_loss", actor_loss)

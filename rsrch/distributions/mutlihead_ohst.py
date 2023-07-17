@@ -21,7 +21,7 @@ class MultiheadOHST(Distribution):
         num_classes: int,
         probs: Optional[Tensor] = None,
         logits: Optional[Tensor] = None,
-        validate_args=None,
+        validate_args=False,
     ):
         self.enc_dim = enc_dim
         assert enc_dim % num_classes == 0
@@ -78,7 +78,11 @@ class MultiheadOHST(Distribution):
         cls, dists: List[MultiheadOHST] | Tuple[MultiheadOHST, ...], dim: int = 0
     ):
         dist = dists[0]
-        args = dict(enc_dim=dist.enc_dim, num_classes=dist.num_classes)
+        args = dict(
+            enc_dim=dist.enc_dim,
+            num_classes=dist.num_classes,
+            validate_args=dist._validate_args,
+        )
         dim = range(len(dist.batch_shape)).index(dim)
         if "probs" in dist.__dict__:
             probs = torch.cat([d.probs for d in dists], dim)
@@ -109,8 +113,13 @@ def _multihead_ohst_kl(p: MultiheadOHST, q: MultiheadOHST):
 
 @register_detach(MultiheadOHST)
 def _detach_mh_ohst(rv: MultiheadOHST):
+    args = dict(
+        enc_dim=rv.enc_dim,
+        num_classes=rv.num_classes,
+        validate_args=rv._validate_args,
+    )
     if rv.logits is not None:
-        kw = dict(logits=rv.logits.detach())
+        args.update(logits=rv.logits.detach())
     else:
-        kw = dict(probs=rv.probs.detach())
-    return MultiheadOHST(rv.enc_dim, rv.num_classes, **kw)
+        args.update(probs=rv.probs.detach())
+    return MultiheadOHST(**args)

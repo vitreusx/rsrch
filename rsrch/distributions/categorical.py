@@ -47,7 +47,7 @@ class Categorical(Distribution):
     }
     has_enumerate_support = True
 
-    def __init__(self, probs=None, logits=None, validate_args=None):
+    def __init__(self, probs=None, logits=None, validate_args=False):
         if (probs is None) == (logits is None):
             raise ValueError(
                 "Either `probs` or `logits` must be specified, but not both."
@@ -170,10 +170,10 @@ class Categorical(Distribution):
         dim = range(len(dists[0].batch_shape)).index(dim)
         if "probs" in dists[0].__dict__:
             probs = torch.cat([d.probs for d in dists], dim)
-            return cls(probs=probs)
+            return cls(probs=probs, validate_args=dists[0]._validate_args)
         else:
             logits = torch.cat([d.logits for d in dists], dim)
-            return cls(logits=logits)
+            return cls(logits=logits, validate_args=dists[0]._validate_args)
 
     @classmethod
     def __torch_function__(cls, func, types, args=(), kwargs=None):

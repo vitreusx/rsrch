@@ -1,35 +1,17 @@
 import os
 from pathlib import Path
-from typing import Any, Collection, List, Protocol, Sequence, TypeAlias, Union
 
 import numpy as np
 import torch
-import torch.utils.tensorboard as tensorboard
 import torchvision.transforms.functional as F
-from moviepy.editor import *
-from PIL import Image
+from moviepy import editor
 from slugify import slugify
-from torch import Tensor
+from torch.utils import tensorboard
 
-ImageLike: TypeAlias = Union[np.ndarray, Image.Image, Tensor]
-VideoLike: TypeAlias = Union[Sequence[ImageLike], Tensor]
-
-
-class Board(Protocol):
-    def add_scalar(self, tag: str, value: Any, *, step: int | None):
-        ...
-
-    def add_samples(self, tag: str, value: Collection, *, step: int | None):
-        ...
-
-    def add_image(self, tag: str, image: ImageLike, *, step: int | None):
-        ...
-
-    def add_video(self, tag: str, video: VideoLike, *, fps: float, step: int | None):
-        ...
+from . import api
 
 
-class TensorBoard(Board):
+class TensorBoard(api.Board):
     def __init__(
         self,
         *,
@@ -68,7 +50,7 @@ class TensorBoard(Board):
 
     def _save_video_file(self, tag, video, *, step, fps):
         video = [np.asarray(F.to_pil_image(frame, mode="RGB")) for frame in video]
-        clip = ImageSequenceClip(sequence=video, fps=fps)
+        clip = editor.ImageSequenceClip(sequence=video, fps=fps)
 
         filename = f"{slugify(tag)}_time={step:.2f}.mp4"
         filepath = self.root_dir / "videos" / filename

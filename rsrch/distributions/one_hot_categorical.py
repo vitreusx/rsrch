@@ -44,7 +44,7 @@ class OneHotCategorical(Distribution):
     support = constraints.one_hot
     has_enumerate_support = True
 
-    def __init__(self, probs=None, logits=None, validate_args=None):
+    def __init__(self, probs=None, logits=None, validate_args=False):
         self._categorical = Categorical(probs, logits)
         batch_shape = self._categorical.batch_shape
         event_shape = self._categorical.param_shape[-1:]
@@ -124,12 +124,14 @@ class OneHotCategorical(Distribution):
         dim: int = 0,
     ):
         dim = range(len(dists[0].batch_shape)).index(dim)
+        args = dict(validate_args=dists[0]._validate_args)
         if "probs" in dists[0].__dict__:
             probs = torch.cat([d.probs for d in dists], dim)
-            return cls(probs=probs)
+            args.update(probs=probs)
         else:
             logits = torch.cat([d.logits for d in dists], dim)
-            return cls(logits=logits)
+            args.update(logits=logits)
+        return cls(**args)
 
     @classmethod
     def __torch_function__(cls, func, types, args=(), kwargs=None):

@@ -51,7 +51,7 @@ class Normal(ExponentialFamily):
     def variance(self):
         return self.stddev.pow(2)
 
-    def __init__(self, loc, scale, event_dims=0, validate_args=None):
+    def __init__(self, loc, scale, event_dims=0, validate_args=False):
         self.loc, self.scale = broadcast_all(loc, scale)
         if isinstance(loc, Number) and isinstance(scale, Number):
             batch_shape = torch.Size()
@@ -121,7 +121,12 @@ class Normal(ExponentialFamily):
         dim = range(len(dists[0].batch_shape)).index(dim)
         loc = torch.cat([d.loc for d in dists], dim)
         scale = torch.cat([d.scale for d in dists], dim)
-        return cls(loc, scale, len(dists[0].event_shape))
+        return cls(
+            loc=loc,
+            scale=scale,
+            event_dims=len(dists[0].event_shape),
+            validate_args=dists[0]._validate_args,
+        )
 
     @classmethod
     def __torch_function__(cls, func, types, args=(), kwargs=None):

@@ -22,8 +22,8 @@ class Dreamer(core.Dreamer):
         self.gae_lambda = 0.95
         self.alpha = 0.8
         self.copy_critic_every = 100
-        self.action_repeat = 4
         self.train_every = 16
+        self.log_every = int(1e3)
         self.per_env_conf()
 
         torch.set_float32_matmul_precision("high")
@@ -42,11 +42,13 @@ class Dreamer(core.Dreamer):
             self.rho = 1.0
             self.eta = 1e-3
             self.horizon = 10
+            self.action_repeat = 4
         elif self.env_type in ["dmc", "other"]:
             self.beta = 1.0
             self.rho = 0.0
             self.eta = 1e-4
             self.horizon = 15
+            self.action_repeat = 1
 
     def setup_data(self):
         self.train_env = self.make_env()
@@ -81,7 +83,7 @@ class Dreamer(core.Dreamer):
 
     def make_env(self):
         if self.env_type == "atari":
-            env = gym.make(self.env_name, frameskip=1)
+            env = gym.make(self.env_name, frameskip=self.action_repeat)
             env = gym.wrappers.AtariPreprocessing(
                 env=env,
                 screen_size=64,
@@ -117,8 +119,8 @@ class Dreamer(core.Dreamer):
     def setup_models_and_optimizers(self):
         num_classes = 32
         if self.env_type == "atari":
-            h_dim = z_dim = 1024
-            hidden_dim = 400
+            h_dim = hidden_dim = 600
+            z_dim = 1024
         elif self.env_type == "other":
             h_dim = z_dim = 256
             hidden_dim = 256
@@ -141,8 +143,9 @@ class Dreamer(core.Dreamer):
         self.critic = nets.Critic(h_dim, z_dim, fc_layers=[hidden_dim] * 3).to(
             self.device
         )
+
         self.target_critic = self.critic.clone()
-        self.critic_optim = torch.optim.Adam(self.critic.parameters(), lr=1e-3)
+        self.target_critic.requires_grad_ = False
 
         act_space = self.train_env.action_space
         self.actor = nets.Actor(
@@ -151,7 +154,9 @@ class Dreamer(core.Dreamer):
             z_dim,
             fc_layers=[hidden_dim] * 3,
         ).to(self.device)
-        self.actor_optim = torch.optim.Adam(self.actor.parameters(), lr=1e-3)
+
+        ac_params = [*self.critic.parameters(), *self.actor.parameters()]
+        self.ac_optim = torch.optim.Adam(ac_params, lr=1e-3)
 
     def setup_extras(self):
         self.exp_dir = ExpDir()
@@ -160,6 +165,6 @@ class Dreamer(core.Dreamer):
             step_fn=lambda: self.step,
         )
         self.detect_anomaly = False
-        self.prof_enabled = True
+        self.prof_enabled = False
         self.prof_cycles = 4
         self.prof_wait, self.prof_warmup, self.prof_active = 5, 1, 3

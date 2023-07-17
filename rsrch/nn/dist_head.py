@@ -56,7 +56,7 @@ class Bernoulli(nn.Module):
 
     def forward(self, x: Tensor) -> D.Distribution:
         logits: Tensor = self.net(x).ravel()
-        return D.Bernoulli(logits=logits)
+        return D.Bernoulli(logits=logits, validate_args=False)
 
 
 class Categorical(nn.Module):
@@ -68,17 +68,7 @@ class Categorical(nn.Module):
 
     def forward(self, x: Tensor) -> D.Categorical:
         logits: Tensor = self.fc(x)
-        return D.Categorical(logits=logits)
-
-
-class ToDistribution(nn.Module):
-    def __init__(self, t: type, attr: str):
-        super().__init__()
-        self.t = t
-        self.attr = attr
-
-    def forward(self, x: Tensor):
-        return self.t(**{self.attr: x})
+        return D.Categorical(logits=logits, validate_args=False)
 
 
 class OHST(nn.Module):
@@ -88,7 +78,7 @@ class OHST(nn.Module):
 
     def forward(self, x: Tensor) -> D.Categorical:
         logits: Tensor = self.fc(x)
-        return D.OneHotCategoricalStraightThrough(logits=logits)
+        return D.OneHotCategoricalStraightThrough(logits=logits, validate_args=False)
 
 
 class MultiheadOHST(nn.Module):
@@ -101,4 +91,9 @@ class MultiheadOHST(nn.Module):
 
     def forward(self, x: Tensor) -> D.MultiheadOHST:
         logits: Tensor = self.net(x)
-        return D.MultiheadOHST(self.out_features, self.num_classes, logits=logits)
+        return D.MultiheadOHST(
+            self.out_features,
+            self.num_classes,
+            logits=logits,
+            validate_args=False,
+        )
