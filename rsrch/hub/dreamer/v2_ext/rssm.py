@@ -87,7 +87,7 @@ class Policy(Protocol, Generic[ActType]):
         ...
 
 
-class RSSM(Protocol, Generic[ObsType, ActType]):
+class RSSM(wm.WorldModel, Generic[ObsType, ActType]):
     obs_space: gym.Space
     obs_enc: Encoder[ObsType]
     act_space: gym.Space
@@ -99,25 +99,12 @@ class RSSM(Protocol, Generic[ObsType, ActType]):
     reward_pred: Decoder
     term_pred: Decoder
 
-
-class WorldModel(wm.WorldModel):
-    def __init__(self, rssm: RSSM):
-        self.rssm = rssm
-        self.obs_space = rssm.obs_space
-        self.obs_enc = rssm.obs_enc
-        self.act_space = rssm.act_space
-        self.act_enc = rssm.act_enc
-        self.prior = rssm.prior
-        self.init_dist = None
-        self.reward_pred = rssm.reward_pred
-        self.term_pred = rssm.term_pred
-
     def act_cell(self, prev_h: State, enc_act: Tensor):
-        deter = self.rssm.deter_cell(prev_h, enc_act)
-        stoch_rv = self.rssm.pred_cell(deter, None)
+        deter = self.deter_cell(prev_h, enc_act)
+        stoch_rv = self.pred_cell(deter, None)
         return StateDist(deter, stoch_rv)
 
     def obs_cell(self, prev_h: State, enc_obs: Tensor):
         deter = prev_h.deter
-        stoch_rv = self.rssm.trans_cell(deter, enc_obs)
+        stoch_rv = self.trans_cell(deter, enc_obs)
         return StateDist(deter, stoch_rv)

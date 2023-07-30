@@ -1,3 +1,4 @@
+from .bernoulli import Bernoulli
 from .categorical import Categorical
 from .distribution import Distribution
 from .kl import kl_divergence, register_kl

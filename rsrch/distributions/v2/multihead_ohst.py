@@ -1,5 +1,5 @@
 import torch
-from tensordict import tensorclass
+from tensordict import TensorDict, tensorclass
 from torch import Tensor
 
 from .kl import kl_divergence, register_kl

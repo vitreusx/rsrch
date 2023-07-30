@@ -218,7 +218,7 @@ class Critic(nn.Module):
                 norm_layer=norm_layer,
                 act_layer=act_layer,
             ),
-            nn.Flatten(1, -1),
+            nn.Flatten(0),
         )
 
     def forward(self, state: rssm.State) -> Tensor:

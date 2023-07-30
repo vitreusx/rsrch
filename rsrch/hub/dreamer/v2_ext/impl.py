@@ -10,7 +10,7 @@ from . import core, nets, rssm, wm
 class Dreamer(core.Dreamer):
     def setup_vars(self):
         self.val_every = int(1e4)
-        self.val_episodes = 32
+        self.val_episodes = 8
         self.env_steps = int(1e6)
         self.env_step_ratio = 16
         self.buffer_cap = int(1e5)
@@ -24,10 +24,12 @@ class Dreamer(core.Dreamer):
         self.wm_loss_scale = dict(kl=1.0, obs=1.0, term=1.0, reward=1.0)
         self.actor_loss_scale = dict(vpg=1.0, value=1.0, ent=1.0)
         self.prefill_size = 64
+        self.gamma = 0.99
+        self.gae_lambda = 0.95
 
     def setup_envs(self):
-        self.env_name = "CartPole-v1"
-        self.env_type = "other"
+        # self.env_name, self.env_type = "CartPole-v1", "other"
+        self.env_name, self.env_type = "ALE/Pong-v5", "atari"
 
         if self.env_type == "atari":
             self.wm_loss_scale.update(kl=0.1)
@@ -67,16 +69,14 @@ class Dreamer(core.Dreamer):
             deter_dim = stoch_dim = hidden_dim = 128
             num_heads = 4
 
-        self.rssm = nets.RSSM(
+        self.wm = nets.RSSM(
             self.train_env,
             deter_dim,
             stoch_dim,
             hidden_dim,
             num_heads,
         )
-        self.rssm = self.rssm.to(self.device)
-
-        self.wm = rssm.WorldModel(self.rssm)
+        self.wm = self.wm.to(self.device)
 
         if isinstance(self.wm.obs_enc, nets.VisEncoder):
             vis_enc = self.wm.obs_enc
@@ -96,7 +96,7 @@ class Dreamer(core.Dreamer):
             raise ValueError(f"Invalid wm.obs_enc type {type(self.wm.obs_enc)}")
         self.obs_pred = self.obs_pred.to(self.device)
 
-        wm_opt_params = [*self.rssm.parameters(), *self.obs_pred.parameters()]
+        wm_opt_params = [*self.wm.parameters(), *self.obs_pred.parameters()]
         self.wm_opt = torch.optim.Adam(wm_opt_params, lr=1e-3)
 
         self.actor = nets.Actor(

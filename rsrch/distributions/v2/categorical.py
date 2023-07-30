@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Optional
 
 import torch
 import torch.nn.functional as F
@@ -11,11 +11,11 @@ from .utils import distribution
 
 @distribution
 class Categorical:
-    _logits: Any
-    _log_probs: Any
-    _probs: Any
+    _probs: Optional[Tensor]
+    _logits: Optional[Tensor]
     event_shape: torch.Size
     _num_events: int
+    _normalized: bool
 
     def __init__(self, probs: Tensor | None = None, logits=None):
         if probs is not None and logits is not None:
@@ -27,11 +27,11 @@ class Categorical:
         _num_events = _param.shape[-1]
 
         self.__tc_init__(
-            _logits=logits,
-            _log_probs=None,
             _probs=probs,
+            _logits=logits,
             event_shape=event_shape,
             _num_events=_num_events,
+            _normalized=False,
             batch_size=batch_size,
         )
 
@@ -45,13 +45,18 @@ class Categorical:
             eps = torch.finfo(self._probs.dtype).eps
             probs = self._probs.clamp(eps, 1 - eps)
             self._logits = torch.log(probs)
+            self._normalized = True
         return self._logits
 
     @property
     def log_probs(self) -> Tensor:
-        if self._log_probs is None:
-            self._log_probs = self.logits - self.logits.logsumexp(-1, keepdim=True)
-        return self._log_probs
+        if self._logits is None:
+            return self.logits
+        else:
+            if not self._normalized:
+                self._logits = self.logits - self.logits.logsumexp(-1, keepdim=True)
+                self._normalized = True
+            return self._logits
 
     @property
     def probs(self) -> Tensor:

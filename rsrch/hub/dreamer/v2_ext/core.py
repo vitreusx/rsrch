@@ -150,6 +150,8 @@ class Dreamer(ABC):
             self.pbar.update()
 
     def optimize_model(self):
+        self.wm.requires_grad_(True)
+
         batch = next(self.batch_iter)
         seq_len, batch_size = batch.obs.shape[:2]
 
@@ -174,11 +176,11 @@ class Dreamer(ABC):
         loss["reward"] = -reward_rvs.log_prob(flat_rew)
 
         wm_loss = sum(loss[k].mean() * self.wm_loss_scale[k] for k in loss)
-        self.wm_optim.zero_grad(set_to_none=True)
+        self.wm_opt.zero_grad(set_to_none=True)
         wm_loss.backward()
-        self.wm_optim.step()
+        self.wm_opt.step()
 
-        self.states = states
+        self._init_states = states.flatten().detach()
 
         if self.should_log:
             for k in loss:
@@ -194,18 +196,30 @@ class Dreamer(ABC):
         return self.kl_reg_coeff * stop_post + (1.0 - self.kl_reg_coeff) * stop_prior
 
     def optimize_policy(self):
-        with freeze_ctx(self.wm):
-            states, act_rvs, acts = self.wm.imagine(
-                self.actor, self.states, self.horizon
-            )
+        self.wm.requires_grad_(False)
 
-        with torch.inference_mode():
-            vt = self.target_critic(states)
-        rew = self.wm.reward_pred(states)
-        term = self.wm.term_pred(states)
+        states, act_rvs, acts = self.wm.imagine(
+            self.actor, self._init_states, self.horizon
+        )
+
+        seq_len, bs = states.shape[:2]
+        flat_s = states.flatten()
+
+        v = self.critic(flat_s)
+        v = v.reshape(seq_len, bs, *v.shape[1:])
+
+        with torch.no_grad():
+            vt = self.target_critic(flat_s)
+            vt = vt.reshape(seq_len, bs, *vt.shape[1:])
+
+        rew = self.wm.reward_pred(flat_s).mean
+        rew = rew.reshape(seq_len, bs, *rew.shape[1:])
+
+        term = self.wm.term_pred(flat_s).mean
+        term = term.reshape(seq_len, bs, *term.shape[1:])
+
         gae_vt = self._gae_v(vt, rew, term)
 
-        v = self.critic(states)
         critic_loss = F.mse_loss(v, gae_vt)
         self.critic_opt.zero_grad(set_to_none=True)
         critic_loss.backward(retain_graph=True)
@@ -241,10 +255,9 @@ class Dreamer(ABC):
                 ] + self.gae_lambda * gae_v[-1]
                 cur_v = rew[step] + self.gamma * next_v
 
-                cont_f = 1.0 - term[step].type_as(cur_v)
-                cur_v = cont_f * cur_v
-
-                gae_v.append(cur_v)
+            cont_f = 1.0 - term[step].type_as(cur_v)
+            cur_v = cont_f * cur_v
+            gae_v.append(cur_v)
 
         gae_v.reverse()
         gae_v = torch.stack(gae_v)

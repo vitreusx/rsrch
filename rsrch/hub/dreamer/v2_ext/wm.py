@@ -8,6 +8,7 @@ from torch import Tensor
 import rsrch.distributions.v2 as D
 from rsrch.rl import api, gym
 from rsrch.rl.data.seq import PaddedSeqBatch
+from rsrch.utils.eval_ctx import eval_ctx
 
 T = TypeVar("T")
 ObsType = TypeVar("ObsType")
@@ -80,14 +81,14 @@ class WorldModel(abc.ABC):
         return states, pred_rvs, full_rvs
 
     def imagine(self, actor: Actor, initial: State, horizon: int):
-        cur_state, states = initial, [initial]
+        cur_state, states = initial, []
         act_rvs, acts = [], []
         for step in range(horizon):
             act_rv = actor(cur_state)
             act_rvs.append(act_rv)
             act = act_rv.rsample()
             acts.append(act)
-            next_state = self.act_cell(cur_state, act)
+            next_state = self.act_cell(cur_state, act).rsample()
             states.append(next_state)
             cur_state = next_state
 
@@ -107,17 +108,20 @@ class Agent(api.Agent):
         self.cur_state = self.wm.prior
 
     def observe(self, obs):
-        enc_obs = self.wm.obs_enc(obs.unsqueeze(0))
-        next_rv = self.wm.obs_cell(self.cur_state.unsqueeze(0), enc_obs)
-        self.cur_state = next_rv.rsample()[0]
+        with torch.inference_mode():
+            enc_obs = self.wm.obs_enc(obs.unsqueeze(0))
+            next_rv = self.wm.obs_cell(self.cur_state.unsqueeze(0), enc_obs)
+            self.cur_state = next_rv.sample()[0]
 
     def policy(self):
-        return self.actor(self.cur_state.unsqueeze(0)).rsample()[0]
+        with torch.inference_mode():
+            return self.actor(self.cur_state.unsqueeze(0)).sample()[0]
 
     def step(self, act):
-        enc_act = self.wm.act_enc(act.unsqueeze(0))
-        next_rv = self.wm.act_cell(self.cur_state.unsqueeze(0), enc_act)
-        self.cur_state = next_rv.rsample()[0]
+        with torch.inference_mode():
+            enc_act = self.wm.act_enc(act.unsqueeze(0))
+            next_rv = self.wm.act_cell(self.cur_state.unsqueeze(0), enc_act)
+            self.cur_state = next_rv.sample()[0]
 
 
 class Dreams(gym.vector.VectorEnv):
