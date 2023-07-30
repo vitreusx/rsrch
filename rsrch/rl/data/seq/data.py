@@ -13,6 +13,8 @@ import torch.nn.utils.rnn as rnn
 from tensordict import tensorclass
 from torch import Tensor
 
+from ..step.data import Step
+
 ObsType = TypeVar("ObsType")
 ActType = TypeVar("ActType")
 
@@ -22,7 +24,7 @@ class Sequence(abc.ABC, Generic[ObsType, ActType]):
 
     The layout of the arrays is as follows:
       - obs =  :math:`[   o_1,    o_2, ...,    o_{t-1},    o_t]`;
-      - act =  :math:`[   a_1,    a_2, ...,    a_{t-1}        ]`;
+      - act =  :math:`[       a_1,    a_2, ...,    a_{t-1}    ]`;
       - rew =  :math:`[           r_2, ...,    r_{t-1},    r_t]`;
       - term = :math:`[\tau_1, \tau_2, ..., \tau_{t-1}, \tau_t]`.
 
@@ -30,9 +32,24 @@ class Sequence(abc.ABC, Generic[ObsType, ActType]):
     """
 
     obs: typing.Sequence[ObsType]
-    act: typing.Sequence[ActType | None]
+    """Observations at timesteps."""
+    act: typing.Sequence[ActType]
+    """Actions performed at timesteps. Has length len(obs)-1."""
     reward: typing.Sequence[SupportsFloat]
+    """Rewards at timesteps. Is offset by 1 (reward[0] is reward for first MDP step; first observation is not assigned any reward.)"""
     term: typing.Sequence[bool | SupportsFloat]
+    """Whether the state at the timestep is terminal."""
+
+    @property
+    def steps(self):
+        for idx in range(len(self.obs) - 1):
+            yield Step(
+                obs=self.obs[idx],
+                act=self.act[idx],
+                next_obs=self.obs[idx + 1],
+                reward=self.reward[idx],
+                term=self.term[idx + 1],
+            )
 
     def __len__(self):
         """Return the length of the trajectory. NOTE: This is not len(self.obs)"""
@@ -62,6 +79,14 @@ class ListSeq(Sequence):
     reward: List
     term: List
 
+    @staticmethod
+    def from_steps(steps: List[Step]) -> ListSeq:
+        obs = [step.obs for step in steps] + [steps[-1].next_obs]
+        act = [step.act for step in steps]
+        reward = [step.reward for step in steps]
+        term = [False] + [step.term for step in steps]
+        return ListSeq(obs, act, reward, term)
+
 
 @dataclass
 class NumpySeq(Sequence[np.ndarray, np.ndarray]):
@@ -81,7 +106,7 @@ class NumpySeq(Sequence[np.ndarray, np.ndarray]):
 
 @dataclass
 class TensorSeq(Sequence[Tensor, Tensor]):
-    """A Tensor-based trajectory. The shapes of the tensors are (L, ...)."""
+    """A Tensor-based trajectory."""
 
     obs: Tensor
     act: Tensor
@@ -97,6 +122,14 @@ class TensorSeq(Sequence[Tensor, Tensor]):
         reward = torch.as_tensor(seq.reward)
         term = torch.as_tensor(seq.term)
         return TensorSeq(obs, act, reward, term)
+
+    def to(self, device: torch.device):
+        return TensorSeq(
+            obs=self.obs.to(device),
+            act=self.act.to(device),
+            reward=self.reward.to(device),
+            term=self.term.to(device),
+        )
 
 
 class H5Seq(Sequence[np.memmap, np.memmap]):
@@ -139,11 +172,18 @@ class H5Seq(Sequence[np.memmap, np.memmap]):
 class SeqBatchStep:
     """A slice of SeqBatch representing a single step."""
 
-    obs: Tensor
-    act: Tensor | None
     prev_act: Tensor | None
+    """Action leading to current state."""
+    obs: Tensor
+    """Observation for the current state."""
+    act: Tensor | None
+    """Action performed in current state."""
+    next_obs: Tensor | None
+    """Observation for the next state."""
     reward: Tensor
+    """Reward for the transition."""
     term: Tensor
+    """Whether the current state is terminal."""
 
     def __len__(self):
         return len(self.obs)
@@ -165,15 +205,16 @@ class PackedSeqBatch:
     def step_batches(self):
         for step_idx in range(len(self)):
             obs = self.obs.data[self.obs_idxes[step_idx]]
-            act = None
+            act, next_obs, reward = None, None, None
             if step_idx < len(self) - 1:
                 act = self.act.data[self.act_idxes[step_idx]]
-            prev_act, reward = None, None
+                next_obs = self.obs.data[self.obs_idxes[step_idx + 1]]
+                reward = self.reward.data[self.reward_idxes[step_idx - 1]]
+            prev_act = None
             if step_idx > 0:
                 prev_act = self.act.data[self.act_idxes[step_idx - 1]]
-                reward = self.reward.data[self.reward_idxes[step_idx - 1]]
             term = self.term.data[self.term_idxes[step_idx]]
-            yield SeqBatchStep(obs, act, prev_act, reward, term)
+            yield SeqBatchStep(prev_act, obs, act, next_obs, reward, term)
 
     @property
     def obs_idxes(self) -> list[slice]:
@@ -227,21 +268,6 @@ class PackedSeqBatch:
 
 
 @dataclass
-class SeqStepBatch:
-    """A slice of SeqBatch representing a single timestep."""
-
-    obs: Tensor
-    act: Tensor | None
-    next_obs: Tensor | None
-    prev_act: Tensor | None
-    reward: Tensor
-    term: Tensor
-
-    def __len__(self):
-        return len(self.obs)
-
-
-@dataclass
 class PaddedSeqBatch:
     """A batch of equal-length Tensor trajectories. The shapes of the tensors are (L, B, ...)"""
 
@@ -251,19 +277,19 @@ class PaddedSeqBatch:
     term: Tensor
 
     @property
-    def batches(self):
+    def step_batches(self):
         for step in range(len(self.obs)):
             obs = self.obs[step]
-            act, next_obs = None, None
+            act, next_obs, reward = None, None, None
             if step < len(self.obs) - 1:
                 act = self.act[step]
                 next_obs = self.obs[step + 1]
-            prev_act, reward = None, None
+                reward = self.reward[step]
+            prev_act = None
             if step > 0:
                 prev_act = self.act[step - 1]
-                reward = self.reward[step - 1]
             term = self.term[step]
-            yield SeqStepBatch(obs, act, next_obs, prev_act, reward, term)
+            yield SeqBatchStep(prev_act, obs, act, next_obs, reward, term)
 
     def __len__(self):
         return self.obs.shape[1]

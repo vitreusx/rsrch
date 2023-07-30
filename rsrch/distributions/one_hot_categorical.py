@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import List, Tuple
 
 import torch
-from torch.distributions import constraints, register_kl
+from torch.distributions import constraints, kl_divergence, register_kl
 from torch.distributions.distribution import Distribution
 
 from .categorical import Categorical
@@ -74,6 +74,10 @@ class OneHotCategorical(Distribution):
     @property
     def logits(self):
         return self._categorical.logits
+
+    @property
+    def log_probs(self):
+        return self._categorical.log_probs
 
     @property
     def mean(self):
@@ -170,6 +174,5 @@ class OneHotCategoricalStraightThrough(OneHotCategorical):
 
 @register_kl(OneHotCategorical, OneHotCategorical)
 def _kl_onehotcategorical_onehotcategorical(p: OneHotCategorical, q: OneHotCategorical):
-    from torch.distributions.kl import _kl_onehotcategorical_onehotcategorical
-
-    return _kl_onehotcategorical_onehotcategorical(p, q)
+    # Based on torch.distributions.kl._kl_onehotcategorical_onehotcategorical
+    return kl_divergence(p._categorical, q._categorical)

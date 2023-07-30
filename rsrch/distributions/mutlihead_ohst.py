@@ -52,11 +52,15 @@ class MultiheadOHST(Distribution):
 
     @lazy_property
     def probs(self):
-        return logits_to_probs(self.logits)
+        return self._unwrapped.probs
+
+    @lazy_property
+    def log_probs(self):
+        return self._unwrapped.log_probs
 
     @lazy_property
     def logits(self):
-        return probs_to_logits(self.probs)
+        return self._unwrapped.logits
 
     def log_prob(self, value: Tensor) -> Tensor:
         return self._base.log_prob(self._split(value))

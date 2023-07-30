@@ -15,8 +15,7 @@ from tqdm.auto import tqdm, trange
 import rsrch.rl.agents as agents
 import rsrch.rl.gym as gym
 import rsrch.utils.data as data
-from rsrch.rl import wrappers
-from rsrch.rl.data import EpisodeRollout, StepBatch, StepBuffer, StepRollout
+from rsrch.rl.data import StepBatch, StepBuffer, interact
 from rsrch.rl.spec import EnvSpec
 from rsrch.rl.utils.polyak import Polyak
 from rsrch.utils.board import Board
@@ -65,7 +64,7 @@ class DQNData:
 
     def val_env(self, device=None) -> gym.Env:
         env = gym.make(self.name, render_mode="rgb_array")
-        env = wrappers.ToTensor(env, device)
+        env = gym.wrappers.ToTensor(env, device)
         env.reset(seed=self.seed)
         return env
 
@@ -102,8 +101,8 @@ class DQNTrainer:
         val_agent = agents.EpsAgent(QAgent(dqn.Q), rand_agent, self.val_eps)
 
         replay_buffer = StepBuffer(train_env, self.buffer_capacity)
-        train_env = wrappers.CollectSteps(train_env, replay_buffer)
-        env_interaction = iter(StepRollout(train_env, train_agent))
+        train_env = gym.wrappers.CollectSteps(train_env, replay_buffer)
+        env_interaction = interact.steps(train_env, train_agent)
 
         train_loader = data.DataLoader(
             dataset=replay_buffer,
@@ -189,10 +188,9 @@ class DQNTrainer:
             for ep_idx in range(self.val_episodes):
                 cur_env = val_env
                 if ep_idx == 0:
-                    cur_env = wrappers.RenderCollection(cur_env)
+                    cur_env = gym.wrappers.RenderCollection(cur_env)
 
-                val_ep_iter = EpisodeRollout(cur_env, val_agent, num_episodes=1)
-                val_ep = next(iter(val_ep_iter))
+                val_ep = interact.one_episode(cur_env, val_agent)
                 ep_R = sum(val_ep.reward)
                 val_ep_returns.append(ep_R)
 

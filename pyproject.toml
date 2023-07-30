@@ -37,6 +37,8 @@ torchvision = "^0.15"
 tensordict = "^0.1.2"
 gymnasium = { version = "^0.28.1", extras = ["accept-rom-license", "all"] }
 poethepoet = "^0.21.0"
+wandb = "^0.15.5"
+plotly = "^5.15.0"
 
 [tool.poetry.group.ext]
 optional = true

@@ -1,21 +1,43 @@
 import itertools
 
-from rsrch.rl import api, gym
+from rsrch.rl import gym
+from rsrch.rl.api import Agent
 from rsrch.utils import data
 
 from .seq import ListSeq
 from .step import Step
 
 
-def one_step(env: gym.Env, obs, agent: api.Agent):
-    act = agent.act(obs)
+class AutoEnv(gym.Wrapper):
+    def __init__(self, env: gym.Env, agent: Agent):
+        super().__init__(env)
+        self.agent = agent
+
+    def reset(self, *, seed=None, options=None):
+        obs, info = self.env.reset(seed=seed, options=options)
+        self.agent.reset()
+        self.agent.observe(obs)
+        return obs, info
+
+    def step(self, _):
+        act = self.agent.policy()
+        next_obs, reward, term, trunc, info = self.env.step(act)
+        self.agent.step(act)
+        self.agent.observe(next_obs)
+        return next_obs, reward, term, trunc, info
+
+
+def one_step(env: gym.Env, obs, agent: Agent):
+    agent.observe(obs)
+    act = agent.policy()
     next_obs, reward, term, trunc, _ = env.step(act)
+    agent.step(act)
     step = Step(obs, act, next_obs, reward, term)
     done = term or trunc
     return step, done
 
 
-def steps_ex(env: gym.Env, agent: api.Agent, max_episodes=None, max_steps=None):
+def steps_ex(env: gym.Env, agent: Agent, max_episodes=None, max_steps=None):
     ep_idx, step_idx = None, 0
     obs = None
 
@@ -45,12 +67,12 @@ def steps_ex(env: gym.Env, agent: api.Agent, max_episodes=None, max_steps=None):
                 return
 
 
-def steps(env: gym.Env, agent: api.Agent, max_episodes=None, max_steps=None):
-    for step, done in steps_ex(env, agent, max_episodes, max_steps):
+def steps(env: gym.Env, agent: Agent, max_episodes=None, max_steps=None):
+    for step, _ in steps_ex(env, agent, max_episodes, max_steps):
         yield step
 
 
-def episodes(env: gym.Env, agent: api.Agent, max_episodes=None, max_steps=None):
+def episodes(env: gym.Env, agent: Agent, max_episodes=None, max_steps=None):
     ep_idx, step_idx = None, 0
     ep = None
 
@@ -68,9 +90,11 @@ def episodes(env: gym.Env, agent: api.Agent, max_episodes=None, max_steps=None):
                 if ep_idx >= max_episodes:
                     return
 
-        act = agent.act(obs)
+        agent.observe(obs)
+        act = agent.policy()
         ep.act.append(act)
         next_obs, reward, term, trunc, _ = env.step(act)
+        agent.step(act)
         ep.obs.append(next_obs)
         ep.reward.append(reward)
         ep.term.append(term)
@@ -86,5 +110,5 @@ def episodes(env: gym.Env, agent: api.Agent, max_episodes=None, max_steps=None):
                 return
 
 
-def one_episode(env: gym.Env, agent: api.Agent) -> ListSeq:
+def one_episode(env: gym.Env, agent: Agent) -> ListSeq:
     return next(episodes(env, agent, max_episodes=1))

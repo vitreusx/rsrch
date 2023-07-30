@@ -93,11 +93,15 @@ class Categorical(Distribution):
         return constraints.integer_interval(0, self._num_events - 1)
 
     @lazy_property
-    def logits(self):
+    def logits(self) -> Tensor:
         return probs_to_logits(self.probs)
 
     @lazy_property
-    def probs(self):
+    def log_probs(self) -> Tensor:
+        return self.logits - self.logits.logsumexp(dim=-1, keepdim=True)
+
+    @lazy_property
+    def probs(self) -> Tensor:
         return logits_to_probs(self.logits)
 
     @property
@@ -191,6 +195,8 @@ class Categorical(Distribution):
 
 @register_kl(Categorical, Categorical)
 def _kl_categorical_categorical(p: Categorical, q: Categorical):
-    from torch.distributions.kl import _kl_categorical_categorical
-
-    return _kl_categorical_categorical(p, q)
+    # Based on torch.distributions.kl._kl_categorical_categorical
+    t = p.probs * (p.log_probs - q.log_probs)
+    t[(q.probs == 0).expand_as(t)] = torch.inf
+    t[(p.probs == 0).expand_as(t)] = 0
+    return t.sum(-1)

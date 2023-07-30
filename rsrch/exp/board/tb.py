@@ -9,6 +9,7 @@ from slugify import slugify
 from torch.utils import tensorboard
 
 from . import api
+from .api import Dict
 
 
 class TensorBoard(api.Board):
@@ -31,11 +32,18 @@ class TensorBoard(api.Board):
 
     def add_scalar(self, tag: str, value, *, step=None):
         step = self._get_step(step)
-        self._board.add_scalar(tag, value, global_step=step)
+        self._board.add_scalar(tag, self._get_scalar(value), global_step=step)
 
-    def add_samples(self, tag: str, value, *, step=None):
+    def _get_scalar(self, scalar: api.Scalar) -> api.Number:
+        return torch.as_tensor(scalar).detach().cpu().item()
+
+    def add_scalars(self, tag: str, values, *, step=None):
         step = self._get_step(step)
-        self.add_scalar(tag, np.mean(value), step=step)
+        if isinstance(values, Dict):
+            values = {key: self._get_scalar(value) for key, value in values.items()}
+        else:
+            values = {str(i): self._get_scalar(value) for i, value in enumerate(values)}
+        self._board.add_scalars(tag, values, global_step=step)
 
     def add_image(self, tag, image, *, step=None):
         step = self._get_step(step)

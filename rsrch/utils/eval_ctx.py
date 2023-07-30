@@ -6,14 +6,21 @@ from torch import nn
 
 def freeze(*nets: nn.Module):
     for net in nets:
-        net.requires_grad_ = False
+        net.requires_grad_(False)
         net.eval()
 
 
 def unfreeze(*nets: nn.Module):
     for net in nets:
-        net.requires_grad_ = True
+        net.requires_grad_(True)
         net.train()
+
+
+@contextmanager
+def freeze_ctx(*nets: nn.Module):
+    freeze(*nets)
+    yield
+    unfreeze(*nets)
 
 
 @contextmanager

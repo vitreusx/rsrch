@@ -10,7 +10,11 @@ def update(source: nn.Module, target: nn.Module, tau: float):
 
 class Polyak:
     def __init__(
-        self, source: nn.Module, target: nn.Module, tau: float, every: int = 1
+        self,
+        source: nn.Module,
+        target: nn.Module,
+        tau: float = 0.0,
+        every: int = 1,
     ):
         self.source = source
         self.target = target

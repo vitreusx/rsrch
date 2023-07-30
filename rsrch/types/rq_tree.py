@@ -6,20 +6,35 @@ import numpy as np
 class RangeQueryTree:
     """A (simplified) range-query tree. We maintain an array :math:`[A_1, \ldots, A_n]`, for which we can (1) query :math:`A_i`, (2) set :math:`A_i := v`, (3) perform equivalent of :func:`np.searchsorted` on :math:`[A_1, A_1 \\oplus A_2, \\ldots, A_1 \\oplus \\ldots \\oplus A_n]` over a specified monoid :math:`M = (\\oplus, 0_{\\oplus})`."""
 
-    def __init__(self, size: int, reduce_fn=ops.add, zero=0.0, dtype=None):
+    def __init__(
+        self,
+        size: int,
+        reduce_fn=ops.add,
+        zero=0.0,
+        init=None,
+        dtype=None,
+        refresh_every=None,
+    ):
         self.size = size
         nlevels = int(np.ceil(np.log2(self.size)))
-        self._true_size = 2**nlevels
+        self._nleaves = 2**nlevels
 
         if dtype is None:
             dtype = np.array([zero]).dtype
-        self.tree = np.empty((2 * self._true_size - 2,), dtype=dtype)
+        self.tree = np.empty((2 * self._nleaves - 1,), dtype=dtype)
 
         self.reduce_fn = reduce_fn
         self._zero = zero
-        self.tree.fill(self._zero)
+        self._array_beg = self._nleaves - 1
 
-        self._array_beg = self._true_size - 1
+        self.tree.fill(self._zero)
+        if init is None:
+            init = self._zero
+        self.array.fill(init)
+        self.refresh()
+
+        self._refresh_every = refresh_every
+        self._refresh_ctr = 0
 
     def __len__(self):
         return self.size
@@ -28,13 +43,23 @@ class RangeQueryTree:
     def array(self):
         return self.tree[self._array_beg : self._array_beg + self.size]
 
+    @property
+    def total(self):
+        return self.tree[0]
+
     def __getitem__(self, idx):
         return self.array[idx]
 
     def __setitem__(self, idxes, values):
         idxes, values = self._asarray(idxes, values)
         self.array[idxes] = values
-        self._update_tree(idxes, values, 0, self.tree[0], 0, self._true_size)
+        self._update_tree(idxes, values, 0, self.tree[0], 0, self._nleaves)
+
+        if self._refresh_every is not None:
+            self._refresh_ctr += 1
+            if self._refresh_ctr >= self._refresh_every:
+                self.refresh()
+                self._refresh_ctr = 0
 
     def _asarray(self, idxes, values):
         if isinstance(idxes, slice):
@@ -97,13 +122,13 @@ class RangeQueryTree:
         values[pivot:] = self.tree[0] - values[pivot:]
 
         self._search_tree(
-            values[:pivot],
-            self._zero,
-            idxes[:pivot],
-            0,
-            self.tree[0],
-            0,
-            self._true_size,
+            values=values[:pivot],
+            offset=self._zero,
+            idxes=idxes[:pivot],
+            root=0,
+            root_v=self.tree[0],
+            beg=0,
+            end=self._nleaves,
         )
         idxes = idxes[np.argsort(sort_idx)]
 
@@ -112,7 +137,7 @@ class RangeQueryTree:
         return idxes, values
 
     def _search_tree(self, values, offset, idxes, root, root_v, beg, end):
-        is_leaf = root >= self._true_size - 1
+        is_leaf = root >= self._array_beg
 
         if is_leaf:
             idxes[:] = beg

@@ -23,7 +23,7 @@ class Dreamer(core.Dreamer):
         self.alpha = 0.8
         self.copy_critic_every = 100
         self.train_every = 16
-        self.log_every = int(1e3)
+        self.log_every = int(5e2)
         self.per_env_conf()
 
         torch.set_float32_matmul_precision("high")
@@ -34,8 +34,10 @@ class Dreamer(core.Dreamer):
         self.buf_prefill_steps = int(1e3)
 
     def per_env_conf(self):
-        self.env_name = "ALE/Jamesbond-v5"
-        self.env_type = "atari"
+        # self.env_name = "ALE/Pong-v5"
+        # self.env_type = "atari"
+        self.env_name = "CartPole-v1"
+        self.env_type = "other"
 
         if self.env_type == "atari":
             self.beta = 0.1
@@ -45,7 +47,7 @@ class Dreamer(core.Dreamer):
             self.action_repeat = 4
         elif self.env_type in ["dmc", "other"]:
             self.beta = 1.0
-            self.rho = 0.0
+            self.rho = 1.0
             self.eta = 1e-4
             self.horizon = 15
             self.action_repeat = 1
@@ -115,6 +117,7 @@ class Dreamer(core.Dreamer):
         )
         for step, done in steps_ex:
             self.buffer.add(step, done)
+        ...
 
     def setup_models_and_optimizers(self):
         num_classes = 32
@@ -122,8 +125,8 @@ class Dreamer(core.Dreamer):
             h_dim = hidden_dim = 600
             z_dim = 1024
         elif self.env_type == "other":
-            h_dim = z_dim = 256
-            hidden_dim = 256
+            h_dim = z_dim = 128
+            hidden_dim = 128
 
         self.rssm = nets.RSSM(self.train_env, h_dim, z_dim, hidden_dim, num_classes)
         self.rssm = self.rssm.to(self.device)
@@ -155,8 +158,8 @@ class Dreamer(core.Dreamer):
             fc_layers=[hidden_dim] * 3,
         ).to(self.device)
 
-        ac_params = [*self.critic.parameters(), *self.actor.parameters()]
-        self.ac_optim = torch.optim.Adam(ac_params, lr=1e-3)
+        self.critic_optim = torch.optim.Adam(self.critic.parameters(), lr=1e-3)
+        self.actor_optim = torch.optim.Adam(self.actor.parameters(), lr=1e-3)
 
     def setup_extras(self):
         self.exp_dir = ExpDir()

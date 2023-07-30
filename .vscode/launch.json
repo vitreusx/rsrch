@@ -1,10 +1,30 @@
 {
     "configurations": [
         {
+            "name": "A2C",
+            "type": "python",
+            "request": "launch",
+            "module": "rsrch.hub.a2c",
+            "pythonArgs": [
+                "-O"
+            ],
+            "justMyCode": false
+        },
+        {
             "name": "Dreamer v2",
             "type": "python",
             "request": "launch",
             "module": "rsrch.hub.dreamer.v2_opt",
+            "pythonArgs": [
+                "-O"
+            ],
+            "justMyCode": false
+        },
+        {
+            "name": "Dreamer v2-ext",
+            "type": "python",
+            "request": "launch",
+            "module": "rsrch.hub.dreamer.v2_ext",
             "pythonArgs": [
                 "-O"
             ],

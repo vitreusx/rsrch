@@ -13,37 +13,53 @@ class RandomAgent(Agent):
     def __init__(self, env_spec: EnvSpec):
         self.action_space = env_spec.action_space
 
-    def reset(self):
-        ...
-
-    def act(self, obs):
+    def policy(self):
         return self.action_space.sample()
 
 
-class WithNoise(Agent):
-    def __init__(self, base: Agent, noise_fn: Callable[[], D.Distribution]):
+class AgentWrapper(Agent):
+    def __init__(self, base: Agent):
         self.base = base
+
+    def reset(self):
+        return self.base.reset()
+
+    def observe(self, obs):
+        return self.base.observe(obs)
+
+    def policy(self):
+        return self.base.policy()
+
+    def step(self, act):
+        return self.base.step(act)
+
+
+class WithNoise(AgentWrapper):
+    def __init__(self, base: Agent, noise_fn: Callable[[], D.Distribution]):
+        super().__init__(base)
         self.noise_fn = noise_fn
 
     def reset(self):
         self.noise = self.noise_fn()
         return self.base.reset()
 
-    def act(self, obs):
-        return self.base.act(obs) + self.noise.sample()
+    def policy(self):
+        return self.base.policy() + self.noise.sample()
 
 
-class ToTensor(Agent):
+class ToTensor(AgentWrapper):
     def __init__(self, base: Agent, device=None):
-        self.base = base
+        super().__init__(base)
         self.device = device
 
-    def reset(self):
-        return self.base.reset()
+    def observe(self, obs):
+        return self.base.observe(obs.detach().cpu().numpy())
 
-    def act(self, obs: Tensor) -> Tensor:
-        action = self.base.act(obs.cpu().numpy())
-        return torch.as_tensor(action, device=self.device)
+    def policy(self) -> Tensor:
+        return torch.as_tensor(self.base.policy(), device=self.device)
+
+    def step(self, act):
+        return self.base.step(act.detach().cpu().numpy())
 
 
 class EpsAgent(Agent):
@@ -53,13 +69,18 @@ class EpsAgent(Agent):
         self.eps = eps
 
     def reset(self):
-        self._opt.reset()
-        self._rand.reset()
+        return self._opt.reset(), self._rand.reset()
 
-    def act(self, obs):
+    def observe(self, obs):
+        return self._opt.observe(obs), self._rand.observe(obs)
+
+    def policy(self):
         use_rand = np.random.rand() < self.eps
         agent = self._rand if use_rand else self._opt
-        return agent.act(obs)
+        return agent.policy()
+
+    def step(self, act):
+        return self._opt.step(act), self._rand.step(act)
 
 
 class EpsScheduler:
@@ -83,3 +104,23 @@ class EpsScheduler:
         self.cur_eps = self.base_eps + self.eps_amp * cur_decay
         self.agent.eps = self.cur_eps
         self._cur_step += 1
+
+
+class WithActionRepeat(AgentWrapper):
+    def __init__(self, base: Agent, action_repeat: int):
+        super().__init__(base)
+        self.action_repeat = action_repeat
+        self._policy, self._ctr = None, 1
+
+    def reset(self):
+        self._policy, self._ctr = None, 0
+        return self.base.reset()
+
+    def policy(self):
+        if self._policy is None or self._ctr == 0:
+            self._policy = self.base.policy()
+        return self._policy
+
+    def step(self, act):
+        self._ctr = (self._ctr + 1) % self.action_repeat
+        return self.base.step(act)

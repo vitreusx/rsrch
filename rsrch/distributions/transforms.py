@@ -74,3 +74,12 @@ class SliceTransform(D.Transform):
 
     def log_abs_det_jacobian(self, x, y):
         return torch.ones([]).type_as(y)
+
+
+class Pipeline(D.TransformedDistribution):
+    def __init__(self, *parts: D.Distribution | D.Transform, validate_args=False):
+        super().__init__(
+            base_distribution=parts[0],
+            transforms=D.ComposeTransform(parts[1:]),
+            validate_args=validate_args,
+        )
