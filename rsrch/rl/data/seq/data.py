@@ -117,10 +117,10 @@ class TensorSeq(Sequence[Tensor, Tensor]):
     def convert(seq: Sequence) -> TensorSeq:
         """Convert arbitrary trajectory to Tensor-based version."""
 
-        obs = torch.stack([torch.as_tensor(x) for x in seq.obs])
-        act = torch.stack([torch.as_tensor(x) for x in seq.act])
-        reward = torch.as_tensor(seq.reward)
-        term = torch.as_tensor(seq.term)
+        obs = torch.stack([torch.as_tensor(x) for x in seq.obs]).detach()
+        act = torch.stack([torch.as_tensor(x) for x in seq.act]).detach()
+        reward = torch.as_tensor(seq.reward).detach()
+        term = torch.as_tensor(seq.term).detach()
         return TensorSeq(obs, act, reward, term)
 
     def to(self, device: torch.device):

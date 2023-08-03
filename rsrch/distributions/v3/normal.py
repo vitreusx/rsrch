@@ -2,11 +2,12 @@ import math
 from numbers import Number
 
 import torch
-from tensordict import tensorclass
 from torch import Tensor
 
+from .distribution import Distribution
 from .kl import register_kl
-from .utils import _sum_rightmost, distribution
+from .tensorlike import Tensorlike
+from .utils import sum_rightmost
 
 
 def _standard_normal(shape, dtype, device):
@@ -18,11 +19,10 @@ def _standard_normal(shape, dtype, device):
     return torch.empty(shape, dtype=dtype, device=device).normal_()
 
 
-@distribution
-class Normal:
-    loc: Tensor
-    scale: Tensor
-    event_shape: torch.Size
+class Normal(Distribution, Tensorlike):
+    MSE_SIGMA = 1.0 / math.sqrt(2.0 * math.pi)
+    """This value of \sigma for the normal distribution makes log prob equal 
+    (to a scale factor) to (x-\mu)^2. """
 
     def __init__(
         self,
@@ -31,17 +31,20 @@ class Normal:
         event_dims: int = 0,
     ):
         loc = torch.as_tensor(loc)
-        scale = torch.as_tensor(scale, device=loc.device)
-        loc, scale = torch.broadcast_tensors(loc, scale)
+        scale = torch.as_tensor(scale)
 
-        split_idx = len(loc.shape) - event_dims
-        batch_shape, event_shape = loc.shape[:split_idx], loc.shape[split_idx:]
+        bcast_shape = torch.broadcast_shapes(loc.shape, scale.shape)
+        split_idx = len(bcast_shape) - event_dims
+        batch_shape, event_shape = bcast_shape[:split_idx], bcast_shape[split_idx:]
 
-        self.__tc_init__(loc, scale, event_shape, batch_size=batch_shape)
+        Tensorlike.__init__(self, batch_shape)
+        self.event_shape = event_shape
 
-    @property
-    def batch_shape(self):
-        return self.batch_size
+        self.loc: Tensor
+        self.register_field("loc", loc)
+
+        self.scale: Tensor
+        self.register_field("scale", scale)
 
     @property
     def mean(self):
@@ -69,20 +72,17 @@ class Normal:
             - log_scale
             - math.log(math.sqrt(2 * math.pi))
         )
-        return _sum_rightmost(logp, len(self.event_shape))
+        return sum_rightmost(logp, len(self.event_shape))
 
     def entropy(self):
         ent = 0.5 + 0.5 * math.log(2 * math.pi) + self.scale.log()
-        return _sum_rightmost(ent, len(self.event_shape))
-
-    # def __repr__(self):
-    #     return f"Normal(batch_shape: {[*self.batch_shape]}, event_shape: {[*self.event_shape]})"
+        return sum_rightmost(ent, len(self.event_shape))
 
 
 @register_kl(Normal, Normal)
 def _kl_normal(p: Normal, q: Normal):
     var_p, var_q = p.scale.square(), q.scale.square()
     ratio = var_p / var_q
-    k = len(p.event_shape)
-    kl_ = (p.loc - q.loc).square() / (2 * var_q) + (ratio - k - ratio.log()) / 2
-    return _sum_rightmost(kl_, k)
+    k = max(len(p.event_shape), 1)
+    kl_ = (p.loc - q.loc).square() / (2 * var_q) + (ratio - 1 - ratio.log()) / 2
+    return sum_rightmost(kl_, k)

@@ -2,50 +2,48 @@ from typing import Optional
 
 import torch
 import torch.nn.functional as F
-from tensordict import tensorclass
 from torch import Tensor
 
+from .distribution import Distribution
 from .kl import register_kl
-from .utils import distribution
+from .tensorlike import Tensorlike
 
 
-@distribution
-class Bernoulli:
+class Bernoulli(Distribution, Tensorlike):
     _probs: Optional[Tensor]
     _logits: Optional[Tensor]
     event_shape: torch.Size
 
-    def __init__(self, probs: Tensor | None = None, logits=None):
+    def __init__(self, probs: Tensor | None = None, logits: Tensor | None = None):
         if probs is not None and logits is not None:
             raise ValueError("probs and logits cannot be both not-None")
 
         _param = probs if probs is not None else logits
-        batch_size = _param.shape
-        event_shape = torch.Size([])
+        shape = _param.shape
+        Tensorlike.__init__(self, shape)
 
-        self.__tc_init__(
-            _probs=probs,
-            _logits=logits,
-            event_shape=event_shape,
-            batch_size=batch_size,
-        )
+        self._probs: Tensor | None
+        self.register_field("_probs", probs)
 
-    @property
-    def batch_shape(self):
-        return self.batch_size
+        self._logits: Tensor | None
+        self.register_field("_logits", logits)
+
+        self.event_shape = torch.Size([])
 
     @property
     def logits(self) -> Tensor:
         if self._logits is None:
             eps = torch.finfo(self._probs.dtype).eps
             probs = self._probs.clamp(eps, 1 - eps)
-            self._logits = torch.log(probs) - torch.log1p(-probs)
+            logits = torch.log(probs) - torch.log1p(-probs)
+            self.register_field("_logits", logits)
         return self._logits
 
     @property
     def probs(self) -> Tensor:
         if self._probs is None:
-            self._probs = F.sigmoid(self._logits)
+            probs = F.sigmoid(self._logits)
+            self.register_field("_probs", probs)
         return self._probs
 
     @property
@@ -78,9 +76,7 @@ class Bernoulli:
 
     def entropy(self):
         return F.binary_cross_entropy_with_logits(
-            self.logits,
-            self.probs,
-            reduction="none",
+            self.logits, self.probs, reduction="none"
         )
 
 

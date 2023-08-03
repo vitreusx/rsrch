@@ -31,9 +31,9 @@ class TensorStep(Step[Tensor, Tensor]):
     @staticmethod
     def convert(step: Step) -> TensorStep:
         return TensorStep(
-            obs=torch.as_tensor(step.obs),
-            act=torch.as_tensor(step.act),
-            next_obs=torch.as_tensor(step.next_obs),
+            obs=torch.as_tensor(step.obs).detach(),
+            act=torch.as_tensor(step.act).detach(),
+            next_obs=torch.as_tensor(step.next_obs).detach(),
             reward=step.reward,
             term=step.term,
         )

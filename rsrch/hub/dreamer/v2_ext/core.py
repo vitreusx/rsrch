@@ -6,24 +6,16 @@ import torch.nn.functional as F
 from torch import Tensor
 from tqdm.auto import tqdm
 
-import rsrch.distributions.v2 as D
 import rsrch.rl.data.transforms as T
+from rsrch.exp import prof
 from rsrch.exp.board import Board
 from rsrch.rl import gym
 from rsrch.rl.data import MultiStepBuffer, PaddedSeqBatch, interact
 from rsrch.rl.utils.polyak import Polyak
 from rsrch.utils import data
 from rsrch.utils.cron import Every
-from rsrch.utils.detach import detach
-from rsrch.utils.eval_ctx import freeze_ctx
-from rsrch.utils.stats import Stats
 
 from . import wm
-
-
-class Critic:
-    def __call__(self, states: wm.State) -> Tensor:
-        ...
 
 
 class Dreamer(ABC):
@@ -46,7 +38,6 @@ class Dreamer(ABC):
         self.batch_seq_len: int = ...
         self.device: torch.device = ...
         self.log_every: int = ...
-        self.kl_reg_coeff: float = ...
         self.wm_loss_scale: dict[str, float] = ...
         self.horizon: int = ...
         self.copy_critic_every: int = ...
@@ -89,8 +80,8 @@ class Dreamer(ABC):
         self.obs_pred: wm.Decoder = ...
         self.actor: wm.Actor = ...
         self.actor_opt: torch.optim.Optimizer = ...
-        self.critic: Critic = ...
-        self.target_critic: Critic = ...
+        self.critic: wm.Critic = ...
+        self.target_critic: wm.Critic = ...
         self.critic_opt: torch.optim.Optimizer = ...
 
     def _post_setup_models(self):
@@ -108,6 +99,7 @@ class Dreamer(ABC):
     @abstractmethod
     def setup_extras(self):
         self.board: Board = ...
+        self.prof: prof.Profiler = ...
 
     def train(self):
         self.env_step = 0
@@ -120,6 +112,7 @@ class Dreamer(ABC):
             val_epoch()
             if self.is_finished:
                 break
+
             self.train_step()
 
     @property
@@ -133,14 +126,16 @@ class Dreamer(ABC):
             val_ret = sum(val_ep.reward)
             val_returns.append(val_ret)
 
-        stats = Stats(torch.stack(val_returns))
-        self.board.add_scalars("val/returns", stats.asdict())
+        # stats = Stats(torch.stack(val_returns))
+        # self.board.add_scalars("val/returns", stats.asdict())
+        self.board.add_scalar("val/returns", torch.stack(val_returns).mean())
 
     def train_step(self):
         self.collect()
         if len(self.buffer) >= self.prefill_size:
-            self.optimize_model()
-            self.optimize_policy()
+            with self.prof.profile("optimize"):
+                self.optimize_model()
+                self.optimize_policy()
 
     def collect(self):
         for _ in range(self.env_step_ratio):
@@ -153,13 +148,11 @@ class Dreamer(ABC):
         self.wm.requires_grad_(True)
 
         batch = next(self.batch_iter)
-        seq_len, batch_size = batch.obs.shape[:2]
-
         states, pred_rvs, full_rvs = self.wm.observe(batch)
 
         loss = {}
 
-        loss["kl"] = self._mixed_kl_loss(pred_rvs, full_rvs[1:])
+        loss["kl"] = self.state_div(pred_rvs, full_rvs[1:])
 
         obs_rvs = self.obs_pred(states.flatten(0, 1))
         flat_obs = batch.obs.flatten(0, 1)
@@ -176,24 +169,21 @@ class Dreamer(ABC):
         loss["reward"] = -reward_rvs.log_prob(flat_rew)
 
         wm_loss = sum(loss[k].mean() * self.wm_loss_scale[k] for k in loss)
-        self.wm_opt.zero_grad(set_to_none=True)
-        wm_loss.backward()
-        self.wm_opt.step()
+        if wm_loss.grad_fn is not None:
+            self.wm_opt.zero_grad(set_to_none=True)
+            wm_loss.backward()
+            self.wm_opt.step()
 
-        self._init_states = states.flatten().detach()
+        self._init_states = states.flatten(0, 1).detach()
 
         if self.should_log:
             for k in loss:
                 self.board.add_scalar(f"train/wm_loss/{k}", loss[k].mean())
             self.board.add_scalar(f"train/wm_loss", wm_loss)
 
-    def _mixed_kl_loss(self, post, prior):
-        stop_post, stop_prior = 0.0, 0.0
-        if self.kl_reg_coeff != 0.0:
-            stop_post = D.kl_divergence(detach(post), prior)
-        if self.kl_reg_coeff != 1.0:
-            stop_prior = D.kl_divergence(post, detach(prior))
-        return self.kl_reg_coeff * stop_post + (1.0 - self.kl_reg_coeff) * stop_prior
+    @abstractmethod
+    def state_div(self, post, prior) -> Tensor:
+        ...
 
     def optimize_policy(self):
         self.wm.requires_grad_(False)
@@ -203,20 +193,20 @@ class Dreamer(ABC):
         )
 
         seq_len, bs = states.shape[:2]
-        flat_s = states.flatten()
+        flat_s = states.flatten(0, 1)
 
-        v = self.critic(flat_s)
-        v = v.reshape(seq_len, bs, *v.shape[1:])
+        rew = self.wm.reward_pred(flat_s).mode
+        rew = rew.reshape(seq_len, bs, *rew.shape[1:])
+
+        term = self.wm.term_pred(flat_s).mean
+        term = term.reshape(seq_len, bs, *term.shape[1:])
 
         with torch.no_grad():
             vt = self.target_critic(flat_s)
             vt = vt.reshape(seq_len, bs, *vt.shape[1:])
 
-        rew = self.wm.reward_pred(flat_s).mean
-        rew = rew.reshape(seq_len, bs, *rew.shape[1:])
-
-        term = self.wm.term_pred(flat_s).mean
-        term = term.reshape(seq_len, bs, *term.shape[1:])
+        v = self.critic(flat_s)
+        v = v.reshape(seq_len, bs, *v.shape[1:])
 
         gae_vt = self._gae_v(vt, rew, term)
 
@@ -227,10 +217,9 @@ class Dreamer(ABC):
         self.critic_polyak.step()
 
         loss = {}
-        logp = act_rvs.log_prob(acts)
-        adv = gae_vt - v
-        loss["vpg"] = logp * -adv.detach()
-        loss["value"] = -v
+        logp = act_rvs.log_prob(acts.detach())
+        loss["vpg"] = -logp * (gae_vt - vt)[1:].detach()
+        loss["value"] = -vt[1:]
         loss["ent"] = -act_rvs.entropy()
 
         actor_loss = sum(self.actor_loss_scale[k] * loss[k].mean() for k in loss)
@@ -250,10 +239,10 @@ class Dreamer(ABC):
             if step == len(v) - 1:
                 cur_v = v[step]
             else:
-                next_v = (1.0 - self.gae_lambda) * v[
-                    step + 1
-                ] + self.gae_lambda * gae_v[-1]
-                cur_v = rew[step] + self.gamma * next_v
+                next_v = (
+                    self.gae_lambda * v[step + 1] + (1.0 - self.gae_lambda) * gae_v[-1]
+                )
+                cur_v = rew[step + 1] + self.gamma * next_v
 
             cont_f = 1.0 - term[step].type_as(cur_v)
             cur_v = cont_f * cur_v

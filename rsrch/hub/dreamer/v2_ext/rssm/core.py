@@ -6,45 +6,44 @@ import torch
 from tensordict import TensorDict, tensorclass
 from torch import Tensor, nn
 
-import rsrch.distributions.v2 as D
-from rsrch.distributions.v2.utils import distribution
+import rsrch.distributions.v3 as D
+from rsrch.distributions.v3.tensorlike import Tensorlike
 from rsrch.rl import gym
 
-from . import wm
+from .. import wm
 
 
-@tensorclass
-class State:
-    deter: Tensor
-    stoch: Tensor
+class State(Tensorlike):
+    def __init__(self, deter: Tensor, stoch: Tensor):
+        shape = deter.shape[:-1]
+        Tensorlike.__init__(self, shape)
 
-    def tensor(self):
+        self.register_field("deter", deter)
+        self.register_field("stoch", stoch)
+
+    def to_tensor(self):
         return torch.cat([self.deter, self.stoch], -1)
 
 
-@distribution
-class StateDist:
-    deter: Tensor
-    stoch_dist: TensorDict
-
+class StateDist(D.Distribution, Tensorlike):
     def __init__(self, deter: Tensor, stoch_dist: D.Distribution):
-        self.__tc_init__(deter, stoch_dist, batch_size=stoch_dist.batch_size)
+        Tensorlike.__init__(self, stoch_dist.batch_shape)
+        self.register_field("deter", deter)
+        self.register_field("stoch_dist", stoch_dist)
 
     @property
     def batch_shape(self):
-        return self.batch_size
+        return self.shape
 
     def sample(self, sample_size: torch.Size = torch.Size()) -> State:
         deter = self.deter.expand(*sample_size, *self.deter.shape)
         stoch = self.stoch_dist.sample(sample_size)
-        batch_size = [*sample_size, *self.batch_shape]
-        return State(deter=deter, stoch=stoch, batch_size=batch_size)
+        return State(deter=deter, stoch=stoch)
 
     def rsample(self, sample_size: torch.Size = torch.Size()) -> State:
         deter = self.deter.expand(*sample_size, *self.deter.shape)
         stoch = self.stoch_dist.rsample(sample_size)
-        batch_size = [*sample_size, *self.batch_shape]
-        return State(deter=deter, stoch=stoch, batch_size=batch_size)
+        return State(deter=deter, stoch=stoch)
 
     def log_prob(self, state: State):
         return self.stoch_dist.log_prob(state.stoch)
@@ -68,16 +67,6 @@ class StochCell(Protocol, Generic[T]):
         ...
 
 
-class Encoder(Protocol, Generic[T]):
-    def __call__(self, x: T) -> Tensor:
-        ...
-
-
-class Decoder(Protocol):
-    def __call__(self, cur_h: State) -> D.Distribution:
-        ...
-
-
 ObsType = TypeVar("ObsType")
 ActType = TypeVar("ActType")
 
@@ -89,15 +78,15 @@ class Policy(Protocol, Generic[ActType]):
 
 class RSSM(wm.WorldModel, Generic[ObsType, ActType]):
     obs_space: gym.Space
-    obs_enc: Encoder[ObsType]
+    obs_enc: wm.Encoder[ObsType]
     act_space: gym.Space
-    act_enc: Encoder[ActType]
+    act_enc: wm.Encoder[ActType]
     prior: State
     deter_cell: DeterCell[ActType]
     pred_cell: StochCell[None]
     trans_cell: StochCell[ObsType]
-    reward_pred: Decoder
-    term_pred: Decoder
+    reward_pred: wm.Decoder
+    term_pred: wm.Decoder
 
     def act_cell(self, prev_h: State, enc_act: Tensor):
         deter = self.deter_cell(prev_h, enc_act)

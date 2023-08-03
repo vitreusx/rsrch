@@ -13,7 +13,6 @@ OnTraceFn: TypeAlias = Callable[[profile], None]
 class TorchProfiler(api.Profiler):
     def __init__(self, schedule: SchedFn, on_trace: OnTraceFn, use_cuda=True):
         self.use_cuda = use_cuda
-        self._depth = 0
 
         activities = [ProfilerActivity.CPU]
         if use_cuda:
@@ -29,9 +28,15 @@ class TorchProfiler(api.Profiler):
             with_flops=True,
         )
 
+        self._depth = 0
+        self._prof.__enter__()
+
+    def __del__(self):
+        self._prof.__exit__(None, None, None)
+
     @staticmethod
     def schedule(wait: int, warmup: int, active: int, repeat: int = 0):
-        return schedule(wait, warmup, active, repeat)
+        return schedule(wait=wait, warmup=warmup, active=active, repeat=repeat)
 
     @staticmethod
     def on_trace_fn(exp_dir: Path, export_trace=True, export_stack=True):
@@ -52,15 +57,10 @@ class TorchProfiler(api.Profiler):
         return _on_trace
 
     @contextmanager
-    def region(self, name: str):
+    def profile(self, name: str):
         try:
-            if self._depth == 0:
-                self._depth += 1
-                with self._prof as self._prof:
-                    yield self._prof
-            else:
-                self._depth += 1
-                yield self._prof
+            self._depth += 1
+            yield
         finally:
             self._depth -= 1
             if self._depth == 0:

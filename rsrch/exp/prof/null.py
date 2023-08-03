@@ -5,7 +5,7 @@ from . import api
 
 class NullProfiler(api.Profiler):
     @contextmanager
-    def region(self, name: str):
+    def profile(self, name):
         try:
             yield
         finally:

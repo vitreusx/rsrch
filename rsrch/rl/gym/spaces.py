@@ -63,13 +63,18 @@ class TensorSpace(Space[Tensor]):
 class TensorBox(TensorSpace):
     def __init__(
         self,
-        low: SupportsFloat | Tensor,
-        high: SupportsFloat | Tensor,
+        low: SupportsFloat | Tensor | None = None,
+        high: SupportsFloat | Tensor | None = None,
         shape: torch.Size | None = None,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
         seed: int | torch.Generator | None = None,
     ):
+        if low is None:
+            low = -torch.inf
+        if high is None:
+            high = torch.inf
+
         if shape is not None:
             shape = torch.Size(shape)
         elif isinstance(low, Tensor):
@@ -121,6 +126,16 @@ class TensorBox(TensorSpace):
 
         self._low_repr = self._short_repr(self.low)
         self._high_repr = self._short_repr(self.high)
+
+    def to(self, dtype=None, device=None):
+        low = self.low.to(dtype=dtype, device=device)
+        high = self.high.to(dtype=dtype, device=device)
+        return TensorBox(
+            low=low,
+            high=high,
+            shape=self.shape,
+            seed=self.gen.seed(),
+        )
 
     @staticmethod
     def from_numpy(box: Box, device: torch.device = None, dtype: torch.dtype = None):
@@ -204,6 +219,14 @@ class TensorDiscrete(TensorSpace):
     def from_numpy(space: Discrete, device: torch.device = None):
         return TensorDiscrete(space.n, device=device)
 
+    def to(self, dtype=None, device=None):
+        return TensorDiscrete(
+            n=self.n,
+            device=device,
+            seed=self.gen.seed(),
+            start=self.start,
+        )
+
     def sample(self, mask: Tensor | None = None) -> Tensor:
         if mask is not None:
             idxes = torch.where(mask)[0].to(dtype=self.dtype)
@@ -211,7 +234,10 @@ class TensorDiscrete(TensorSpace):
                 return torch.tensor(self.start, dtype=self.dtype, device=self.device)
             else:
                 chosen = torch.randint(
-                    high=len(idxes), size=[], device=self.device, generator=self.gen
+                    high=len(idxes),
+                    size=[],
+                    device=self.device,
+                    generator=self.gen,
                 )
                 return self.start + idxes[chosen]
         else:

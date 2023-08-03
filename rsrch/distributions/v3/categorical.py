@@ -1,43 +1,30 @@
-from typing import Optional
-
 import torch
 import torch.nn.functional as F
-from tensordict import tensorclass
 from torch import Tensor
 
+from .distribution import Distribution
 from .kl import register_kl
-from .utils import distribution
+from .tensorlike import Tensorlike
 
 
-@distribution
-class Categorical:
-    _probs: Optional[Tensor]
-    _logits: Optional[Tensor]
-    event_shape: torch.Size
-    _num_events: int
-    _normalized: bool
-
+class Categorical(Distribution, Tensorlike):
     def __init__(self, probs: Tensor | None = None, logits: Tensor | None = None):
         if probs is not None and logits is not None:
             raise ValueError("probs and logits cannot be both not-None")
 
         _param = probs if probs is not None else logits
-        batch_size = _param.shape[:-1]
-        event_shape = torch.Size([])
-        _num_events = _param.shape[-1]
+        shape = _param.shape[:-1]
+        Tensorlike.__init__(self, shape)
 
-        self.__tc_init__(
-            _probs=probs,
-            _logits=logits,
-            event_shape=event_shape,
-            _num_events=_num_events,
-            _normalized=False,
-            batch_size=batch_size,
-        )
+        self._probs: Tensor | None
+        self.register_field("_probs", probs)
 
-    @property
-    def batch_shape(self):
-        return self.batch_size
+        self._logits: Tensor | None
+        self.register_field("_logits", logits)
+
+        self._normalized = False
+        self._num_events = _param.shape[-1]
+        self.event_shape = torch.Size([])
 
     @property
     def logits(self) -> Tensor:
@@ -45,23 +32,22 @@ class Categorical:
             eps = torch.finfo(self._probs.dtype).eps
             probs = self._probs.clamp(eps, 1 - eps)
             self._logits = torch.log(probs)
+            self.__tensor_fields__.append("_logits")
             self._normalized = True
         return self._logits
 
     @property
     def log_probs(self) -> Tensor:
-        if self._logits is None:
-            return self.logits
-        else:
-            if not self._normalized:
-                self._logits = self.logits - self.logits.logsumexp(-1, keepdim=True)
-                self._normalized = True
-            return self._logits
+        if self._logits is None or not self._normalized:
+            self._logits = self.logits - self.logits.logsumexp(-1, keepdim=True)
+            self._normalized = True
+        return self._logits
 
     @property
     def probs(self) -> Tensor:
         if self._probs is None:
             self._probs = F.softmax(self.logits, -1)
+            self.__tensor_fields__.append("_probs")
         return self._probs
 
     @property
@@ -105,9 +91,6 @@ class Categorical:
         logits = torch.clamp(self.logits, min=min_real)
         p_log_p = logits * self.probs
         return -p_log_p.sum(-1)
-
-    # def __repr__(self):
-    #     return f"Categorical(batch_shape: {[*self.batch_shape]}, num_events: {self._num_events})"
 
 
 @register_kl(Categorical, Categorical)

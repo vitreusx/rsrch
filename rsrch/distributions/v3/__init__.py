@@ -8,4 +8,5 @@ from .normal import Normal
 from .one_hot_categorical import OneHotCategorical, OneHotCategoricalST
 from .squashed_normal import SquashedNormal
 from .transformed import TransformedDistribution
+from .tuple import TensorTuple, TupleDist
 from .uniform import Uniform

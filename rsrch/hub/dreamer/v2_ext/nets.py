@@ -1,3 +1,4 @@
+import math
 from typing import Protocol, runtime_checkable
 
 import numpy as np
@@ -10,7 +11,11 @@ from rsrch.nn import fc
 from rsrch.rl import gym
 from rsrch.rl.spec import EnvSpec
 
-from . import rssm, wm
+from . import wm
+
+MSE_SIGMA = 1.0 / math.sqrt(2.0 * math.pi)
+"""This value of \sigma for the normal distribution makes log prob equal 
+(to a scale factor) to (x-\mu)^2. """
 
 
 class VisEncoder(nn.Module):
@@ -63,8 +68,7 @@ class VisDecoder(nn.Module):
     def __init__(
         self,
         enc: VisEncoder,
-        deter_dim: int,
-        stoch_dim: int,
+        in_features: int,
         conv_kernels=[5, 5, 6, 6],
         norm_layer=None,
         act_layer=nn.ELU,
@@ -72,7 +76,7 @@ class VisDecoder(nn.Module):
         super().__init__()
 
         fc_out = int(np.prod(enc.conv_shapes[-1]))
-        self.fc = nn.Linear(deter_dim + stoch_dim, fc_out)
+        self.fc = nn.Linear(in_features, fc_out)
 
         self.main = nn.Sequential()
         depth = len(conv_kernels)
@@ -104,16 +108,11 @@ class VisDecoder(nn.Module):
                     self.main.append(norm_layer(out_channels))
                 self.main.append(act_layer())
 
-        self.scale: Tensor
-        self.register_buffer("scale", torch.ones([], dtype=torch.float))
-
-    def forward(self, state: rssm.State):
-        x = state.tensor()
+    def forward(self, x: Tensor):
         x = self.fc(x)
         x = x.reshape(len(x), *self.conv_in_shape)
         x = self.main(x)
-        x, scale = torch.broadcast_tensors(x, self.scale)
-        return D.Normal(x, scale, event_dims=3)
+        return D.Normal(x, MSE_SIGMA, event_dims=3)
 
 
 class ProprioEncoder(fc.FullyConnected):
@@ -141,185 +140,58 @@ class ProprioEncoder(fc.FullyConnected):
         self.act_layer = act_layer
 
 
-class ProprioDecoder(nn.Module):
+class ProprioDecoder(nn.Sequential):
     def __init__(
         self,
         output_shape: torch.Size,
-        deter_dim: int,
-        stoch_dim: int,
+        in_features: int,
         fc_layers=[128, 128],
         norm_layer=None,
         act_layer=nn.ELU,
     ):
-        super().__init__()
-
-        self.main = nn.Sequential(
+        super().__init__(
             fc.FullyConnected(
-                num_features=[deter_dim + stoch_dim, *fc_layers],
+                num_features=[in_features, *fc_layers],
                 norm_layer=norm_layer,
                 act_layer=act_layer,
                 final_layer="act",
             ),
-            dh.Normal(fc_layers[-1], output_shape[0]),
+            dh.Normal(fc_layers[-1], output_shape[0], std=MSE_SIGMA),
         )
 
-    def forward(self, state: rssm.State):
-        x = state.tensor()
-        return self.main(x)
 
-
-@runtime_checkable
-class DiscreteSpace(Protocol):
-    n: int
-
-
-class Actor(nn.Module, wm.Actor):
+class RewardPred(nn.Sequential):
     def __init__(
         self,
-        act_space: gym.Space,
-        deter_dim: int,
-        stoch_dim: int,
-        fc_layers=[400, 400, 400],
-        norm_layer=nn.Identity,
-        act_layer=nn.ELU,
-    ):
-        super().__init__()
-        self.stem = fc.FullyConnected(
-            [deter_dim + stoch_dim, *fc_layers],
-            norm_layer=norm_layer,
-            act_layer=act_layer,
-            final_layer="act",
-        )
-
-        self.act_space = act_space
-        if isinstance(act_space, DiscreteSpace):
-            self.head = dh.OHST(fc_layers[-1], act_space.n)
-        else:
-            self.head = dh.Normal(fc_layers[-1], act_space.shape)
-
-    def forward(self, state: rssm.State) -> D.Distribution:
-        x = state.tensor()
-        return self.head(self.stem(x))
-
-
-class Critic(nn.Module):
-    def __init__(
-        self,
-        deter_dim: int,
-        stoch_dim: int,
-        fc_layers=[400, 400, 400],
-        norm_layer=nn.Identity,
-        act_layer=nn.ELU,
-    ):
-        super().__init__()
-        self.net = nn.Sequential(
-            fc.FullyConnected(
-                [deter_dim + stoch_dim, *fc_layers, 1],
-                norm_layer=norm_layer,
-                act_layer=act_layer,
-            ),
-            nn.Flatten(0),
-        )
-
-    def forward(self, state: rssm.State) -> Tensor:
-        x = state.tensor()
-        return self.net(x)
-
-
-class DeterCell(nn.Module, rssm.DeterCell):
-    def __init__(
-        self,
-        deter_dim: int,
-        stoch_dim: int,
-        x_dim: int,
+        in_features: int,
         hidden_dim: int,
+        num_layers=2,
         norm_layer=nn.Identity,
         act_layer=nn.ELU,
     ):
-        super().__init__()
-        self.fc = fc.FullyConnected(
-            [stoch_dim + x_dim, hidden_dim],
-            norm_layer=norm_layer,
-            act_layer=act_layer,
-            final_layer="act",
-        )
-        self.cell = nn.GRUCell(hidden_dim, deter_dim)
-
-    def forward(self, prev_h: rssm.State, x: Tensor):
-        x = torch.cat([prev_h.stoch, x], 1)
-        x = self.fc(x)
-        return self.cell(x, prev_h.deter)
-
-
-class StochCell(nn.Module, rssm.StochCell):
-    def __init__(
-        self,
-        deter_dim: int,
-        stoch_dim: int,
-        x_dim: int,
-        hidden_dim: int,
-        dist_layer,
-        norm_layer=nn.Identity,
-        act_layer=nn.ELU,
-    ):
-        super().__init__()
-        self.x_dim = x_dim
-        self.net = nn.Sequential(
+        super().__init__(
             fc.FullyConnected(
-                [deter_dim + x_dim, hidden_dim],
+                [in_features, *[hidden_dim for _ in range(num_layers)]],
                 norm_layer=norm_layer,
                 act_layer=act_layer,
                 final_layer="act",
             ),
-            dist_layer(hidden_dim, stoch_dim),
+            dh.Normal(hidden_dim, [], std=MSE_SIGMA),
         )
 
-    def forward(self, deter: Tensor, x: Tensor) -> D.Distribution:
-        if self.x_dim > 0:
-            x = torch.cat([deter, x], 1)
-        else:
-            x = deter
-        return self.net(x)
 
-
-class RewardPred(nn.Module):
+class TermPred(nn.Sequential):
     def __init__(
         self,
-        deter_dim: int,
-        stoch_dim: int,
+        in_features: int,
         hidden_dim: int,
+        num_layers=2,
         norm_layer=nn.Identity,
         act_layer=nn.ELU,
     ):
-        super().__init__()
-        self.net = nn.Sequential(
+        super().__init__(
             fc.FullyConnected(
-                [deter_dim + stoch_dim, hidden_dim],
-                norm_layer=norm_layer,
-                act_layer=act_layer,
-                final_layer="act",
-            ),
-            dh.Normal(hidden_dim, []),
-        )
-
-    def forward(self, state: rssm.State) -> D.Distribution:
-        x = state.tensor()
-        return self.net(x)
-
-
-class TermPred(nn.Module):
-    def __init__(
-        self,
-        deter_dim: int,
-        stoch_dim: int,
-        hidden_dim: int,
-        norm_layer=nn.Identity,
-        act_layer=nn.ELU,
-    ):
-        super().__init__()
-        self.net = nn.Sequential(
-            fc.FullyConnected(
-                [deter_dim + stoch_dim, hidden_dim],
+                [in_features, *[hidden_dim for _ in range(num_layers)]],
                 norm_layer=norm_layer,
                 act_layer=act_layer,
                 final_layer="act",
@@ -327,65 +199,16 @@ class TermPred(nn.Module):
             dh.Bernoulli(hidden_dim),
         )
 
-    def forward(self, state: rssm.State) -> D.Distribution:
-        x = state.tensor()
-        return self.net(x)
 
-
-class RSSM(nn.Module, rssm.RSSM):
-    def __init__(
-        self,
-        spec: EnvSpec,
-        deter_dim: int,
-        stoch_dim: int,
-        hidden_dim: int,
-        num_heads: int,
-    ):
+class ToOneHot(nn.Module):
+    def __init__(self, num_classes: int):
         super().__init__()
+        self.num_classes = num_classes
 
-        self.obs_space = spec.observation_space
-        obs_shape = self.obs_space.shape
-        if len(obs_shape) > 1:
-            self.obs_enc = VisEncoder(obs_shape)
-        else:
-            self.obs_enc = ProprioEncoder(obs_shape)
-        obs_dim = self.obs_enc.enc_dim
+    def forward(self, x: Tensor):
+        return nn.functional.one_hot(x, self.num_classes).float()
 
-        self.act_space = spec.action_space
-        assert isinstance(self.act_space, gym.spaces.TensorBox)
-        self.act_enc = nn.Identity()
-        act_dim = int(np.prod(self.act_space.shape))
 
-        self.prior_deter = nn.Parameter(torch.zeros(deter_dim))
-        self.prior_stoch = nn.Parameter(torch.zeros(stoch_dim))
-
-        def dist_layer(in_feat: int, out_feat: int):
-            return dh.MultiheadOHST(in_feat, out_feat, num_heads)
-
-        self.deter_cell = DeterCell(
-            deter_dim,
-            stoch_dim,
-            act_dim,
-            hidden_dim,
-        )
-        self.pred_cell = StochCell(
-            deter_dim,
-            stoch_dim,
-            0,
-            hidden_dim,
-            dist_layer,
-        )
-        self.trans_cell = StochCell(
-            deter_dim,
-            stoch_dim,
-            obs_dim,
-            hidden_dim,
-            dist_layer,
-        )
-
-        self.reward_pred = RewardPred(deter_dim, stoch_dim, hidden_dim)
-        self.term_pred = TermPred(deter_dim, stoch_dim, hidden_dim)
-
-    @property
-    def prior(self):
-        return rssm.State(self.prior_deter, self.prior_stoch, batch_size=[])
+class FromOneHot(nn.Module):
+    def forward(self, x: Tensor):
+        return x.argmax(-1)

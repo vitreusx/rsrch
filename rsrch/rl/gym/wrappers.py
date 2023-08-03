@@ -85,8 +85,8 @@ class ToTensor(gym.Wrapper):
                 space,
                 device=self.device,
             )
-        else:
-            return space
+        elif isinstance(space, (gym.spaces.TensorBox, gym.spaces.TensorDiscrete)):
+            return space.to(dtype=self.dtype, device=self.device)
 
     def reset(self, *, seed=None, options=None):
         obs, info = self.env.reset(seed=seed, options=options)

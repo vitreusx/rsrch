@@ -67,7 +67,6 @@ class A2C(ABC):
         self.log_every: int = ...
         self.batch_size: int = ...
         self.device: torch.device = ...
-        self.critic_steps: int = ...
         self.copy_critic_every: int = ...
         self.gae_lambda: float = ...
 
@@ -126,8 +125,7 @@ class A2C(ABC):
             val_ret = sum(val_ep.reward)
             val_rets.append(val_ret)
 
-        val_rets = torch.stack(val_rets)
-        self.board.add_scalars("val/returns", Stats(val_rets).asdict())
+        self.board.add_scalar("val/returns", torch.stack(val_rets).mean())
 
     def train_step(self):
         batch = []
@@ -140,35 +138,34 @@ class A2C(ABC):
         batch = ListSeq.from_steps(batch)
         batch = TensorSeq.convert(batch).to(self.device)
 
-        for _ in range(self.critic_steps):
-            v, vt = self.critic(batch.obs), self.target_critic(batch.obs)
-            gae_vt = []
-            with torch.inference_mode():
-                for step in reversed(range(len(v))):
-                    if step == len(v) - 1:
-                        cur_vt = vt[step]
-                    else:
-                        next_v = (1.0 - self.gae_lambda) * vt[
-                            step + 1
-                        ] + self.gae_lambda * gae_vt[-1]
-                        cur_vt = batch.reward[step] + self.gamma * next_v
+        v, vt = self.critic(batch.obs), self.target_critic(batch.obs)
+        gae_vt = []
+        with torch.inference_mode():
+            for step in reversed(range(len(v))):
+                if step == len(v) - 1:
+                    cur_vt = vt[step]
+                else:
+                    next_v = (1.0 - self.gae_lambda) * vt[
+                        step + 1
+                    ] + self.gae_lambda * gae_vt[-1]
+                    cur_vt = batch.reward[step] + self.gamma * next_v
 
-                    cont_f = 1.0 - batch.term[step].type_as(batch.obs)
-                    cur_vt = cont_f * cur_vt
+                cont_f = 1.0 - batch.term[step].type_as(batch.obs)
+                cur_vt = cont_f * cur_vt
 
-                    gae_vt.append(cur_vt)
+                gae_vt.append(cur_vt)
 
-            gae_vt.reverse()
-            gae_vt = torch.stack(gae_vt)
+        gae_vt.reverse()
+        gae_vt = torch.stack(gae_vt)
 
-            critic_loss = F.mse_loss(v, gae_vt)
-            self.critic_opt.zero_grad(set_to_none=True)
-            critic_loss.backward()
-            self.critic_opt.step()
-            self.critic_polyak.step()
+        critic_loss = F.mse_loss(v, gae_vt)
+        self.critic_opt.zero_grad(set_to_none=True)
+        critic_loss.backward()
+        self.critic_opt.step()
+        self.critic_polyak.step()
 
         logp = self.actor(batch.obs[:-1]).log_prob(batch.act)
-        adv = (gae_vt - v)[:-1]
+        adv = (gae_vt - vt)[:-1]
         vpg_loss = (logp * -adv.detach()).mean()
 
         self.actor_opt.zero_grad(set_to_none=True)
@@ -178,4 +175,4 @@ class A2C(ABC):
         if self.should_log:
             self.board.add_scalar("train/critic_loss", critic_loss)
             self.board.add_scalar("train/vpg_loss", vpg_loss)
-            self.board.add_scalars("train/logp", Stats(logp).asdict())
+            self.board.add_scalar("train/logp", logp.mean())

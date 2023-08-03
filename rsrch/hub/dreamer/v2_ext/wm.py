@@ -5,10 +5,9 @@ import numpy as np
 import torch
 from torch import Tensor
 
-import rsrch.distributions.v2 as D
+import rsrch.distributions.v3 as D
 from rsrch.rl import api, gym
 from rsrch.rl.data.seq import PaddedSeqBatch
-from rsrch.utils.eval_ctx import eval_ctx
 
 T = TypeVar("T")
 ObsType = TypeVar("ObsType")
@@ -37,11 +36,17 @@ class Actor(Protocol):
         ...
 
 
+class ActDecoder(Protocol):
+    def __call__(self, enc_act: Tensor) -> ActType:
+        ...
+
+
 class WorldModel(abc.ABC):
     obs_space: gym.Space
     obs_enc: Encoder[ObsType]
     act_space: gym.Space
     act_enc: Encoder[ActType]
+    act_dec: ActDecoder
     prior: State
     init_dist: StateDist
     act_cell: WMCell[ActType]
@@ -53,11 +58,13 @@ class WorldModel(abc.ABC):
         num_steps, batch_size = batch.obs.shape[:2]
         cur_state = self.prior.expand(batch_size, *self.prior.shape)
 
-        to_batch = lambda x: x.flatten(end_dim=1)
-        from_batch = lambda x: x.reshape(-1, batch_size, *x.shape[1:])
+        flat_obs = batch.obs.flatten(0, 1)
+        enc_obs = self.obs_enc(flat_obs)
+        enc_obs = enc_obs.reshape(-1, batch_size, *enc_obs.shape[1:])
 
-        enc_obs = from_batch(self.obs_enc(to_batch(batch.obs)))
-        enc_act = from_batch(self.act_enc(to_batch(batch.act)))
+        flat_act = batch.act.flatten(0, 1)
+        enc_act = self.act_enc(flat_act)
+        enc_act = enc_act.reshape(-1, batch_size, *enc_act.shape[1:])
 
         states, pred_rvs, full_rvs = [], [], []
         for step in range(num_steps):
@@ -81,7 +88,7 @@ class WorldModel(abc.ABC):
         return states, pred_rvs, full_rvs
 
     def imagine(self, actor: Actor, initial: State, horizon: int):
-        cur_state, states = initial, []
+        cur_state, states = initial, [initial]
         act_rvs, acts = [], []
         for step in range(horizon):
             act_rv = actor(cur_state)
@@ -108,20 +115,18 @@ class Agent(api.Agent):
         self.cur_state = self.wm.prior
 
     def observe(self, obs):
-        with torch.inference_mode():
-            enc_obs = self.wm.obs_enc(obs.unsqueeze(0))
-            next_rv = self.wm.obs_cell(self.cur_state.unsqueeze(0), enc_obs)
-            self.cur_state = next_rv.sample()[0]
+        enc_obs = self.wm.obs_enc(obs.unsqueeze(0))
+        next_rv = self.wm.obs_cell(self.cur_state.unsqueeze(0), enc_obs)
+        self.cur_state = next_rv.rsample()[0]
 
     def policy(self):
-        with torch.inference_mode():
-            return self.actor(self.cur_state.unsqueeze(0)).sample()[0]
+        enc_act = self.actor(self.cur_state.unsqueeze(0)).rsample()
+        return self.wm.act_dec(enc_act)[0]
 
     def step(self, act):
-        with torch.inference_mode():
-            enc_act = self.wm.act_enc(act.unsqueeze(0))
-            next_rv = self.wm.act_cell(self.cur_state.unsqueeze(0), enc_act)
-            self.cur_state = next_rv.sample()[0]
+        enc_act = self.wm.act_enc(act.unsqueeze(0))
+        next_rv = self.wm.act_cell(self.cur_state.unsqueeze(0), enc_act)
+        self.cur_state = next_rv.rsample()[0]
 
 
 class Dreams(gym.vector.VectorEnv):

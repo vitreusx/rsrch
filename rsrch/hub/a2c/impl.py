@@ -74,7 +74,7 @@ class A2C(core.A2C):
         self.target_critic = _make_critic()
 
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=1e-4)
-        self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=1e-4)
+        self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=1e-3)
 
     def setup_extras(self):
         # self.board = Wandb(project="a2c", step_fn=lambda: self.step)
