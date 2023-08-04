@@ -8,6 +8,7 @@ from rsrch.exp import prof
 from rsrch.exp.board import TensorBoard
 from rsrch.exp.dir import ExpDir
 from rsrch.rl import gym
+from rsrch.rl.utils import polyak
 from rsrch.utils.detach import detach
 
 from . import core, deter, oracle, rssm
@@ -31,7 +32,7 @@ class Dreamer(core.Dreamer):
         self.actor_loss_scale = dict(vpg=1.0, value=1.0, ent=1.0)
         self.prefill_size = 64
         self.gamma = 0.99
-        self.gae_lambda = 0.05
+        self.gae_lambda = 0.95
         self.clip_grad = None
 
     def setup_envs(self):
@@ -125,6 +126,7 @@ class Dreamer(core.Dreamer):
         self.target_critic = make_critic()
         self.target_critic = self.target_critic.to(self.device)
         self.target_critic.requires_grad_(False)
+        polyak.update(self.critic, self.target_critic, tau=0.0)
 
     def _setup_models_deter(self):
         state_dim = 32
@@ -155,6 +157,7 @@ class Dreamer(core.Dreamer):
         self.target_critic = deter.nets.Critic(state_dim, hidden_dim)
         self.target_critic = self.target_critic.to(self.device)
         self.target_critic.requires_grad_(False)
+        polyak.update(self.critic, self.target_critic, tau=0.0)
 
     def _setup_models_oracle(self):
         self.wm = oracle.TrueWM(self._mdp)
@@ -189,6 +192,7 @@ class Dreamer(core.Dreamer):
         self.target_critic = deter.nets.Critic(state_dim, hidden_dim)
         self.target_critic = self.target_critic.to(self.device)
         self.target_critic.requires_grad_(False)
+        polyak.update(self.critic, self.target_critic, tau=0.0)
 
     # setup_models = _setup_models_rssm
     # setup_models = _setup_models_deter

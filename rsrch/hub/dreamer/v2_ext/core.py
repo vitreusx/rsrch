@@ -43,6 +43,8 @@ class Dreamer(ABC):
         self.copy_critic_every: int = ...
         self.actor_loss_scale: dict[str, float] = ...
         self.prefill_size: int = ...
+        self.gamma: float = ...
+        self.gae_lambda: float = ...
 
     @abstractmethod
     def setup_envs(self):
@@ -218,11 +220,15 @@ class Dreamer(ABC):
 
         loss = {}
         logp = act_rvs.log_prob(acts.detach())
-        loss["vpg"] = -logp * (gae_vt - vt)[1:].detach()
-        loss["value"] = -vt[1:]
+        loss["vpg"] = -logp * (gae_vt - vt)[:-1].detach()
+        loss["value"] = -vt[:-1]
         loss["ent"] = -act_rvs.entropy()
 
-        actor_loss = sum(self.actor_loss_scale[k] * loss[k].mean() for k in loss)
+        self.actor_loss_scale = {"vpg": 1.0}
+
+        actor_loss = sum(
+            self.actor_loss_scale[k] * loss[k].mean() for k in self.actor_loss_scale
+        )
         self.actor_opt.zero_grad(set_to_none=True)
         actor_loss.backward()
         self.actor_opt.step()
@@ -239,9 +245,9 @@ class Dreamer(ABC):
             if step == len(v) - 1:
                 cur_v = v[step]
             else:
-                next_v = (
-                    self.gae_lambda * v[step + 1] + (1.0 - self.gae_lambda) * gae_v[-1]
-                )
+                next_v = (1.0 - self.gae_lambda) * v[
+                    step + 1
+                ] + self.gae_lambda * gae_v[-1]
                 cur_v = rew[step + 1] + self.gamma * next_v
 
             cont_f = 1.0 - term[step].type_as(cur_v)
