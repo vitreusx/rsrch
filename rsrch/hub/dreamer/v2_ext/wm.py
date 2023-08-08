@@ -73,13 +73,12 @@ class WorldModel(abc.ABC):
                 cur_enc_act = enc_act[step - 1]
                 pred_rv = self.act_cell(cur_state, cur_enc_act)
                 pred_rvs.append(pred_rv)
-                full_rv = self.obs_cell(pred_rv.rsample(), cur_enc_obs)
-                full_rvs.append(full_rv)
-                cur_state = full_rv.rsample()
-            else:
-                full_rv = self.obs_cell(cur_state, cur_enc_obs)
-                full_rvs.append(full_rv)
-                cur_state = full_rv.rsample()
+                cur_state = pred_rv.rsample()
+                # cur_state = pred_rv.mode
+            full_rv = self.obs_cell(cur_state, cur_enc_obs)
+            full_rvs.append(full_rv)
+            cur_state = full_rv.rsample()
+            # cur_state = full_rv.mode
             states.append(cur_state)
 
         states = torch.stack(states)
@@ -91,7 +90,7 @@ class WorldModel(abc.ABC):
         cur_state, states = initial, [initial]
         act_rvs, acts = [], []
         for step in range(horizon):
-            act_rv = actor(cur_state)
+            act_rv = actor(cur_state.detach())
             act_rvs.append(act_rv)
             act = act_rv.rsample()
             acts.append(act)

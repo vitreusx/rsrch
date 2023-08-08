@@ -5,17 +5,13 @@ import numpy as np
 import torch
 from torch import Tensor, nn
 
-import rsrch.distributions.v2 as D
+import rsrch.distributions.v3 as D
 from rsrch.nn import dist_head_v2 as dh
 from rsrch.nn import fc
 from rsrch.rl import gym
 from rsrch.rl.spec import EnvSpec
 
 from . import wm
-
-MSE_SIGMA = 1.0 / math.sqrt(2.0 * math.pi)
-"""This value of \sigma for the normal distribution makes log prob equal 
-(to a scale factor) to (x-\mu)^2. """
 
 
 class VisEncoder(nn.Module):
@@ -112,7 +108,8 @@ class VisDecoder(nn.Module):
         x = self.fc(x)
         x = x.reshape(len(x), *self.conv_in_shape)
         x = self.main(x)
-        return D.Normal(x, MSE_SIGMA, event_dims=3)
+        # return D.Normal(x, D.Normal.MSE_SIGMA, event_dims=3)
+        return D.Normal(x, event_dims=3)
 
 
 class ProprioEncoder(fc.FullyConnected):
@@ -156,7 +153,8 @@ class ProprioDecoder(nn.Sequential):
                 act_layer=act_layer,
                 final_layer="act",
             ),
-            dh.Normal(fc_layers[-1], output_shape[0], std=MSE_SIGMA),
+            # dh.Normal(fc_layers[-1], output_shape[0], std=D.Normal.MSE_SIGMA),
+            dh.Normal(fc_layers[-1], output_shape[0]),
         )
 
 
@@ -166,7 +164,7 @@ class RewardPred(nn.Sequential):
         in_features: int,
         hidden_dim: int,
         num_layers=2,
-        norm_layer=nn.Identity,
+        norm_layer=None,
         act_layer=nn.ELU,
     ):
         super().__init__(
@@ -176,7 +174,8 @@ class RewardPred(nn.Sequential):
                 act_layer=act_layer,
                 final_layer="act",
             ),
-            dh.Normal(hidden_dim, [], std=MSE_SIGMA),
+            dh.Normal(hidden_dim, [], std=D.Normal.MSE_SIGMA),
+            # dh.Normal(hidden_dim, []),
         )
 
 
@@ -186,7 +185,7 @@ class TermPred(nn.Sequential):
         in_features: int,
         hidden_dim: int,
         num_layers=2,
-        norm_layer=nn.Identity,
+        norm_layer=None,
         act_layer=nn.ELU,
     ):
         super().__init__(
@@ -206,7 +205,7 @@ class ToOneHot(nn.Module):
         self.num_classes = num_classes
 
     def forward(self, x: Tensor):
-        return nn.functional.one_hot(x, self.num_classes).float()
+        return nn.functional.one_hot(x.long(), self.num_classes).float()
 
 
 class FromOneHot(nn.Module):

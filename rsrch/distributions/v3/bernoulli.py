@@ -14,21 +14,25 @@ class Bernoulli(Distribution, Tensorlike):
     _logits: Optional[Tensor]
     event_shape: torch.Size
 
-    def __init__(self, probs: Tensor | None = None, logits: Tensor | None = None):
+    def __init__(
+        self, probs: Tensor | None = None, logits: Tensor | None = None, event_dims=0
+    ):
         if probs is not None and logits is not None:
             raise ValueError("probs and logits cannot be both not-None")
 
         _param = probs if probs is not None else logits
-        shape = _param.shape
-        Tensorlike.__init__(self, shape)
+        pivot = len(_param.shape) - event_dims
+        batch_shape = _param.shape[:-event_dims]
+        event_shape = _param.shape[-event_dims:]
+
+        Tensorlike.__init__(self, batch_shape)
+        self.event_shape = event_shape
 
         self._probs: Tensor | None
         self.register_field("_probs", probs)
 
         self._logits: Tensor | None
         self.register_field("_logits", logits)
-
-        self.event_shape = torch.Size([])
 
     @property
     def logits(self) -> Tensor:
@@ -53,7 +57,7 @@ class Bernoulli(Distribution, Tensorlike):
     @property
     def mode(self):
         mode = (self.probs >= 0.5).to(self.probs)
-        mode[self.probs == 0.5] = torch.nan
+        # mode[self.probs == 0.5] = torch.nan
         return mode
 
     @property

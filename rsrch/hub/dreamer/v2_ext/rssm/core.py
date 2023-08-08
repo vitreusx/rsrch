@@ -48,6 +48,10 @@ class StateDist(D.Distribution, Tensorlike):
     def log_prob(self, state: State):
         return self.stoch_dist.log_prob(state.stoch)
 
+    @property
+    def mode(self):
+        return State(self.deter, self.stoch_dist.mode)
+
 
 @D.register_kl(StateDist, StateDist)
 def _kl_state_dist(p: StateDist, q: StateDist):
@@ -69,11 +73,6 @@ class StochCell(Protocol, Generic[T]):
 
 ObsType = TypeVar("ObsType")
 ActType = TypeVar("ActType")
-
-
-class Policy(Protocol, Generic[ActType]):
-    def __call__(self, cur_h: State) -> ActType:
-        ...
 
 
 class RSSM(wm.WorldModel, Generic[ObsType, ActType]):

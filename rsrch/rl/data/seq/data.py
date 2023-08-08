@@ -104,6 +104,13 @@ class NumpySeq(Sequence[np.ndarray, np.ndarray]):
         return NumpySeq(obs, act, reward, term)
 
 
+def _to_tensor(s, device):
+    if all(isinstance(x, Tensor) for x in s):
+        return torch.stack(s).detach().to(device=device)
+    else:
+        return torch.from_numpy(np.stack(s)).to(device=device)
+
+
 @dataclass
 class TensorSeq(Sequence[Tensor, Tensor]):
     """A Tensor-based trajectory."""
@@ -114,14 +121,24 @@ class TensorSeq(Sequence[Tensor, Tensor]):
     term: Tensor
 
     @staticmethod
-    def convert(seq: Sequence) -> TensorSeq:
+    def convert(seq: Sequence, device=None) -> TensorSeq:
         """Convert arbitrary trajectory to Tensor-based version."""
 
-        obs = torch.stack([torch.as_tensor(x) for x in seq.obs]).detach()
-        act = torch.stack([torch.as_tensor(x) for x in seq.act]).detach()
-        reward = torch.as_tensor(seq.reward).detach()
-        term = torch.as_tensor(seq.term).detach()
-        return TensorSeq(obs, act, reward, term)
+        if isinstance(seq, TensorSeq):
+            return seq
+
+        # The bit for term is separate, because first element may be plain
+        # True/False, and the rest may be tensors.
+        term_sfx = _to_tensor(seq.term[1:], device)
+        term_pfx = torch.as_tensor(seq.term[:1], device=term_sfx.device)
+        term = torch.cat([term_pfx, term_sfx])
+
+        return TensorSeq(
+            obs=_to_tensor(seq.obs, device),
+            act=_to_tensor(seq.act, device),
+            reward=_to_tensor(seq.reward, device),
+            term=term,
+        )
 
     def to(self, device: torch.device):
         return TensorSeq(

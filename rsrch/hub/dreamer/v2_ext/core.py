@@ -3,14 +3,17 @@ from abc import ABC, abstractmethod
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch import Tensor
+from torch import Tensor, nn
+from torch.nn.utils.clip_grad import clip_grad_norm_
 from tqdm.auto import tqdm
 
 import rsrch.rl.data.transforms as T
 from rsrch.exp import prof
 from rsrch.exp.board import Board
-from rsrch.rl import gym
-from rsrch.rl.data import MultiStepBuffer, PaddedSeqBatch, interact
+from rsrch.rl import agents, gym
+from rsrch.rl.data import PaddedSeqBatch, SeqBuffer, interact
+from rsrch.rl.data.seq import store
+from rsrch.rl.spec import EnvSpec
 from rsrch.rl.utils.polyak import Polyak
 from rsrch.utils import data
 from rsrch.utils.cron import Every
@@ -42,9 +45,11 @@ class Dreamer(ABC):
         self.horizon: int = ...
         self.copy_critic_every: int = ...
         self.actor_loss_scale: dict[str, float] = ...
-        self.prefill_size: int = ...
+        self.prefill_steps: int = ...
         self.gamma: float = ...
         self.gae_lambda: float = ...
+        self.policy_opt_delay: int = ...
+        self.clip_grad_norm: float | None = ...
 
     @abstractmethod
     def setup_envs(self):
@@ -54,13 +59,19 @@ class Dreamer(ABC):
     def setup_data(self):
         self.setup_envs()
 
-        self.buffer = MultiStepBuffer(
+        self.buffer = SeqBuffer(
             capacity=self.buffer_cap,
-            seq_len=self.batch_seq_len,
+            min_seq_len=self.batch_seq_len,
+            store=store.TensorStore(),
         )
 
         seq_ds = data.Pipeline(
             self.buffer,
+            T.Subsample(
+                min_seq_len=self.batch_seq_len,
+                max_seq_len=self.batch_seq_len,
+                prioritize_ends=True,
+            ),
             T.ToTensorSeq(),
         )
         loader = data.DataLoader(
@@ -94,9 +105,18 @@ class Dreamer(ABC):
         )
 
     def setup_agents(self):
-        self.train_agent = wm.Agent(self.wm, self.actor)
-        self.env_iter = iter(interact.steps_ex(self.train_env, self.train_agent))
-        self.val_agent = wm.Agent(self.wm, self.actor)
+        self.collect_agent = agents.RandomAgent(self.train_env)
+        self.val_agent = agents.FromTensor(
+            base=wm.Agent(self.wm, self.actor),
+            env_spec=self.val_env,
+            device=self.device,
+        )
+        self.env_iter = iter(
+            interact.steps_ex(
+                env=self.train_env,
+                agent=self.collect_agent,
+            )
+        )
 
     @abstractmethod
     def setup_extras(self):
@@ -115,7 +135,9 @@ class Dreamer(ABC):
             if self.is_finished:
                 break
 
-            self.train_step()
+            self.collect()
+            if self.env_step >= self.prefill_steps:
+                self.train_step()
 
     @property
     def is_finished(self):
@@ -130,13 +152,12 @@ class Dreamer(ABC):
 
         # stats = Stats(torch.stack(val_returns))
         # self.board.add_scalars("val/returns", stats.asdict())
-        self.board.add_scalar("val/returns", torch.stack(val_returns).mean())
+        self.board.add_scalar("val/returns", torch.as_tensor(val_returns).mean())
 
     def train_step(self):
-        self.collect()
-        if len(self.buffer) >= self.prefill_size:
-            with self.prof.profile("optimize"):
-                self.optimize_model()
+        with self.prof.profile("train_step"):
+            self.optimize_model()
+            if self.env_step > self.policy_opt_delay:
                 self.optimize_policy()
 
     def collect(self):
@@ -148,39 +169,88 @@ class Dreamer(ABC):
 
     def optimize_model(self):
         self.wm.requires_grad_(True)
+        self.wm.train()
 
         batch = next(self.batch_iter)
-        states, pred_rvs, full_rvs = self.wm.observe(batch)
+
+        num_steps, batch_size = batch.obs.shape[:2]
+        cur_state = self.wm.prior.expand(batch_size, *self.wm.prior.shape)
+
+        flat_obs = batch.obs.flatten(0, 1)
+        enc_obs = self.wm.obs_enc(flat_obs)
+        enc_obs = enc_obs.reshape(-1, batch_size, *enc_obs.shape[1:])
+
+        flat_act = batch.act.flatten(0, 1)
+        enc_act = self.wm.act_enc(flat_act)
+        enc_act = enc_act.reshape(-1, batch_size, *enc_act.shape[1:])
+
+        states, pred_rvs, full_rvs = [], [], []
+        for step in range(num_steps):
+            cur_enc_obs = enc_obs[step]
+            if step > 0:
+                cur_enc_act = enc_act[step - 1]
+                pred_rv = self.wm.act_cell(cur_state, cur_enc_act)
+                pred_rvs.append(pred_rv)
+                cur_state = pred_rv.rsample()
+                # cur_state = pred_rv.mode
+            full_rv = self.wm.obs_cell(cur_state, cur_enc_obs)
+            full_rvs.append(full_rv)
+            cur_state = full_rv.rsample()
+            # cur_state = full_rv.mode
+            states.append(cur_state)
+
+        states = torch.stack(states)
+        pred_rvs = torch.stack(pred_rvs)
+        full_rvs = torch.stack(full_rvs)
+
+        self._initial = states[:-1].flatten(0, 1).detach()
+
+        if self.wm_opt is None:
+            return
 
         loss = {}
 
-        loss["kl"] = self.state_div(pred_rvs, full_rvs[1:])
+        loss["kl"] = 0.0
+
+        overshoot = 1
+        os_horizon = self.horizon
+        while True:
+            loss["kl"] += self.state_div(pred_rvs, full_rvs[overshoot:]).mean()
+
+            overshoot += 1
+            if overshoot > os_horizon:
+                break
+
+            pred_rvs = pred_rvs[:-1]
+            pred_rvs_shape = pred_rvs.shape
+            cur_state = pred_rvs.rsample()
+            cur_act = enc_act[overshoot - 1 : overshoot - 1 + len(pred_rvs)]
+            pred_rvs = self.wm.act_cell(cur_state.flatten(0, 1), cur_act.flatten(0, 1))
+            pred_rvs = pred_rvs.reshape(pred_rvs_shape)
 
         obs_rvs = self.obs_pred(states.flatten(0, 1))
         flat_obs = batch.obs.flatten(0, 1)
-        loss["obs"] = -obs_rvs.log_prob(flat_obs) / np.prod(flat_obs.shape[1:])
+        loss["obs"] = -obs_rvs.log_prob(flat_obs).mean() / np.prod(flat_obs.shape[1:])
 
         term_rvs = self.wm.term_pred(states.flatten(0, 1))
         flat_term = batch.term.flatten(0, 1)
-        loss["term"] = -term_rvs.log_prob(flat_term)
+        loss["term"] = -term_rvs.log_prob(flat_term).mean()
 
         # For the first step, i.e. first batch_size elements, there is no
         # reward defined, so we skip them.
         reward_rvs = self.wm.reward_pred(states[1:].flatten(0, 1))
         flat_rew = batch.reward.flatten(0, 1)
-        loss["reward"] = -reward_rvs.log_prob(flat_rew)
+        loss["reward"] = -reward_rvs.log_prob(flat_rew).mean()
 
-        wm_loss = sum(loss[k].mean() * self.wm_loss_scale[k] for k in loss)
-        if wm_loss.grad_fn is not None:
-            self.wm_opt.zero_grad(set_to_none=True)
-            wm_loss.backward()
-            self.wm_opt.step()
-
-        self._init_states = states.flatten(0, 1).detach()
+        wm_loss = sum(loss[k] * self.wm_loss_scale[k] for k in loss)
+        self.wm_opt.zero_grad(set_to_none=True)
+        wm_loss.backward()
+        self._clip_grads(self.wm, self.obs_pred)
+        self.wm_opt.step()
 
         if self.should_log:
             for k in loss:
-                self.board.add_scalar(f"train/wm_loss/{k}", loss[k].mean())
+                self.board.add_scalar(f"train/wm_loss/{k}", loss[k])
             self.board.add_scalar(f"train/wm_loss", wm_loss)
 
     @abstractmethod
@@ -190,54 +260,82 @@ class Dreamer(ABC):
     def optimize_policy(self):
         self.wm.requires_grad_(False)
 
-        states, act_rvs, acts = self.wm.imagine(
-            self.actor, self._init_states, self.horizon
-        )
+        cur_state, states = self._initial, [self._initial]
+        act_rvs, acts = [], []
+        eps = 0.2
+        for step in range(self.horizon):
+            act_rv = self.actor(cur_state.detach())
+            act_rvs.append(act_rv)
+            act = act_rv.rsample().clone()
+            mask = torch.rand(len(act)) < eps
+            act[mask] = 1 - act[mask].detach()
+            acts.append(act)
+            next_state = self.wm.act_cell(cur_state, act).rsample()
+            states.append(next_state)
+            cur_state = next_state
+
+        states = torch.stack(states)
+        act_rvs = torch.stack(act_rvs)
+        acts = torch.stack(acts)
 
         seq_len, bs = states.shape[:2]
         flat_s = states.flatten(0, 1)
 
-        rew = self.wm.reward_pred(flat_s).mode
+        rew = self.wm.reward_pred(flat_s.detach()).mode
         rew = rew.reshape(seq_len, bs, *rew.shape[1:])
 
-        term = self.wm.term_pred(flat_s).mean
+        # term = self.wm.term_pred(flat_s.detach()).mean
+        term = self.wm.term_pred(flat_s.detach()).mean
         term = term.reshape(seq_len, bs, *term.shape[1:])
 
-        with torch.no_grad():
-            vt = self.target_critic(flat_s)
-            vt = vt.reshape(seq_len, bs, *vt.shape[1:])
+        cont = (1.0 - term).cumprod(0)
+        term = 1.0 - cont
+        is_real = torch.cat([torch.ones_like(cont[:1]), cont[:-1]], 0)
+
+        # with torch.no_grad():
+        #     vt = self.target_critic(flat_s)
+        #     vt = vt.reshape(seq_len, bs, *vt.shape[1:])
 
         v = self.critic(flat_s)
         v = v.reshape(seq_len, bs, *v.shape[1:])
+        vt = v.detach()
 
         gae_vt = self._gae_v(vt, rew, term)
 
-        critic_loss = F.mse_loss(v, gae_vt)
+        critic_loss = (is_real * (v - gae_vt) ** 2).mean()
         self.critic_opt.zero_grad(set_to_none=True)
         critic_loss.backward(retain_graph=True)
+        self._clip_grads(self.critic)
         self.critic_opt.step()
         self.critic_polyak.step()
 
         loss = {}
         logp = act_rvs.log_prob(acts.detach())
-        loss["vpg"] = -logp * (gae_vt - vt)[:-1].detach()
-        loss["value"] = -vt[:-1]
-        loss["ent"] = -act_rvs.entropy()
+        loss["vpg"] = -logp * (is_real * (gae_vt - vt).detach())[:-1]
+        loss["value"] = -(is_real * vt)[:-1]
+        loss["ent"] = -(cont[:-1] * act_rvs.entropy())
 
-        self.actor_loss_scale = {"vpg": 1.0}
-
+        loss = {k: loss[k].mean() for k in loss}
         actor_loss = sum(
-            self.actor_loss_scale[k] * loss[k].mean() for k in self.actor_loss_scale
+            self.actor_loss_scale[k] * loss[k] for k in self.actor_loss_scale
         )
         self.actor_opt.zero_grad(set_to_none=True)
         actor_loss.backward()
+        self._clip_grads(self.actor)
         self.actor_opt.step()
 
         if self.should_log:
             self.board.add_scalar("train/critic_loss", critic_loss)
             for k in loss:
-                self.board.add_scalar(f"train/actor_loss/{k}", loss[k].mean())
+                self.board.add_scalar(f"train/actor_loss/{k}", loss[k])
             self.board.add_scalar("train/actor_loss", actor_loss)
+
+    def _clip_grads(self, *nets: nn.Module):
+        if self.clip_grad_norm is not None:
+            params = []
+            for net in nets:
+                params.extend(net.parameters())
+            clip_grad_norm_(parameters=params, max_norm=self.clip_grad_norm)
 
     def _gae_v(self, v, rew, term):
         gae_v = []
@@ -245,13 +343,12 @@ class Dreamer(ABC):
             if step == len(v) - 1:
                 cur_v = v[step]
             else:
-                next_v = (1.0 - self.gae_lambda) * v[
-                    step + 1
-                ] + self.gae_lambda * gae_v[-1]
+                next_v = (1.0 - term[step + 1]) * v[step + 1]
+                next_v_gae = gae_v[-1]
+                next_v = (1.0 - self.gae_lambda) * next_v + self.gae_lambda * next_v_gae
                 cur_v = rew[step + 1] + self.gamma * next_v
 
-            cont_f = 1.0 - term[step].type_as(cur_v)
-            cur_v = cont_f * cur_v
+            cur_v = (1.0 - term[step]) * cur_v
             gae_v.append(cur_v)
 
         gae_v.reverse()

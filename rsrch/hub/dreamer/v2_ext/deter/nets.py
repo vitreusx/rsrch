@@ -3,6 +3,7 @@ import torch
 from torch import Tensor, nn
 
 from rsrch.nn import dist_head_v2 as dh
+from rsrch.nn import fc
 from rsrch.rl import gym
 from rsrch.rl.spec import EnvSpec
 
@@ -14,11 +15,10 @@ from . import core
 class DeterCell(nn.Module):
     def __init__(self, state_dim: int, input_dim: int, hidden_dim: int):
         super().__init__()
-        self.fc = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.ELU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ELU(),
+        self.fc = fc.FullyConnected(
+            num_features=[input_dim, hidden_dim, hidden_dim],
+            norm_layer=None,
+            final_layer="act",
         )
         self.cell = nn.GRUCell(hidden_dim, state_dim)
 
@@ -29,11 +29,10 @@ class DeterCell(nn.Module):
 
 class Actor(nn.Sequential):
     def __init__(self, act_space: gym.Space, state_dim: int, hidden_dim: int):
-        stem = nn.Sequential(
-            nn.Linear(state_dim, hidden_dim),
-            nn.ELU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ELU(),
+        stem = fc.FullyConnected(
+            num_features=[state_dim, hidden_dim, hidden_dim],
+            norm_layer=None,
+            final_layer="act",
         )
 
         if isinstance(act_space, gym.spaces.TensorDiscrete):
@@ -48,11 +47,11 @@ class Actor(nn.Sequential):
 class Critic(nn.Sequential):
     def __init__(self, state_dim: int, hidden_dim: int):
         super().__init__(
-            nn.Linear(state_dim, hidden_dim),
-            nn.ELU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ELU(),
-            nn.Linear(hidden_dim, 1),
+            fc.FullyConnected(
+                num_features=[state_dim, hidden_dim, 1],
+                norm_layer=None,
+                final_layer="fc",
+            ),
             nn.Flatten(0),
         )
 
@@ -63,10 +62,15 @@ class DeterWM(nn.Module, core.DeterWM):
 
         self.obs_space = spec.observation_space
         obs_shape = self.obs_space.shape
+
         if len(obs_shape) > 1:
             self.obs_enc = nets.VisEncoder(obs_shape, conv_hidden=hidden_dim // 4)
         else:
-            self.obs_enc = nets.ProprioEncoder(obs_shape, fc_layers=[hidden_dim] * 2)
+            self.obs_enc = nets.ProprioEncoder(
+                obs_shape,
+                fc_layers=[hidden_dim] * 2,
+                norm_layer=None,
+            )
         obs_dim = self.obs_enc.enc_dim
 
         self.act_space = spec.action_space
@@ -84,5 +88,15 @@ class DeterWM(nn.Module, core.DeterWM):
         self.deter_act_cell = DeterCell(state_dim, act_dim, hidden_dim)
         self.deter_obs_cell = DeterCell(state_dim, obs_dim, hidden_dim)
 
-        self.reward_pred = nets.RewardPred(state_dim, hidden_dim, num_layers=1)
-        self.term_pred = nets.TermPred(state_dim, hidden_dim, num_layers=1)
+        self.reward_pred = nets.RewardPred(
+            state_dim,
+            hidden_dim,
+            num_layers=1,
+            norm_layer=None,
+        )
+        self.term_pred = nets.TermPred(
+            state_dim,
+            hidden_dim,
+            num_layers=1,
+            norm_layer=None,
+        )

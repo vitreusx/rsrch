@@ -31,9 +31,10 @@ class Normal(Distribution, Tensorlike):
         event_dims: int = 0,
     ):
         loc = torch.as_tensor(loc)
-        scale = torch.as_tensor(scale)
+        scale = torch.as_tensor(scale, device=loc.device)
+        loc, scale = torch.broadcast_tensors(loc, scale)
 
-        bcast_shape = torch.broadcast_shapes(loc.shape, scale.shape)
+        bcast_shape = loc.shape
         split_idx = len(bcast_shape) - event_dims
         batch_shape, event_shape = bcast_shape[:split_idx], bcast_shape[split_idx:]
 

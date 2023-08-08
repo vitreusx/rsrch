@@ -5,6 +5,7 @@ import torch
 import torch.distributions as D
 from torch import Tensor
 
+from rsrch.rl import gym
 from rsrch.rl.api import Agent
 from rsrch.rl.spec import EnvSpec
 
@@ -60,6 +61,28 @@ class ToTensor(AgentWrapper):
 
     def step(self, act):
         return self.base.step(act.detach().cpu().numpy())
+
+
+class FromTensor(AgentWrapper):
+    def __init__(self, base: Agent, env_spec: EnvSpec, device=None):
+        super().__init__(base)
+        self.device = device
+        self.env_spec = env_spec
+
+    def observe(self, obs):
+        return self.base.observe(torch.as_tensor(obs, device=self.device))
+
+    def policy(self):
+        space = self.env_spec.action_space
+        if isinstance(space, (gym.spaces.TensorBox, gym.spaces.TensorDiscrete)):
+            return self.base.policy()
+        elif isinstance(space, gym.spaces.Box):
+            return self.base.policy().detach().cpu().numpy()
+        elif isinstance(space, gym.spaces.Discrete):
+            return self.base.policy().item()
+
+    def step(self, act):
+        return self.base.step(torch.as_tensor(act, device=self.device))
 
 
 class EpsAgent(Agent):

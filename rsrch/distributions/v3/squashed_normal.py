@@ -12,9 +12,9 @@ class SquashedNormal(TransformedDistribution):
         self,
         loc: Tensor | Number,
         scale: Tensor | Number,
-        event_dims: int,
-        min_v: Tensor | Number,
-        max_v: Tensor | Number,
+        event_dims: int = 0,
+        min_v: Tensor | Number = -1.0,
+        max_v: Tensor | Number = 1.0,
     ):
         super().__init__(
             Normal(loc, scale, event_dims),

@@ -28,10 +28,10 @@ class Normal(nn.Module):
             mean = mean.reshape(len(x), *self.out_shape)
             std = self.std
         else:
-            mean, log_std = params.chunk(2, dim=1)  # [B, N_out]
+            mean, std = params.chunk(2, dim=1)  # [B, N_out]
             mean = mean.reshape(len(x), *self.out_shape)
-            log_std = log_std.reshape(len(x), *self.out_shape)
-            std = torch.exp(log_std)
+            std = std.reshape(len(x), *self.out_shape)
+            std = nn.functional.softplus(std)
         # This gets us a batch of normal distributions N(mean[i], std[i]^2 I)
         res_dist = D.Normal(mean, std, event_dims=len(self.out_shape))
         return res_dist

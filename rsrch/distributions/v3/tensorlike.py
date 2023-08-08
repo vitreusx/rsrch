@@ -48,6 +48,8 @@ class Tensorlike:
         # is just metadata, it "should" be fairly efficient.
         new = copy.copy(self)
         new._shape = shape
+        new.__tensors = copy.copy(self.__tensors)
+        new.__fields__ = copy.copy(self.__fields__)
         for name, value in fields.items():
             setattr(new, name, value)
         return new
@@ -135,8 +137,9 @@ class Tensorlike:
         repr = tensors[0]
         dim = range(len(repr.shape))[dim]
 
-        new_shape = torch.Size(repr.shape)
+        new_shape = [*repr.shape]
         new_shape[dim] = sum(tensor.shape[dim] for tensor in tensors)
+        new_shape = torch.Size(new_shape)
 
         if out is not None:
             for name in repr.__tensors:
@@ -150,7 +153,7 @@ class Tensorlike:
             fields = {}
             for name in repr.__tensors:
                 _tensors = [getattr(tensor, name) for tensor in tensors]
-                _tensors = torch.cat(tensors, dim)
+                _tensors = torch.cat(_tensors, dim)
                 fields[name] = _tensors
             return repr._new(new_shape, fields)
 
@@ -186,12 +189,12 @@ class Tensorlike:
 
         fields = {}
         for name, tensor in self.__tensors.items():
-            event_dims = len(tensor.shape) - len(self.shape)
-            t_idx = (*idx, *(slice(None) for _ in range(event_dims)))
             if isinstance(tensor, torch.Tensor):
+                event_dims = len(tensor.shape) - len(self.shape)
+                t_idx = (*idx, ..., *(slice(None) for _ in range(event_dims)))
                 tensor = tensor[t_idx]
             else:
-                tensor = tensor.at(t_idx)
+                tensor = tensor.at(idx)
             fields[name] = tensor
 
         new_shape = self._prototype[idx].shape
@@ -203,9 +206,12 @@ class Tensorlike:
 
     def __setitem__(self, idx, value):
         for name, tensor in self.__tensors.items():
-            event_dims = len(tensor.shape) - len(self.shape)
-            t_idx = (*idx, *(slice(None) for _ in range(event_dims)))
-            tensor.__setitem__(t_idx, getattr(value, name))
+            if isinstance(tensor, torch.Tensor):
+                event_dims = len(tensor.shape) - len(self.shape)
+                t_idx = (*idx, ..., *(slice(None) for _ in range(event_dims)))
+                tensor[t_idx] = getattr(value, name)
+            else:
+                tensor[idx] = getattr(value, name)
         return self
 
     def __len__(self):
@@ -225,3 +231,37 @@ class Tensorlike:
     @classmethod
     def _torch_detach(cls, tensor):
         return tensor.detach()
+
+    def squeeze(self, dim=None):
+        if dim is not None:
+            if isinstance(dim, int):
+                dim = (dim,)
+            dim = (range(len(self.shape))[d] for d in dim)
+
+        fields = {}
+        for name, tensor in self.__tensors.items():
+            fields[name] = tensor.squeeze(dim)
+
+        new_shape = self._prototype.squeeze(dim).shape
+        return self._new(new_shape, fields)
+
+    @torch_function(torch.squeeze)
+    @classmethod
+    def _torch_squeeze(cls, tensor, dim=None):
+        return tensor.squeeze(dim)
+
+    def unsqueeze(self, dim):
+        if dim < 0:
+            dim = dim + len(self.shape) + 1
+
+        fields = {}
+        for name, tensor in self.__tensors.items():
+            fields[name] = tensor.unsqueeze(dim)
+
+        new_shape = self._prototype.squeeze(dim).shape
+        return self._new(new_shape, fields)
+
+    @torch_function(torch.unsqueeze)
+    @classmethod
+    def _torch_unsqueeze(cls, tensor, dim):
+        return tensor.unsqueeze(dim)
