@@ -3,9 +3,10 @@ from torch import nn
 
 from rsrch.exp.board import TensorBoard
 from rsrch.exp.dir import ExpDir
-from rsrch.rl import agents, gym
+from rsrch.rl import gym
 from rsrch.rl.data import PackedSeqBatch, SeqBuffer, interact
 from rsrch.rl.data import transforms as T
+from rsrch.rl.gym import agents
 from rsrch.utils import data
 
 from . import api, core, nets

@@ -15,11 +15,12 @@ from scipy.sparse.linalg import LinearOperator, cg
 from torch import Tensor, autograd, nn
 from tqdm.auto import tqdm
 
-from rsrch.rl import agents, gym, wrappers
+from rsrch.rl import gym, wrappers
 from rsrch.rl.data import EpisodeRollout, StepBatch, StepRollout
 from rsrch.rl.data import transforms as T
 from rsrch.rl.data.step import TensorStep
-from rsrch.rl.spec import EnvSpec
+from rsrch.rl.gym import agents
+from rsrch.rl.gym.spec import EnvSpec
 from rsrch.utils import data
 from rsrch.utils.board import Board
 from rsrch.utils.copy import clone_module

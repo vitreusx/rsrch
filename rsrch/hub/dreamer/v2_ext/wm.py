@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from torch import Tensor
 
-import rsrch.distributions.v3 as D
+import rsrch.distributions as D
 from rsrch.rl import api, gym
 from rsrch.rl.data.seq import PaddedSeqBatch
 

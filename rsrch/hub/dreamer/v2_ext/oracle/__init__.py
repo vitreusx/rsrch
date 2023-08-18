@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from torch import Tensor, nn
 
-import rsrch.distributions.v3 as D
+import rsrch.distributions as D
 from rsrch.rl import gym
 
 from .. import wm

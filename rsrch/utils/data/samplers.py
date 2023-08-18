@@ -23,18 +23,18 @@ class InfiniteSampler:
                 idx += 1
 
 
-class WeightedInfiniteSampler:
+class PrioritizedSampler:
     def __init__(self, ds: Sized, max_size=None):
         self.ds = ds
         if max_size is None:
             max_size = len(self.ds)
-        self._priorities = RangeQueryTree(max_size, init=1.0)
+        self.prio = RangeQueryTree(max_size)
 
     def update(self, idx, prio):
-        self._priorities[idx] = prio
+        self.prio[idx] = prio
 
     def __iter__(self):
         while True:
-            u = np.random.rand() * self._priorities.total
-            idx, _ = self._priorities.searchsorted(u)
-            yield idx, self.ds[idx]
+            u = np.random.rand() * self.prio.total
+            idx = self.prio.searchsorted(u)
+            yield idx

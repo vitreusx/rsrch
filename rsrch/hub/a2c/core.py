@@ -10,9 +10,10 @@ from tqdm.auto import tqdm
 import rsrch.distributions as D
 import rsrch.rl.data.transforms as T
 from rsrch.exp.board import Board
-from rsrch.rl import agents, gym
+from rsrch.rl import gym
 from rsrch.rl.api import Agent
 from rsrch.rl.data import ListSeq, TensorSeq, interact
+from rsrch.rl.gym import agents
 from rsrch.rl.utils.polyak import Polyak
 from rsrch.utils.cron import Every
 from rsrch.utils.stats import Stats

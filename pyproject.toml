@@ -39,6 +39,9 @@ gymnasium = { version = "^0.28.1", extras = ["accept-rom-license", "all"] }
 poethepoet = "^0.21.0"
 wandb = "^0.15.5"
 plotly = "^5.15.0"
+addict = "^2.4.0"
+ray = "^2.6.2"
+dacite = "^1.8.1"
 
 [tool.poetry.group.ext]
 optional = true
@@ -62,7 +65,7 @@ optional = true
 [tool.poetry.group.conda.dependencies]
 requests = "2.29.0"
 
-[tool.poe.tasks.torch-gpu]
+[tool.poe.tasks.on-gpu]
 shell = """
   export TORCH=$(\
     poetry export -f requirements.txt \

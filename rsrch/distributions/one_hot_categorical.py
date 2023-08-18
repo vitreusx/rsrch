@@ -1,178 +1,90 @@
-from __future__ import annotations
-
-from typing import List, Tuple
-
 import torch
-from torch.distributions import constraints, kl_divergence, register_kl
-from torch.distributions.distribution import Distribution
+import torch.nn.functional as F
+from torch import Tensor
+
+from rsrch.types.tensorlike import Tensorlike
 
 from .categorical import Categorical
+from .distribution import Distribution
+from .kl import register_kl
 
-__all__ = ["OneHotCategorical", "OneHotCategoricalStraightThrough"]
 
+class OneHotCategorical(Distribution, Tensorlike):
+    def __init__(self, probs: Tensor | None = None, logits: Tensor | None = None):
+        index_rv = Categorical(probs=probs, logits=logits)
+        Tensorlike.__init__(self, index_rv.shape)
+        self.event_shape = torch.Size([index_rv._num_events])
 
-class OneHotCategorical(Distribution):
-    r"""
-    Creates a one-hot categorical distribution parameterized by :attr:`probs` or
-    :attr:`logits`.
-
-    Samples are one-hot coded vectors of size ``probs.size(-1)``.
-
-    .. note:: The `probs` argument must be non-negative, finite and have a non-zero sum,
-              and it will be normalized to sum to 1 along the last dimension. :attr:`probs`
-              will return this normalized value.
-              The `logits` argument will be interpreted as unnormalized log probabilities
-              and can therefore be any real number. It will likewise be normalized so that
-              the resulting probabilities sum to 1 along the last dimension. :attr:`logits`
-              will return this normalized value.
-
-    See also: :func:`torch.distributions.Categorical` for specifications of
-    :attr:`probs` and :attr:`logits`.
-
-    Example::
-
-        >>> # xdoctest: +IGNORE_WANT("non-deterinistic")
-        >>> m = OneHotCategorical(torch.tensor([ 0.25, 0.25, 0.25, 0.25 ]))
-        >>> m.sample()  # equal probability of 0, 1, 2, 3
-        tensor([ 0.,  0.,  0.,  1.])
-
-    Args:
-        probs (Tensor): event probabilities
-        logits (Tensor): event log probabilities (unnormalized)
-    """
-    arg_constraints = {"probs": constraints.simplex, "logits": constraints.real_vector}
-    support = constraints.one_hot
-    has_enumerate_support = True
-
-    def __init__(self, probs=None, logits=None, validate_args=False):
-        self._categorical = Categorical(probs, logits)
-        batch_shape = self._categorical.batch_shape
-        event_shape = self._categorical.param_shape[-1:]
-        super().__init__(batch_shape, event_shape, validate_args=validate_args)
-
-    def expand(self, batch_shape, _instance=None):
-        new = self._get_checked_instance(OneHotCategorical, _instance)
-        batch_shape = torch.Size(batch_shape)
-        new._categorical = self._categorical.expand(batch_shape)
-        super(OneHotCategorical, new).__init__(
-            batch_shape, self.event_shape, validate_args=False
-        )
-        new._validate_args = self._validate_args
-        return new
-
-    def _new(self, *args, **kwargs):
-        return self._categorical._new(*args, **kwargs)
-
-    @property
-    def _param(self):
-        return self._categorical._param
-
-    @property
-    def probs(self):
-        return self._categorical.probs
+        self.index_rv: Categorical
+        self.register("index_rv", index_rv)
 
     @property
     def logits(self):
-        return self._categorical.logits
+        return self.index_rv.logits
 
     @property
     def log_probs(self):
-        return self._categorical.log_probs
+        return self.index_rv.log_probs
+
+    @property
+    def probs(self):
+        return self.index_rv.probs
 
     @property
     def mean(self):
-        return self._categorical.probs
+        return self.index_rv.probs
 
     @property
     def mode(self):
-        probs = self._categorical.probs
-        mode = probs.argmax(axis=-1)
-        return torch.nn.functional.one_hot(mode, num_classes=probs.shape[-1]).to(probs)
+        mode = self.probs.argmax(axis=-1)
+        mode = F.one_hot(mode, num_classes=self.index_rv._num_events)
+        mode = mode.type_as(self.probs)
+        return mode
 
     @property
     def variance(self):
-        return self._categorical.probs * (1 - self._categorical.probs)
+        return self.probs * (1 - self.probs)
 
-    @property
-    def param_shape(self):
-        return self._categorical.param_shape
+    def sample(self, sample_shape: torch.Size = torch.Size()):
+        num_events = self.event_shape[0]
+        indices = self.index_rv.sample(sample_shape)
+        return torch.nn.functional.one_hot(indices, num_events).type_as(self.probs)
 
-    def sample(self, sample_shape=torch.Size()):
-        sample_shape = torch.Size(sample_shape)
-        probs = self._categorical.probs
-        num_events = self._categorical._num_events
-        indices = self._categorical.sample(sample_shape)
-        return torch.nn.functional.one_hot(indices, num_events).to(probs)
+    def rsample(self, sample_shape: torch.Size = torch.Size()):
+        raise NotImplementedError
 
-    def log_prob(self, value):
-        if self._validate_args:
-            self._validate_sample(value)
-        indices = value.max(-1)[1]
-        return self._categorical.log_prob(indices)
+    def log_prob(self, value: Tensor):
+        _, indices = value.max(-1)
+        return self.index_rv.log_prob(indices)
 
     def entropy(self):
-        return self._categorical.entropy()
-
-    def enumerate_support(self, expand=True):
-        n = self.event_shape[0]
-        values = torch.eye(n, dtype=self._param.dtype, device=self._param.device)
-        values = values.view((n,) + (1,) * len(self.batch_shape) + (n,))
-        if expand:
-            values = values.expand((n,) + self.batch_shape + (n,))
-        return values
-
-    @classmethod
-    def _torch_cat(
-        cls,
-        dists: List[OneHotCategorical] | Tuple[OneHotCategorical, ...],
-        dim: int = 0,
-    ):
-        dim = range(len(dists[0].batch_shape)).index(dim)
-        args = dict(validate_args=dists[0]._validate_args)
-        if "probs" in dists[0].__dict__:
-            probs = torch.cat([d.probs for d in dists], dim)
-            args.update(probs=probs)
-        else:
-            logits = torch.cat([d.logits for d in dists], dim)
-            args.update(logits=logits)
-        return cls(**args)
-
-    @classmethod
-    def __torch_function__(cls, func, types, args=(), kwargs=None):
-        if kwargs is None:
-            kwargs = {}
-
-        if not all(issubclass(t, OneHotCategorical) for t in types):
-            return NotImplemented
-
-        if func == torch.cat:
-            return cls._torch_cat(*args, **kwargs)
-
-        return NotImplemented
-
-
-class OneHotCategoricalStraightThrough(OneHotCategorical):
-    r"""
-    Creates a reparameterizable :class:`OneHotCategorical` distribution based on the straight-
-    through gradient estimator from [1].
-
-    [1] Estimating or Propagating Gradients Through Stochastic Neurons for Conditional Computation
-    (Bengio et al, 2013)
-    """
-    has_rsample = True
-
-    def rsample(self, sample_shape=torch.Size()):
-        samples = self.sample(sample_shape)
-        if "logits" in self._categorical.__dict__:
-            logits = self._categorical.logits
-            zero = logits - logits.detach()
-        else:
-            probs = self._categorical.probs
-            zero = probs - probs.detach()
-        return samples + zero
+        return self.index_rv.entropy()
 
 
 @register_kl(OneHotCategorical, OneHotCategorical)
-def _kl_onehotcategorical_onehotcategorical(p: OneHotCategorical, q: OneHotCategorical):
-    # Based on torch.distributions.kl._kl_onehotcategorical_onehotcategorical
-    return kl_divergence(p._categorical, q._categorical)
+def _kl_onehotcategorical(p: OneHotCategorical, q: OneHotCategorical):
+    t = p.probs * (p.log_probs - q.log_probs)
+    t[(q.probs == 0).expand_as(t)] = torch.inf
+    t[(p.probs == 0).expand_as(t)] = 0
+    return t.sum(-1)
+
+
+class StraightThrough(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, value, grad_target):
+        return value
+
+    @staticmethod
+    def backward(ctx, out_grad):
+        return None, out_grad
+
+
+class OneHotCategoricalST(OneHotCategorical):
+    def rsample(self, sample_shape: torch.Size = torch.Size()):
+        samples = self.sample(sample_shape)
+        _param = (
+            self.index_rv._logits
+            if self.index_rv._logits is not None
+            else self.index_rv._probs
+        )
+        return StraightThrough.apply(samples, _param)

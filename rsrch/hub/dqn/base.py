@@ -12,11 +12,11 @@ import torch.nn as nn
 from torch import Tensor, nn
 from tqdm.auto import tqdm, trange
 
-import rsrch.rl.agents as agents
 import rsrch.rl.gym as gym
+import rsrch.rl.gym.agents as agents
 import rsrch.utils.data as data
 from rsrch.rl.data import StepBatch, StepBuffer, interact
-from rsrch.rl.spec import EnvSpec
+from rsrch.rl.gym.spec import EnvSpec
 from rsrch.rl.utils.polyak import Polyak
 from rsrch.utils.board import Board
 

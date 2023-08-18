@@ -76,9 +76,9 @@ class MultiStepBuffer(data.Dataset[Sequence]):
         self.capacity, self.seq_len = capacity, seq_len
         self._chunks = np.empty((capacity,), dtype=object)
         self._chunk_ep_idx = np.empty((capacity,), dtype=np.int32)
-        self._ptr, self.size, self._looped = -1, 0, False
+        self._ptr, self.size, self._looped = None, 0, False
         self._saved, self._sav_ptr = deque([]), 0
-        self._cur_ep, self._ep_idx = None, -1
+        self._cur_ep = None
         self.store = store
         self._reset = True
 
@@ -87,38 +87,44 @@ class MultiStepBuffer(data.Dataset[Sequence]):
         return self._chunks[: self.size]
 
     def on_reset(self, obs):
-        if self._ptr >= 0:
+        if self._cur_ep is not None:
             if len(self._cur_ep) >= self.seq_len:
-                saved_ep = self.store.save(self._cur_ep)
+                self._store_ep()
 
-                if id(self._cur_ep) != id(saved_ep):
-                    for chunk_idx in range(len(self._cur_ep) - self.seq_len + 1):
-                        start = len(self._cur_ep) + 1 - chunk_idx
-                        end = len(self._cur_ep) - chunk_idx - self.seq_len
-                        chunk = saved_ep[start:end]
-                        self._chunks[self._ptr - chunk_idx] = chunk
-
-                self._cur_ep = saved_ep
-                self._saved.append(self._cur_ep)
-
+        self._ep_idx = 0 if self._cur_ep is None else self._ep_idx + 1
         self._cur_ep = ListSeq(obs=[obs], act=[], reward=[], term=[False])
-        self._ep_idx += 1
         if len(self._cur_ep) >= self.seq_len:
             self._add_chunk()
 
+    def _store_ep(self):
+        saved_ep = self.store.save(self._cur_ep)
+
+        if id(self._cur_ep) != id(saved_ep):
+            start, end, chunk_idx = 0, self.seq_len + 1, self._ptr
+            while end <= len(saved_ep.obs):
+                self._chunks[chunk_idx] = saved_ep[start:end]
+                start, end = start + 1, end + 1
+                chunk_idx = (chunk_idx - 1) % self.capacity
+
+        self._cur_ep = saved_ep
+        self._saved.append(self._cur_ep)
+
     def _add_chunk(self):
-        self._ptr += 1
-        if self._ptr + 1 >= self.capacity:
-            self._looped = True
-            self._ptr = 0
         self.size = min(self.size + 1, self.capacity)
 
         if self._looped:
             if self._chunk_ep_idx[self._ptr] > self._sav_ptr:
                 self.store.free(self._saved.popleft())
+                self._sav_ptr += 1
+
+        self._ptr = 0 if self._ptr is None else self._ptr + 1
+        if self._ptr >= self.capacity:
+            self._ptr = 0
+            self._looped = True
 
         self._chunks[self._ptr] = self._cur_ep[-(self.seq_len + 1) :]
         self._chunk_ep_idx[self._ptr] = self._ep_idx
+
         return self._ptr
 
     def on_step(self, act, next_obs, reward, term, trunc):

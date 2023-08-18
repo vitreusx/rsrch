@@ -6,7 +6,6 @@ from rsrch.datasets.transforms import Compose, Transform
 from rsrch.rl.data.seq import Sequence, TensorSeq
 
 from ..step import Step, TensorStep
-from . import functional as F
 
 
 class Subsample(nn.Module, Transform):
@@ -36,20 +35,18 @@ class Subsample(nn.Module, Transform):
         return seq[start:end]
 
 
-class ToTensorSeq(nn.Module, Transform):
-    def __init__(self):
-        super().__init__()
+class ToTensorSeq(Transform):
+    def __init__(self, device=None, dtype=None):
+        self.device = device
+        self.dtype = dtype
 
-    def forward(self, seq: Sequence) -> TensorSeq:
-        return F.to_tensor_seq(seq)
+    def __call__(self, seq: Sequence) -> TensorSeq:
+        return TensorSeq.convert(seq, self.device, self.dtype)
 
 
-class ToTensorStep(nn.Module, Transform):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, step: Step) -> TensorStep:
-        return F.to_tensor_step(step)
+class ToTensorStep(Transform):
+    def __call__(self, step: Step) -> TensorStep:
+        return TensorStep.convert(step)
 
 
 class ToDevice(nn.Module, Transform):

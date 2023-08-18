@@ -2,7 +2,7 @@ from typing import TypeAlias
 
 from torch import Tensor
 
-import rsrch.distributions.v3 as D
+import rsrch.distributions as D
 from rsrch.rl import gym
 
 from .. import wm

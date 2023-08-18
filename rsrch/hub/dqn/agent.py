@@ -1,7 +1,7 @@
 import torch
 from torch import Tensor
 
-from rsrch.rl import agents
+from rsrch.rl.gym import agents
 from rsrch.utils.eval_ctx import eval_ctx
 
 from .types import QNetwork

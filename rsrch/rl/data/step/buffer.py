@@ -2,7 +2,7 @@ import typing
 
 import torch
 
-from rsrch.rl.spec import EnvSpec
+from rsrch.rl.gym.spec import EnvSpec
 from rsrch.utils import data
 
 from .data import Step, StepBatch

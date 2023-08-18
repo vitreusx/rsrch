@@ -7,9 +7,10 @@ import torch.nn.functional as nn_F
 from torch import Tensor, nn
 from tqdm.auto import tqdm
 
-from rsrch.rl import agents, gym
+from rsrch.rl import gym
 from rsrch.rl.data.seq import Episodes
 from rsrch.rl.data.step import StepBatch, StepBuffer, StepRollout
+from rsrch.rl.gym import agents
 from rsrch.rl.utils.polyak import Polyak
 from rsrch.utils import data
 from rsrch.utils.board import Board

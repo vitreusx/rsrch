@@ -3,7 +3,7 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 
-import rsrch.distributions.v3 as D
+import rsrch.distributions as D
 from rsrch.exp import prof
 from rsrch.exp.board import TensorBoard
 from rsrch.exp.dir import ExpDir
@@ -25,33 +25,33 @@ class Dreamer(core.Dreamer):
         self.batch_seq_len = 32
         self.device = torch.device("cuda")
         self.log_every = int(1e2)
-        self.kl_reg_coeff = 0.5
+        self.kl_reg_coeff = 0.8
         self.horizon = 7
         self.copy_critic_every = 100
         self.wm_loss_scale = dict(kl=1.0, obs=1.0, term=1.0, reward=1.0)
-        self.actor_loss_scale = dict(vpg=1.0, value=1.0, ent=1.0)
+        self.actor_loss_scale = dict(vpg=0.0, value=1.0, ent=1e-3)
+        self.ac_scale = dict(actor=1.0, critic=1.0)
         self.prefill_steps = int(1e4)
         self.gamma = 0.99
-        self.gae_lambda = 0.0
+        self.gae_lambda = 0.95
         self.clip_grad_norm = 100.0
         # self.policy_opt_delay = int(50e3)
         self.policy_opt_delay = 0
         self._use_oracle = False
 
     def setup_envs(self):
-        self.env_name, self.env_type = "CartPole-v1", "other"
         # self.env_name, self.env_type = "ALE/Pong-v5", "atari"
+        self.env_name, self.env_type = "CartPole-v1", "other"
         if self._use_oracle:
             self._mdp = oracle.Cartpole(device=self.device)
 
         if self.env_type == "atari":
             self.wm_loss_scale.update(kl=0.1)
             self.actor_loss_scale.update(ent=1e-3)
-            # self.horizon = 10
+            self.horizon = 10
         else:
             self.actor_loss_scale.update(ent=1e-4)
-            # self.horizon = 15
-        self.horizon = 7
+            self.horizon = 15
 
         self.train_env = self._make_env()
         self.val_env = self._make_env()
@@ -114,22 +114,21 @@ class Dreamer(core.Dreamer):
             self.wm.act_space,
             deter_dim,
             stoch_dim,
-            # fc_layers=[hidden_dim] * 3,
-            fc_layers=[hidden_dim] * 2,
+            fc_layers=[hidden_dim] * 3,
         )
         self.actor = self.actor.to(self.device)
-        self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=1e-5)
 
         make_critic = lambda: rssm.nets.Critic(
             deter_dim,
             stoch_dim,
-            # fc_layers=[hidden_dim] * 3,
-            fc_layers=[hidden_dim] * 2,
+            fc_layers=[hidden_dim] * 3,
         )
 
         self.critic = make_critic()
         self.critic = self.critic.to(self.device)
-        self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=1e-5)
+
+        ac_params = [*self.actor.parameters(), *self.critic.parameters()]
+        self.ac_opt = torch.optim.Adam(ac_params, lr=1e-4)
 
         self.target_critic = make_critic()
         self.target_critic = self.target_critic.to(self.device)
@@ -190,11 +189,12 @@ class Dreamer(core.Dreamer):
 
         self.actor = deter.nets.Actor(self.wm.act_space, state_dim, hidden_dim)
         self.actor = self.actor.to(self.device)
-        self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=1e-4)
 
         self.critic = deter.nets.Critic(state_dim, hidden_dim)
         self.critic = self.critic.to(self.device)
-        self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=1e-4)
+
+        ac_params = [*self.actor.parameters(), *self.critic.parameters()]
+        self.ac_opt = torch.optim.Adam(ac_params, lr=1e-5)
 
         self.target_critic = deter.nets.Critic(state_dim, hidden_dim)
         self.target_critic = self.target_critic.to(self.device)
@@ -266,7 +266,7 @@ class Dreamer(core.Dreamer):
             step_fn=lambda: self.env_step,
         )
 
-        profile = False
+        profile = True
         anomaly = False
 
         if profile:

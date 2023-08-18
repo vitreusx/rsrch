@@ -10,7 +10,7 @@ from rsrch import nn
 from rsrch.nn import dist_head as dh
 from rsrch.nn import fc
 from rsrch.rl import gym
-from rsrch.rl.spec import EnvSpec
+from rsrch.rl.gym.spec import EnvSpec
 from rsrch.utils.eval_ctx import eval_ctx
 
 from . import api

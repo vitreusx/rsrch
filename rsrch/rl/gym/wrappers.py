@@ -1,5 +1,6 @@
 from typing import Protocol
 
+import numpy as np
 import torch
 import torchvision.transforms.functional as tv_F
 from gymnasium.wrappers import *  # pylint: disable=wildcat-import
@@ -99,6 +100,8 @@ class ToTensor(gym.Wrapper):
                 x = tv_F.to_tensor(x)
             x = x.to(device=self.device, dtype=self.dtype)
         else:
+            if not isinstance(x, Tensor):
+                x = np.asarray(x)
             x = torch.as_tensor(x, device=self.device, dtype=self.dtype)
         return x
 

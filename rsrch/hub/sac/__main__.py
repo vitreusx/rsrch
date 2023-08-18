@@ -4,7 +4,7 @@ import argparse
 from dataclasses import dataclass
 
 from rsrch.nn import dist_head as dh
-from rsrch.rl.spec import EnvSpec
+from rsrch.rl.gym.spec import EnvSpec
 
 from . import *
 

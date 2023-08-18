@@ -6,9 +6,9 @@ import torch
 from tensordict import TensorDict, tensorclass
 from torch import Tensor, nn
 
-import rsrch.distributions.v3 as D
-from rsrch.distributions.v3.tensorlike import Tensorlike
+import rsrch.distributions as D
 from rsrch.rl import gym
+from rsrch.types.tensorlike import Tensorlike
 
 from .. import wm
 
@@ -18,8 +18,8 @@ class State(Tensorlike):
         shape = deter.shape[:-1]
         Tensorlike.__init__(self, shape)
 
-        self.register_field("deter", deter)
-        self.register_field("stoch", stoch)
+        self.register("deter", deter)
+        self.register("stoch", stoch)
 
     def to_tensor(self):
         return torch.cat([self.deter, self.stoch], -1)
@@ -28,8 +28,8 @@ class State(Tensorlike):
 class StateDist(D.Distribution, Tensorlike):
     def __init__(self, deter: Tensor, stoch_dist: D.Distribution):
         Tensorlike.__init__(self, stoch_dist.batch_shape)
-        self.register_field("deter", deter)
-        self.register_field("stoch_dist", stoch_dist)
+        self.register("deter", deter)
+        self.register("stoch_dist", stoch_dist)
 
     @property
     def batch_shape(self):

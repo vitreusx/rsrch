@@ -26,9 +26,9 @@ class Sequence(abc.ABC, Generic[ObsType, ActType]):
       - obs =  :math:`[   o_1,    o_2, ...,    o_{t-1},    o_t]`;
       - act =  :math:`[       a_1,    a_2, ...,    a_{t-1}    ]`;
       - rew =  :math:`[           r_2, ...,    r_{t-1},    r_t]`;
-      - term = :math:`[\tau_1, \tau_2, ..., \tau_{t-1}, \tau_t]`.
+      - term = :math:`                                  \tau_t`.
 
-    where :math:`a_t` is the action taken at timestep :math:`t`, i.e. the evolution of the POMDP in question is given by :math:`P(s_t, r_t \\mid s_{t-1}, a_{t-1})` and `P(o_t \\mid s_t)`. The `term` vector denotes, for :math:`\tau_t`, whether the MDP state at timestep :math:`t` is terminal. The values between 0 and 1 may denote a "fuzzy" terminal-ness, which can be useful when predicting the indicator through a world model.
+    where :math:`a_t` is the action taken at timestep :math:`t`, i.e. the evolution of the POMDP in question is given by :math:`P(s_t, r_t \\mid s_{t-1}, a_{t-1})` and `P(o_t \\mid s_t)`. The `term` value denotes whether the final state is terminal.
     """
 
     obs: typing.Sequence[ObsType]
@@ -37,8 +37,8 @@ class Sequence(abc.ABC, Generic[ObsType, ActType]):
     """Actions performed at timesteps. Has length len(obs)-1."""
     reward: typing.Sequence[SupportsFloat]
     """Rewards at timesteps. Is offset by 1 (reward[0] is reward for first MDP step; first observation is not assigned any reward.)"""
-    term: typing.Sequence[bool | SupportsFloat]
-    """Whether the state at the timestep is terminal."""
+    term: bool | SupportsFloat
+    """Whether the final state is terminal."""
 
     @property
     def steps(self):
@@ -48,25 +48,27 @@ class Sequence(abc.ABC, Generic[ObsType, ActType]):
                 act=self.act[idx],
                 next_obs=self.obs[idx + 1],
                 reward=self.reward[idx],
-                term=self.term[idx + 1],
+                term=(self.term and idx == len(self.obs) - 2),
             )
 
     def __len__(self):
-        """Return the length of the trajectory. NOTE: This is not len(self.obs)"""
+        """Get the length of the sequence."""
         return len(self.obs) - 1
 
     def __getitem__(self, idx: slice):
-        """Get a slice of the trajectory."""
+        """Get a slice of the trajectory. The indices refer to timesteps, i.e. to self.obs array."""
 
         start, end, step = idx.indices(len(self.obs))
         assert step == 1
-        obs_idx = term_idx = slice(start, end)
+        obs_idx = slice(start, end)
         act_idx = rew_idx = slice(start, end - 1)
+        term = self.term and end == len(self.obs) - 1
+
         return self.__class__(
             obs=self.obs[obs_idx],
             act=self.act[act_idx],
             reward=self.reward[rew_idx],
-            term=self.term[term_idx],
+            term=term,
         )
 
 
@@ -84,7 +86,7 @@ class ListSeq(Sequence):
         obs = [step.obs for step in steps] + [steps[-1].next_obs]
         act = [step.act for step in steps]
         reward = [step.reward for step in steps]
-        term = [False] + [step.term for step in steps]
+        term = steps[-1].term
         return ListSeq(obs, act, reward, term)
 
 
@@ -100,15 +102,38 @@ class NumpySeq(Sequence[np.ndarray, np.ndarray]):
         obs = np.stack([np.asarray(x) for x in seq.obs])
         act = np.stack([np.asarray(x) for x in seq.act])
         reward = np.asarray(seq.reward)
-        term = np.asarray(seq.term)
-        return NumpySeq(obs, act, reward, term)
+        return NumpySeq(obs, act, reward, seq.term)
 
 
-def _to_tensor(s, device):
-    if all(isinstance(x, Tensor) for x in s):
-        return torch.stack(s).detach().to(device=device)
+@dataclass
+class NumpySeqBatch:
+    obs: np.ndarray
+    act: np.ndarray
+    reward: np.ndarray
+    term: np.ndarray
+
+    @staticmethod
+    def collate_fn(batch):
+        obs = np.stack([seq.obs for seq in batch], 1)
+        act = np.stack([seq.act for seq in batch], 1)
+        reward = np.stack([seq.reward for seq in batch], 1)
+        term = np.array([seq.term for seq in batch])
+        return NumpySeqBatch(obs, act, reward, term)
+
+
+def _to_tensor(s, device, dtype):
+    if isinstance(s[0], Tensor):
+        t = torch.stack(s).detach()
     else:
-        return torch.from_numpy(np.stack(s)).to(device=device)
+        t = torch.from_numpy(np.stack(s))
+    return t.to(device=device, dtype=dtype)
+
+
+def _act_dtype(act, dtype):
+    if dtype is not None:
+        if act.dtype.is_floating_point:
+            return dtype
+    return act.dtype
 
 
 @dataclass
@@ -121,31 +146,28 @@ class TensorSeq(Sequence[Tensor, Tensor]):
     term: Tensor
 
     @staticmethod
-    def convert(seq: Sequence, device=None) -> TensorSeq:
+    def convert(seq: Sequence, device=None, dtype=None) -> TensorSeq:
         """Convert arbitrary trajectory to Tensor-based version."""
 
         if isinstance(seq, TensorSeq):
             return seq
 
-        # The bit for term is separate, because first element may be plain
-        # True/False, and the rest may be tensors.
-        term_sfx = _to_tensor(seq.term[1:], device)
-        term_pfx = torch.as_tensor(seq.term[:1], device=term_sfx.device)
-        term = torch.cat([term_pfx, term_sfx])
+        act = _to_tensor(seq.act, device, None)
+        act = act.to(dtype=_act_dtype(act, dtype))
 
         return TensorSeq(
-            obs=_to_tensor(seq.obs, device),
-            act=_to_tensor(seq.act, device),
-            reward=_to_tensor(seq.reward, device),
-            term=term,
+            obs=_to_tensor(seq.obs, device, dtype),
+            act=act,
+            reward=_to_tensor(seq.reward, device, dtype),
+            term=seq.term,
         )
 
-    def to(self, device: torch.device):
+    def to(self, device=None, dtype=None):
         return TensorSeq(
-            obs=self.obs.to(device),
-            act=self.act.to(device),
-            reward=self.reward.to(device),
-            term=self.term.to(device),
+            obs=self.obs.to(device=device, dtype=dtype),
+            act=self.act.to(device=device, dtype=_act_dtype(self.act, dtype)),
+            reward=self.reward.to(device, dtype=dtype),
+            term=self.term,
         )
 
 
@@ -171,7 +193,7 @@ class H5Seq(Sequence[np.memmap, np.memmap]):
             obs=file["obs"],
             act=file["act"],
             reward=file["reward"],
-            term=file["term"],
+            term=file["term"][0],
         )
 
     @staticmethod
@@ -181,7 +203,8 @@ class H5Seq(Sequence[np.memmap, np.memmap]):
             h5_file.create_dataset("obs", data=np_seq.obs)
             h5_file.create_dataset("act", data=np_seq.act)
             h5_file.create_dataset("reward", data=np_seq.reward)
-            h5_file.create_dataset("term", data=np_seq.term)
+            term = np.array([np_seq.term])
+            h5_file.create_dataset("term", data=term)
         return H5Seq.load(dest)
 
 
@@ -200,7 +223,7 @@ class SeqBatchStep:
     reward: Tensor
     """Reward for the transition."""
     term: Tensor
-    """Whether the current state is terminal."""
+    """Whether the final state is terminal."""
 
     def __len__(self):
         return len(self.obs)
@@ -261,12 +284,12 @@ class PackedSeqBatch:
         """Get the index slices for consecutive steps for accessing term.data."""
         return self.obs_idxes
 
-    def to(self, device: torch.device | None = None) -> PackedSeqBatch:
+    def to(self, device=None, dtype=None) -> PackedSeqBatch:
         return PackedSeqBatch(
-            obs=self.obs.to(device=device),
-            act=self.act.to(device=device),
-            reward=self.reward.to(device=device),
-            term=self.term.to(device=device),
+            obs=self.obs.to(device=device, dtype=dtype),
+            act=self.act.to(device=device, dtype=_act_dtype(self.act, dtype)),
+            reward=self.reward.to(device=device, dtype=dtype),
+            term=self.term.to(device=device, dtype=dtype),
         )
 
     @staticmethod
@@ -286,12 +309,12 @@ class PackedSeqBatch:
 
 @dataclass
 class PaddedSeqBatch:
-    """A batch of equal-length Tensor trajectories. The shapes of the tensors are (L, B, ...)"""
+    """A batch of equal-length Tensor trajectories."""
 
-    obs: Tensor
-    act: Tensor
-    reward: Tensor
-    term: Tensor
+    obs: Tensor  # [L, B, *obs_shape]
+    act: Tensor  # [L, B, *act_shape]
+    reward: Tensor  # [L, B]
+    term: Tensor  # [B]
 
     @property
     def step_batches(self):
@@ -311,19 +334,34 @@ class PaddedSeqBatch:
     def __len__(self):
         return self.obs.shape[1]
 
-    def to(self, device=None):
+    def to(self, device=None, dtype=None):
         return PaddedSeqBatch(
-            self.obs.to(device),
-            self.act.to(device),
-            self.reward.to(device),
-            self.term.to(device),
+            self.obs.to(device=device, dtype=dtype),
+            self.act.to(device=device, dtype=_act_dtype(self.act, dtype)),
+            self.reward.to(device=device, dtype=dtype),
+            self.term.to(device=device, dtype=dtype),
         )
 
     @staticmethod
     def collate_fn(batch: List[TensorSeq]):
-        """Collate a batch of :class:`TensorSeq` items into :class:`MultiStepBatch`. NOTE: This function does not check if the items have equal sequence length."""
+        """Collate a batch of :class:`TensorSeq` items into :class:`PaddedSeqBatch`. NOTE: This function does not check if the items have equal sequence length."""
         obs = torch.stack([seq.obs for seq in batch], dim=1)
         act = torch.stack([seq.act for seq in batch], dim=1)
         reward = torch.stack([seq.reward for seq in batch], dim=1)
-        term = torch.stack([seq.term for seq in batch], dim=1)
+        term = torch.tensor([seq.term for seq in batch])
         return PaddedSeqBatch(obs, act, reward, term)
+
+    @staticmethod
+    def from_numpy(batch: NumpySeqBatch):
+        obs = torch.as_tensor(batch.obs)
+        act = torch.as_tensor(batch.act)
+        reward = torch.as_tensor(batch.reward)
+        term = torch.as_tensor(batch.term)
+        return PaddedSeqBatch(obs, act, reward, term)
+
+    def pin_memory(self):
+        self.obs = self.obs.pin_memory()
+        self.act = self.act.pin_memory()
+        self.reward = self.reward.pin_memory()
+        self.term = self.term.pin_memory()
+        return self

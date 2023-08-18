@@ -5,11 +5,11 @@ import numpy as np
 import torch
 from torch import Tensor, nn
 
-import rsrch.distributions.v3 as D
-from rsrch.nn import dist_head_v2 as dh
+import rsrch.distributions as D
+from rsrch.nn import dist_head as dh
 from rsrch.nn import fc
 from rsrch.rl import gym
-from rsrch.rl.spec import EnvSpec
+from rsrch.rl.gym.spec import EnvSpec
 
 from . import wm
 

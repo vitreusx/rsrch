@@ -1,0 +1,41 @@
+env:
+  name: ALE/Alien-v5
+  screen_size: 84
+  frame_stack: 4
+  frame_skip: 4
+  reward_clip: [-1.0, 1.0]
+  term_on_loss_of_life: true
+  max_frames_per_episode: 108e3
+sched:
+  num_frames: 10e6
+  val_every: 100e3
+  opt_batch: 256
+  env_batch: 64
+  replay_ratio: 8
+buffer:
+  prefill: 80e3
+  capacity: 1e6
+encoder:
+  type: impala
+  variant: large/2
+optimizer:
+  name: adam
+  lr: 2.5e-4
+  eps: $(5e-3 / sched.opt_batch)
+noisy_nets:
+  enabled: true
+  sigma0: 0.5
+  factorized: true
+multi_step:
+  enabled: true
+  n: 3
+dist:
+  enabled: false
+  num_atoms: 51
+  v_min: -10.0
+  v_max: 10.0
+pr:
+  enabled: true
+  alpha: 0.8
+  beta: linear(0.45, 1.0, ${sched.num_frames})
+gamma: 0.99

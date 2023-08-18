@@ -1,7 +1,8 @@
-from PIL import Image
-import torch
 import numpy as np
+import torch
 import torchvision.transforms.functional as F
+from PIL import Image
+
 
 def make_grid(images, ncols=None, padding=2) -> Image.Image:
     def _convert(img):

@@ -1,85 +1,74 @@
 import math
+from numbers import Number
+from typing import List, Protocol
 
 import torch
-import torch.distributions as D
-import torch.distributions.constraints as C
-from torch import Tensor, nn
-from torch.distributions.transforms import *
+import torch.nn.functional as F
+from torch import Tensor
+
+from .utils import sum_rightmost
 
 
-class ConvertDtype(D.Transform):
-    domain = C.dependent(event_dim=0)
-    codomain = C.dependent(event_dim=0)
+class Transform(Protocol):
+    def __call__(self, x: Tensor) -> Tensor:
+        ...
 
+    def inv(self, y: Tensor) -> Tensor:
+        ...
+
+    def log_abs_det_jac(self, x: Tensor, y: Tensor) -> Tensor:
+        ...
+
+
+class ConvertTypeTransform(Transform):
     def __init__(self, from_dt: torch.dtype, to_dt: torch.dtype):
-        super().__init__()
         self.from_dt = from_dt
         self.to_dt = to_dt
 
-    def __eq__(self, other):
-        return (
-            isinstance(other, ConvertDtype)
-            and self.from_dt == other.from_dt
-            and self.to_dt == other.to_dt
-        )
-
-    def _call(self, x: Tensor):
+    def __call__(self, x):
         return x.to(dtype=self.to_dt)
 
-    def _inverse(self, y: Tensor):
+    def inv(self, y):
         return y.to(dtype=self.from_dt)
 
-    def log_abs_det_jacobian(self, x, y):
-        return torch.ones([], dtype=self.to_dt).item()
+    def log_abs_det_jac(self, x, y):
+        return 0.0
 
 
-class SafeTanhTransform(D.Transform):
-    domain = C.real
-    codomain = C.interval(-1.0, 1.0)
-    bijective = True
-    sign = +1
+class TanhTransform(Transform):
+    def __init__(self, eps=3e-8):
+        self.eps = eps
 
-    eps = 1e-8
-    min_v, max_v = -1.0 + eps, 1.0 - eps
-    log2 = math.log(2)
-
-    def __eq__(self, other):
-        return isinstance(other, SafeTanhTransform)
-
-    def _call(self, x: Tensor):
+    def __call__(self, x):
         return x.tanh()
 
-    def _inverse(self, y: Tensor):
-        y = y.clamp(self.min_v, self.max_v)
+    def inv(self, y):
+        y = y.clamp(-1.0 + self.eps, 1.0 - self.eps)
         return y.atanh()
 
-    def log_abs_det_jacobian(self, x: Tensor, y: Tensor):
-        return 2.0 * (self.log2 - x - nn.functional.softplus(-2.0 * x))
+    def log_abs_det_jac(self, x, y):
+        return 2 * (math.log(2) - x - F.softplus(-2 * x))
 
 
-class SliceTransform(D.Transform):
-    domain = C.dependent(event_dim=0)
-    codomain = C.dependent(event_dim=0)
-    bijective = False
+class AffineTransform(Transform):
+    def __init__(self, loc, scale):
+        self.loc = loc
+        self.scale = scale
+        if isinstance(loc, Number) and isinstance(scale, Number):
+            self._event_dim = 0
+        else:
+            _param = loc if isinstance(loc, Tensor) else scale
+            self._event_dim = len(_param.shape)
 
-    def __init__(self, idx):
-        super().__init__()
-        self.idx = idx
+    def __call__(self, x):
+        return self.loc + x * self.scale
 
-    def __eq__(self, other):
-        return isinstance(other, SliceTransform) and self.idx == other.idx
+    def inv(self, y):
+        return (y - self.loc) / self.scale
 
-    def _call(self, x):
-        return x[self.idx]
-
-    def log_abs_det_jacobian(self, x, y):
-        return torch.ones([]).type_as(y)
-
-
-class Pipeline(D.TransformedDistribution):
-    def __init__(self, *parts: D.Distribution | D.Transform, validate_args=False):
-        super().__init__(
-            base_distribution=parts[0],
-            transforms=D.ComposeTransform(parts[1:]),
-            validate_args=validate_args,
-        )
+    def log_abs_det_jac(self, x, y):
+        if not isinstance(self.scale, Tensor):
+            res = torch.full_like(x, math.log(abs(self.scale)))
+        else:
+            res = self.scale.abs().log().expand(x.shape)
+        return sum_rightmost(res, self._event_dim)

@@ -8,6 +8,11 @@ def update(source: nn.Module, target: nn.Module, tau: float):
         target_p.data.copy_(new_val)
 
 
+def copy(source: nn.Module, target: nn.Module):
+    for target_p, source_p in zip(target.parameters(), source.parameters()):
+        target_p.data.copy_(source_p.data)
+
+
 class Polyak:
     def __init__(
         self,

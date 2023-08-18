@@ -18,3 +18,23 @@ class Every:
         if self.hook is not None:
             if self:
                 self.hook(*args, **kwargs)
+
+
+class Once:
+    def __init__(self, cond, hook):
+        self.cond = cond
+        self.hook = hook
+        self._done = False
+
+    def __call__(self, *args, **kwargs):
+        if not self._done and self.cond():
+            self._done = True
+            return self.hook(*args, **kwargs)
+
+
+class Never:
+    def __bool__(self):
+        return False
+
+    def __call__(self, *args, **kwargs):
+        pass

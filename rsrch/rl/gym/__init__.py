@@ -1,9 +1,9 @@
 from gymnasium import *
 
-del spaces, wrappers
+del spaces, wrappers, vector
 import torch.distributions as D
 
-from . import spaces, wrappers
+from . import agents, spaces, vector, wrappers
 
 
 class RandomEnv(Env):

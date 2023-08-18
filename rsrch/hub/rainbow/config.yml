@@ -1,0 +1,45 @@
+prefill: 80e3
+expl_eps: 0.0
+optimizer:
+  name: adam
+  lr: 6.25e-5
+  eps: 1.5e-4
+noisy_nets:
+  enabled: true
+  sigma0: 0.5
+prioritized:
+  enabled: true
+  type: proportional
+  omega: 0.5
+  beta:
+    initial: 0.5
+    final: 1.0
+multi_step:
+  n: 3
+dist:
+  enabled: true
+  num_atoms: 51
+  v_min: -10.0
+  v_max: 10.0
+env:
+  name: ALE/Pong-v5
+  screen_size: 84
+  frame_stack: 4
+  frame_skip: 4
+  reward_clip: [-1.0, 1.0]
+  term_on_loss_of_life: true
+  max_frames_per_episode: 108e3
+qnetwork:
+  shared:
+    type: conv
+    channels: [32, 64, 64]
+    kernels: [8, 4, 3]
+    strides: [4, 2, 1]
+  heads:
+    type: fc
+    hidden: [512]
+gamma: 0.99
+memory: 1e6
+replay_period: 4
+batch_size: 32
+num_frames: 200e6

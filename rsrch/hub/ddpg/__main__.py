@@ -5,7 +5,7 @@ from typing import Optional
 import numpy as np
 
 from rsrch.rl import gym
-from rsrch.rl.spec import EnvSpec
+from rsrch.rl.gym.spec import EnvSpec
 
 from . import *
 

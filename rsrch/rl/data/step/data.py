@@ -14,10 +14,15 @@ ActType = TypeVar("ActType")
 @dataclass
 class Step(Generic[ObsType, ActType]):
     obs: ObsType
+    """Observation taken before the step."""
     act: ActType
+    """Action done to make the step."""
     next_obs: ObsType
+    """Observation taken after the step."""
     reward: SupportsFloat
+    """Reward for the transition."""
     term: SupportsFloat
+    """Whether next_obs is terminal."""
 
 
 @dataclass
