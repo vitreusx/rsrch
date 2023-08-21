@@ -1,13 +1,18 @@
 from collections import deque
-from typing import Optional
+from collections.abc import Mapping
+from typing import Iterable, Optional
+
+import numpy as np
+
+from rsrch.utils.vectorize import vectorize
 
 from .data import Seq, Step
-from .sampler import *
+from .sampler import Sampler
 
 __all__ = ["StepBuffer", "ChunkBuffer"]
 
 
-class StepBuffer:
+class StepBuffer(Mapping[int, Step]):
     def __init__(self, step_cap: int, sampler: Sampler = None):
         self.step_cap = step_cap
         self.sampler = sampler
@@ -30,14 +35,20 @@ class StepBuffer:
         return step_id
 
     def __iter__(self):
-        return range(self._step_ptr - len(self.steps), self._step_ptr)
+        return iter(range(self._step_ptr - len(self.steps), self._step_ptr))
+
+    def __len__(self):
+        return len(self.steps)
 
     def __getitem__(self, id):
+        if isinstance(id, Iterable):
+            return [self[i] for i in id]
+
         idx = len(self.steps) - (self._step_ptr - id)
         return self.steps[idx]
 
 
-class ChunkBuffer:
+class ChunkBuffer(Mapping[int, Seq]):
     def __init__(
         self,
         chunk_size: int,
@@ -103,25 +114,35 @@ class ChunkBuffer:
     def push(self, ep_id: Optional[int], step: Step):
         if ep_id is None:
             ep_id = self.on_reset(step.obs)
-        chunk_id = self.on_step(ep_id, *step[1:])
+
+        chunk_id = self.on_step(
+            ep_id, step.act, step.next_obs, step.reward, step.term, step.trunc
+        )
+
         if step.done:
             ep_id = None
         return ep_id, chunk_id
 
     def __iter__(self):
-        return range(self._chunk_ptr - len(self.chunks), self._chunk_ptr)
+        return iter(range(self._chunk_ptr - len(self.chunks), self._chunk_ptr))
+
+    def __len__(self):
+        return len(self.chunks)
 
     def __getitem__(self, id):
+        if isinstance(id, Iterable):
+            return [self[i] for i in id]
+
         idx = len(self.chunks) - (self._chunk_ptr - id)
         ep_id, off = self.chunks[idx]
 
         ep_idx = len(self.episodes) - (self._ep_ptr - ep_id)
-        ep, _ = self.episodes[ep_idx]
+        ep = self.episodes[ep_idx]
 
         size = self.chunk_size
         return Seq(
-            ep.obs[off : off + size + 1],
-            ep.act[off : off + size],
-            ep.reward[off : off + size],
+            obs=ep.obs[off : off + size + 1],
+            act=ep.act[off : off + size],
+            reward=ep.reward[off : off + size],
             term=ep.term and off + size == len(ep.act),
         )

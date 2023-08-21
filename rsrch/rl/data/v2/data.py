@@ -3,18 +3,26 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Generic, List, Optional, Sequence, SupportsFloat, TypeVar
 
+import numpy as np
 import torch
 from torch import Tensor
-
-from . import conv
 
 ObsType = TypeVar("ObsType")
 ActType = TypeVar("ActType")
 
 
-__all__ = ["Step", "StepBatch", "Seq", "TensorSeq", "ChunkBatch"]
+__all__ = [
+    "Step",
+    "StepBatch",
+    "TensorStepBatch",
+    "Seq",
+    "TensorSeq",
+    "ChunkBatch",
+    "to_tensor_seq",
+]
 
 
+@dataclass
 class Step(Generic[ObsType, ActType]):
     obs: ObsType
     """Observation taken before the step."""
@@ -29,31 +37,6 @@ class Step(Generic[ObsType, ActType]):
     trunc: Optional[bool] = None
     """Whether the episode has been truncated."""
 
-    def __init__(
-        self,
-        obs: ObsType,
-        act: ActType,
-        next_obs: ObsType,
-        reward: SupportsFloat,
-        term: bool,
-        trunc=None,
-    ):
-        self.obs = obs
-        self.act = act
-        self.next_obs = next_obs
-        self.reward = reward
-        self.term = term
-        self.trunc = trunc
-
-    def astuple(self):
-        return self.obs, self.act, self.next_obs, self.reward, self.term, self.trunc
-
-    def __iter__(self):
-        return iter(self.astuple())
-
-    def __getitem__(self, idx):
-        return self.astuple()[idx]
-
     @property
     def done(self):
         """Whether the env needs to be reset after this step."""
@@ -61,48 +44,73 @@ class Step(Generic[ObsType, ActType]):
 
 
 @dataclass
-class StepBatch:
+class StepBatch(Generic[ObsType, ActType]):
+    obs: Sequence[ObsType]
+    act: Sequence[ActType]
+    next_obs: Sequence[ObsType]
+    reward: Sequence[SupportsFloat]
+    term: Sequence[bool]
+    trunc: Optional[Sequence[bool]] = None
+
+    def __len__(self):
+        return len(self.obs)
+
+    def __iter__(self):
+        for idx in range(len(self)):
+            yield self[idx]
+
+    def __getitem__(self, idx):
+        data = [
+            self.obs[idx],
+            self.act[idx],
+            self.next_obs[idx],
+            self.reward[idx],
+            self.term[idx],
+        ]
+        if self.trunc is not None:
+            data.append(self.trunc[idx])
+        return Step(*data)
+
+
+def _stack(xs, dim=0, device=None):
+    if isinstance(xs[0], Tensor):
+        return torch.stack(xs, dim=dim).to(device=device)
+    else:
+        return torch.as_tensor(np.stack(xs, axis=dim), device=device)
+
+
+@dataclass
+class TensorStepBatch:
     obs: Tensor
     act: Tensor
     next_obs: Tensor
     reward: Tensor
     term: Tensor
-    prev_act: Optional[Tensor] = None
 
-    def to(self, dtype=None, device=None) -> StepBatch:
-        _conv = lambda x, xtype: conv.as_tensor(x, xtype, dtype, device)
-        prev_act = None
-        if self.prev_act is not None:
-            prev_act = _conv(self.prev_act, "act")
-        return StepBatch(
-            obs=_conv(self.obs, "obs"),
-            act=_conv(self.act, "act"),
-            next_obs=_conv(self.next_obs, "obs"),
-            reward=_conv(self.reward, "reward"),
-            term=_conv(self.term, "term"),
-            prev_act=prev_act,
+    def to(self, device) -> TensorStepBatch:
+        return TensorStepBatch(
+            obs=self.obs.to(device=device),
+            act=self.act.to(device=device),
+            next_obs=self.next_obs.to(device=device),
+            reward=self.reward.to(device=device),
+            term=self.term.to(device=device),
         )
 
     @staticmethod
-    def collate_fn(batch: List[Step]) -> StepBatch:
+    def collate_fn(batch: List[Step]) -> TensorStepBatch:
         if not isinstance(batch, list):
             batch = [*batch]
 
-        obs = conv.stack([x.obs for x in batch], "obs")
-        device, dtype = obs.device, obs.dtype
+        obs = _stack([x.obs for x in batch])
+        act = _stack([x.act for x in batch], obs.device)
+        next_obs = _stack([x.next_obs for x in batch], obs.device)
+        reward = _stack([x.reward for x in batch], obs.device)
+        term = _stack([x.term for x in batch], obs.device)
 
-        _conv = lambda xs, xtype: conv.stack(xs, xtype, 0, dtype, device)
-        act = _conv([x.act for x in batch], "act")
-        next_obs = _conv([x.next_obs for x in batch], "obs")
-        reward = _conv([x.reward for x in batch], "reward")
-        term = _conv([x.term for x in batch], "term")
-        prev_act = None
-        if all(x.prev_act is not None for x in batch):
-            prev_act = _conv([x.prev_act for x in batch], "act")
-
-        return StepBatch(obs, act, next_obs, reward, term, prev_act)
+        return TensorStepBatch(obs, act, next_obs, reward, term)
 
 
+@dataclass
 class Seq:
     obs: Sequence[ObsType]
     """Sequence [o_1, ..., o_T] of observations."""
@@ -113,17 +121,8 @@ class Seq:
     term: bool
     """Whether the final state s_T is terminal."""
 
-    def __init__(
-        self,
-        obs: Sequence[ObsType],
-        act: Sequence[ActType],
-        reward: Sequence[SupportsFloat],
-        term: bool,
-    ):
-        self.obs = obs
-        self.act = act
-        self.reward = reward
-        self.term = term
+    def __len__(self):
+        return len(self.act)
 
     def __getitem__(self, idx):
         """Take a slice of the sequence. The indices refer to time steps, i.e. obs array."""
@@ -144,22 +143,20 @@ class TensorSeq(Seq):
     reward: Tensor
     term: bool
 
-    def to(self, dtype=None, device=None):
-        _conv = lambda x, xtype: conv.to(x, xtype, dtype, device)
+    def to(self, device):
         return TensorSeq(
-            obs=_conv(self.obs, "obs"),
-            act=_conv(self.act, "act"),
-            reward=_conv(self.reward, "reward"),
+            obs=self.obs.to(device=device),
+            act=self.act.to(device=device),
+            reward=self.reward.to(device=device),
             term=self.term,
         )
 
 
-def to_tensor_seq(seq: Seq, dtype=None, device=None):
-    _conv = lambda x, xtype: conv.as_tensor(x, xtype, dtype, device)
+def to_tensor_seq(seq: Seq, device=None):
     return TensorSeq(
-        obs=_conv(seq.obs, "obs"),
-        act=_conv(seq.act, "act"),
-        reward=_conv(seq.reward, "reward"),
+        obs=_stack(seq.obs, device=device),
+        act=_stack(seq.act, device=device),
+        reward=_stack(seq.reward, device=device),
         term=seq.term,
     )
 
@@ -207,24 +204,21 @@ class ChunkBatch:
                 reward = self.reward[step]
             else:
                 term = self.term
-            prev_act = None
-            if step > 0:
-                prev_act = self.act[step - 1]
-            yield StepBatch(obs, act, next_obs, reward, term, prev_act)
+            yield TensorStepBatch(obs, act, next_obs, reward, term)
 
-    def to(self, device=None, dtype=None):
+    def to(self, device=None):
         return ChunkBatch(
-            obs=conv.to(self.obs, "obs", dtype, device),
-            act=conv.to(self.act, "act", dtype, device),
-            reward=conv.to(self.reward, "reward", dtype, device),
-            term=conv.to(self.term, "term", dtype, device),
+            obs=self.obs.to(device=device),
+            act=self.act.to(device=device),
+            reward=self.reward.to(device=device),
+            term=self.term.to(device=device),
         )
 
     @staticmethod
     def collate_fn(batch: List[TensorSeq]):
         return ChunkBatch(
-            obs=conv.stack([x.obs for x in batch], "obs", 1),
-            act=conv.stack([x.act for x in batch], "act", 1),
-            reward=conv.stack([x.reward for x in batch], "reward", 1),
-            term=conv.as_tensor([x.term for x in batch], "term"),
+            obs=_stack([x.obs for x in batch], dim=1),
+            act=_stack([x.act for x in batch], dim=1),
+            reward=_stack([x.reward for x in batch], dim=1),
+            term=torch.as_tensor([x.term for x in batch]),
         )

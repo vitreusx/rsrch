@@ -1,7 +1,7 @@
 import PIL.Image
 import torchvision.transforms.functional as F
-import wandb
 
+import wandb
 from rsrch.exp.board.api import VideoLike
 
 from . import api
@@ -24,11 +24,10 @@ class Wandb(api.Board):
         step = self._get_step(step)
 
         if tag not in self._scalars:
-            data = {"step": f"{tag}__step"}
+            data = {"step": f"step/{tag}"}
             self._scalars[tag] = data
             self.run.define_metric(data["step"])
             self.run.define_metric(tag, step_metric=data["step"])
-            self._scalars.add(tag)
         data = self._scalars[tag]
 
         self.run.log({tag: value, data["step"]: step})
@@ -51,7 +50,7 @@ class Wandb(api.Board):
     def add_image(self, tag, image, *, step=None):
         step = self._get_step(step)
         if tag not in self._images:
-            data = {"step": f"{tag}__step"}
+            data = {"step": f"step/{tag}"}
             self._images[tag] = data
             self.run.define_metric(data["step"])
             self.run.define_metric(tag, step_metric=data["step"])

@@ -8,7 +8,7 @@ readme = "README.md"
 [[tool.poetry.source]]
 name = "torch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
-priority = "supplemental"
+priority = "explicit"
 
 [[tool.poetry.source]]
 name = "PyPI"
@@ -32,16 +32,18 @@ mujoco = "<=2.3.3"
 ptflops = "^0.7"
 h5py = "^3.8.0"
 sympy = "^1.12"
-torch = "^2.0"
-torchvision = "^0.15"
+torch = { version = "^2.0", source = "torch-cpu" }
+torchvision = { version = "^0.15", source = "torch-cpu" }
 tensordict = "^0.1.2"
 gymnasium = { version = "^0.28.1", extras = ["accept-rom-license", "all"] }
 poethepoet = "^0.21.0"
 wandb = "^0.15.5"
 plotly = "^5.15.0"
 addict = "^2.4.0"
-ray = "^2.6.2"
 dacite = "^1.8.1"
+ray = { version = "^2.3.1", extras = ["default"] }
+pydantic = "<2"
+grpcio = "<=1.49.1"
 
 [tool.poetry.group.ext]
 optional = true
@@ -64,6 +66,7 @@ optional = true
 
 [tool.poetry.group.conda.dependencies]
 requests = "2.29.0"
+
 
 [tool.poe.tasks.on-gpu]
 shell = """

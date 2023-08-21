@@ -1,27 +1,36 @@
 env:
-  name: ALE/Alien-v5
-  screen_size: 84
-  frame_stack: 4
-  frame_skip: 4
+  name: ALE/Pong-v5
+  for_atari:
+    screen_size: 84
+    frame_stack: 4
+    frame_skip: 4
+    term_on_loss_of_life: true
+    grayscale: true
+    noop_max: 30
   reward_clip: [-1.0, 1.0]
-  term_on_loss_of_life: true
-  max_frames_per_episode: 108e3
+  time_limit: 108e3
 sched:
   num_frames: 10e6
-  val_every: 100e3
   opt_batch: 256
   env_batch: 64
   replay_ratio: 8
+  sync_q_every: 32e3
+infra:
+  device: gpu
+  env_workers: 8
+  gpu_batch: ${sched.opt_batch}
 buffer:
   prefill: 80e3
   capacity: 1e6
 encoder:
   type: impala
   variant: large/2
+  spectral_norm: all
 optimizer:
   name: adam
   lr: 2.5e-4
   eps: $(5e-3 / sched.opt_batch)
+  grad_clip: 10.0
 noisy_nets:
   enabled: true
   sigma0: 0.5
@@ -39,3 +48,12 @@ pr:
   alpha: 0.8
   beta: linear(0.45, 1.0, ${sched.num_frames})
 gamma: 0.99
+expl_eps: 0.0
+decorr:
+  enabled: true
+  num_steps: auto
+exp:
+  val_every: 100e3
+  val_episodes: 16
+  val_envs: ${val_episodes}
+  log_every: 1e3

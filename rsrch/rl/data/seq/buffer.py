@@ -2,7 +2,6 @@ from collections import deque
 
 import numpy as np
 
-from rsrch.rl.gym.wrappers import EnvHook
 from rsrch.utils import data
 
 from ..step import Step

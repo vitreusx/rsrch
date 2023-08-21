@@ -2,14 +2,14 @@ import typing
 
 import torch
 
-from rsrch.rl.gym.spec import EnvSpec
+from rsrch.rl import gym
 from rsrch.utils import data
 
 from .data import Step, StepBatch
 
 
 class StepBuffer(data.Dataset[Step]):
-    def __init__(self, spec: EnvSpec, capacity: int):
+    def __init__(self, spec: gym.Env | gym.EnvSpec, capacity: int):
         self._capacity = capacity
 
         self.obs = self._buffer_for(space=spec.observation_space)

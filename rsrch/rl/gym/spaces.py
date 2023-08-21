@@ -127,24 +127,6 @@ class TensorBox(TensorSpace):
         self._low_repr = self._short_repr(self.low)
         self._high_repr = self._short_repr(self.high)
 
-    def to(self, dtype=None, device=None):
-        low = self.low.to(dtype=dtype, device=device)
-        high = self.high.to(dtype=dtype, device=device)
-        return TensorBox(
-            low=low,
-            high=high,
-            shape=self.shape,
-            seed=self.gen.seed(),
-        )
-
-    @staticmethod
-    def from_numpy(box: Box, device: torch.device = None, dtype: torch.dtype = None):
-        low = torch.from_numpy(box.low).to(device=device, dtype=dtype)
-        high = torch.from_numpy(box.high).to(device=device, dtype=dtype)
-        shape = torch.Size([*box.shape])
-        dtype = low.dtype
-        return TensorBox(low, high, shape, device, dtype)
-
     @staticmethod
     def _short_repr(x: Tensor) -> str:
         if x.size != 0 and torch.min(x).item() == torch.max(x).item():
@@ -214,18 +196,6 @@ class TensorDiscrete(TensorSpace):
     ):
         super().__init__(shape=[], dtype=torch.int32, device=device, seed=seed)
         self.n, self.start = n, start
-
-    @staticmethod
-    def from_numpy(space: Discrete, device: torch.device = None):
-        return TensorDiscrete(space.n, device=device)
-
-    def to(self, dtype=None, device=None):
-        return TensorDiscrete(
-            n=self.n,
-            device=device,
-            seed=self.gen.seed(),
-            start=self.start,
-        )
 
     def sample(self, mask: Tensor | None = None) -> Tensor:
         if mask is not None:

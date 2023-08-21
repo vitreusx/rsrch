@@ -1,0 +1,9 @@
+debug:
+  sched.env_batch: 4
+  sched.num_frames: 100e3
+  buffer.prefill: 10e3
+  sched.val_episodes: 1
+expl_via_eps:
+  expl_eps: linear(1.0, 0.01, $(sched.num_frames / 10))
+  noisy_nets:
+    enabled: false

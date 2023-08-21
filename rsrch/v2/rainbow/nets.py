@@ -9,6 +9,8 @@ import rsrch.distributions as D
 from . import config
 from .distq import ValueDist
 
+__all__ = ["NatureEncoder", "ImpalaSmall", "ImpalaLarge", "NoisyLinear", "QHead"]
+
 
 class NatureEncoder(nn.Sequential):
     def __init__(self, obs_shape: torch.Size):
@@ -149,30 +151,37 @@ class NoisyLinear(nn.Module):
             self.register_buffer("bias_eps", torch.empty_like(self.bias))
 
         self.reset_weights()
-        self.reset_noise()
+        self.reset_noise_()
 
     def reset_weights(self):
         s = 1 / math.sqrt(self.in_features)
         nn.init.uniform_(self.weight, -s, s)
-        nn.init.constant_(self.weight_eps, self._sigma0 * s)
+        nn.init.constant_(self.noisy_weight, self._sigma0 * s)
         if self._bias:
             nn.init.uniform_(self.bias, -s, s)
-            nn.init.constant_(self.bias_eps, self._sigma0 * s)
+            nn.init.constant_(self.noisy_bias, self._sigma0 * s)
 
-    def reset_noise(self):
+    @torch.no_grad()
+    def reset_noise_(self):
         device, dtype = self.weight.device, self.weight.dtype
 
         eps_in = torch.randn(self.in_features, device=device, dtype=dtype)
-        sign_in = self.eps_in.sign()
+        sign_in = eps_in.sign()
         eps_in.abs_().sqrt_().mul_(sign_in)
 
         eps_out = torch.randn(self.out_features, device=device, dtype=dtype)
-        sign_out = self.weight_eps_v.sign()
+        sign_out = eps_out.sign()
         eps_out.abs_().sqrt_().mul_(sign_out)
 
         self.weight_eps.copy_(eps_out.outer(eps_in))
         if self._bias:
             self.bias_eps.copy_(eps_out)
+
+    @torch.no_grad()
+    def zero_noise_(self):
+        self.weight_eps.zero_()
+        if self._bias:
+            self.bias_eps.zero_()
 
     def forward(self, x):
         w = self.weight + self.noisy_weight * self.weight_eps

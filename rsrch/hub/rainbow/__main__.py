@@ -493,7 +493,7 @@ def main():
 
     q = make_q().to(device)
     target_q = make_q().to(device)
-    polyak.copy(q, target_q)
+    polyak.sync(q, target_q)
 
     # q_opt = torch.optim.Adam(q.parameters(), lr=6.25e-5, eps=1.25e-4)
     opt_params = [*q.parameters(), *enc.parameters()]

@@ -1,7 +1,4 @@
-import itertools
-
 from rsrch.rl import gym
-from rsrch.rl.api import Agent
 from rsrch.utils import data
 
 from .seq import ListSeq
@@ -9,7 +6,7 @@ from .step import Step
 
 
 class AutoEnv(gym.Wrapper):
-    def __init__(self, env: gym.Env, agent: Agent):
+    def __init__(self, env: gym.Env, agent: gym.Agent):
         super().__init__(env)
         self.agent = agent
 
@@ -27,7 +24,7 @@ class AutoEnv(gym.Wrapper):
         return next_obs, reward, term, trunc, info
 
 
-def one_step(env: gym.Env, obs, agent: Agent):
+def one_step(env: gym.Env, obs, agent: gym.Agent):
     agent.observe(obs)
     act = agent.policy()
     next_obs, reward, term, trunc, _ = env.step(act)
@@ -37,7 +34,7 @@ def one_step(env: gym.Env, obs, agent: Agent):
     return step, done
 
 
-def steps_ex(env: gym.Env, agent: Agent, max_episodes=None, max_steps=None):
+def steps_ex(env: gym.Env, agent: gym.Agent, max_episodes=None, max_steps=None):
     ep_idx, step_idx = None, 0
     obs = None
 
@@ -67,12 +64,12 @@ def steps_ex(env: gym.Env, agent: Agent, max_episodes=None, max_steps=None):
                 return
 
 
-def steps(env: gym.Env, agent: Agent, max_episodes=None, max_steps=None):
+def steps(env: gym.Env, agent: gym.Agent, max_episodes=None, max_steps=None):
     for step, _ in steps_ex(env, agent, max_episodes, max_steps):
         yield step
 
 
-def episodes(env: gym.Env, agent: Agent, max_episodes=None, max_steps=None):
+def episodes(env: gym.Env, agent: gym.Agent, max_episodes=None, max_steps=None):
     ep_idx, step_idx = None, 0
     ep = None
 
@@ -110,5 +107,5 @@ def episodes(env: gym.Env, agent: Agent, max_episodes=None, max_steps=None):
                 return
 
 
-def one_episode(env: gym.Env, agent: Agent) -> ListSeq:
+def one_episode(env: gym.Env, agent: gym.Agent) -> ListSeq:
     return next(episodes(env, agent, max_episodes=1))

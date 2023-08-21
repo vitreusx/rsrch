@@ -5,23 +5,36 @@ from rsrch.utils.sched import schedule
 
 
 @dataclass
-class Env:
-    name: str
+class ForAtari:
     screen_size: int
     frame_stack: int
     frame_skip: int
-    reward_clip: tuple[float, float]
     term_on_loss_of_life: bool
-    max_frames_per_episode: int
+    grayscale: bool
+    noop_max: int
+
+
+@dataclass
+class Env:
+    name: str
+    for_atari: Optional[ForAtari]
+    reward_clip: Optional[tuple[float, float]]
+    time_limit: Optional[int]
 
 
 @dataclass
 class Sched:
     num_frames: int
-    val_every: int
     opt_batch: int
     env_batch: int
     replay_ratio: float
+    sync_q_every: int
+
+
+@dataclass
+class Infra:
+    device: str
+    env_workers: int | str
 
 
 @dataclass
@@ -34,6 +47,7 @@ class Buffer:
 class Encoder:
     type: str
     variant: Optional[str]
+    spectral_norm: str
 
 
 @dataclass
@@ -41,6 +55,7 @@ class Optimizer:
     name: str
     lr: float
     eps: float
+    grad_clip: Optional[float]
 
 
 @dataclass
@@ -72,9 +87,24 @@ class Pr:
 
 
 @dataclass
+class Decorr:
+    enabled: bool
+    num_steps: int | str
+
+
+@dataclass
+class Exp:
+    val_every: int
+    val_episodes: int
+    log_every: int
+    val_envs: int
+
+
+@dataclass
 class Config:
     env: Env
     sched: Sched
+    infra: Infra
     buffer: Buffer
     encoder: Encoder
     optimizer: Optimizer
@@ -83,3 +113,6 @@ class Config:
     dist: Dist
     pr: Pr
     gamma: float
+    expl_eps: float | schedule
+    decorr: Decorr
+    exp: Exp
