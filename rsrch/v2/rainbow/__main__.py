@@ -1,5 +1,6 @@
 import math
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -11,16 +12,20 @@ from tqdm.auto import tqdm
 
 from rsrch.exp.board.wandb import Wandb
 from rsrch.exp.dir import ExpDir
+from rsrch.exp.prof.null import NullProfiler
+from rsrch.exp.prof.torch import TorchProfiler
 from rsrch.exp.vcs import WandbVCS
 from rsrch.nn.rewrite import rewrite_module_
 from rsrch.rl import gym
 from rsrch.rl.data.v2 import *
+from rsrch.rl.data.v2.store import TensorStore
 from rsrch.rl.utils import polyak
 from rsrch.utils import config, cron, sched
 
 from .config import Config
 from .distq import ValueDist
 from .nets import *
+from .opt_env import OptVectorEnv
 from .ray_env import RayVectorEnv
 
 
@@ -57,17 +62,14 @@ class QVecAgent(gym.VecAgent):
     @torch.inference_mode()
     def observe(self, obs, mask):
         if all(mask):
-            z = self.enc(self._convert_obs(obs))
-            self._obs = z
+            self._obs = self._convert_obs(obs)
         else:
             obs = [x for m, x in zip(mask, obs) if m]
-            z = self.enc(self._convert_obs(obs))
-            self._obs[mask] = z
+            self._obs[mask] = self._convert_obs(obs)
 
     @torch.inference_mode()
     def policy(self):
-        with torch.inference_mode():
-            q_values = self.q(self._obs)
+        q_values = self.q(self.enc(self._obs))
 
         if isinstance(q_values, Tensor):
             return q_values.argmax(-1).cpu().numpy()
@@ -85,16 +87,41 @@ def main():
         config.update_(data, config.read_yml(spec, cwd))
     cfg = config.parse(data, Config)
 
-    ray.init(address="auto")
+    # ray.init(address="auto")
 
-    exp_dir = ExpDir()
+    device = {"gpu": "cuda", "cpu": "cpu"}[cfg.infra.device]
+    device = torch.device(device)
+
+    exp_dir = ExpDir("runs/rainbow")
     board = Wandb(project="rainbow", step_fn=lambda: env_step)
     should_log = cron.Every(lambda: env_step, cfg.exp.log_every)
+
+    if cfg.profile.enabled:
+        prof = TorchProfiler(
+            schedule=TorchProfiler.schedule(
+                wait=cfg.profile.wait,
+                warmup=cfg.profile.warmup,
+                active=cfg.profile.active,
+                repeat=cfg.profile.repeat,
+            ),
+            on_trace=TorchProfiler.on_trace_fn(
+                exp_dir=exp_dir.path,
+                export_trace=cfg.profile.export_trace,
+                export_stack=cfg.profile.export_stack,
+            ),
+            use_cuda=device.type == "cuda",
+        )
+    else:
+        prof = NullProfiler()
 
     vcs = WandbVCS()
     vcs.save()
 
     env_type, env_name = parse_env_name(cfg.env.name)
+
+    frame_stack = 1
+    if env_type == "atari":
+        frame_stack = cfg.env.for_atari.frame_stack
 
     def make_env():
         if env_type == "atari":
@@ -110,12 +137,15 @@ def main():
                 scale_obs=False,
                 noop_max=atari_cfg.noop_max,
             )
-            if atari_cfg.frame_stack > 1:
-                env = gym.wrappers.FrameStack(
-                    env, atari_cfg.frame_stack, lz4_compress=True
-                )
         else:
             raise ValueError(env_type)
+
+        if frame_stack > 1:
+            env = gym.wrappers.FrameStack(
+                env=env,
+                num_stack=frame_stack,
+                lz4_compress=False,
+            )
 
         if cfg.env.time_limit is not None:
             env = gym.wrappers.TimeLimit(env, cfg.env.time_limit)
@@ -143,7 +173,15 @@ def main():
         )
     else:
         sampler = UniformSampler()
-    buffer = ChunkBuffer(cfg.multi_step.n, cfg.buffer.capacity, sampler)
+
+    buffer = ChunkBuffer(
+        chunk_size=cfg.multi_step.n,
+        step_cap=cfg.buffer.capacity,
+        frame_stack=frame_stack,
+        sampler=sampler,
+        store=TensorStore(capacity=cfg.buffer.capacity, pin_memory=True),
+        # store=MemoryMappedStore(),
+    )
 
     env_step = 0
 
@@ -151,12 +189,12 @@ def main():
     if env_workers == "auto":
         env_workers = os.cpu_count()
 
-    train_env = RayVectorEnv(
+    train_env = OptVectorEnv(
         env_fns=[make_train_env] * cfg.sched.env_batch,
         num_workers=env_workers,
     )
 
-    val_env = RayVectorEnv(
+    val_env = OptVectorEnv(
         env_fns=[make_env] * cfg.exp.val_envs,
         num_workers=env_workers,
     )
@@ -169,14 +207,16 @@ def main():
     prefill_agent = gym.vector.RandomVecAgent(train_env)
     prefill_iter = steps(train_env, prefill_agent, max_steps=cfg.buffer.prefill)
 
+    prefill_pbar = tqdm(
+        prefill_iter,
+        desc="Prefill",
+        total=cfg.buffer.prefill // train_env.num_envs,
+    )
     ep_ids = [None for _ in range(train_env.num_envs)]
-    for batch in prefill_iter:
+    for batch in prefill_pbar:
         for env_idx in range(train_env.num_envs):
             ep_ids[env_idx], _ = buffer.push(ep_ids[env_idx], batch[env_idx])
             env_step += 1
-
-    device = {"gpu": "cuda", "cpu": "cpu"}[cfg.infra.device]
-    device = torch.device(device)
 
     obs_shape = env_spec.observation_space.shape
     if cfg.encoder.type == "nature":
@@ -245,7 +285,7 @@ def main():
     if cfg.decorr.enabled:
         decorr_steps = cfg.decorr.num_steps
         if decorr_steps == "auto":
-            decorr_steps = np.mean([len(x) for x in buffer.episodes])
+            decorr_steps = np.mean([len(x) for x in buffer.episodes.values()])
             decorr_steps *= train_env.num_envs
 
         decorr_env = gym.vector.SaveState(train_env)
@@ -269,11 +309,12 @@ def main():
     env_steps_ = int(cfg.sched.env_batch * cfg.sched.replay_ratio)
     opt_steps_ = cfg.sched.opt_batch
     lcm = math.lcm(env_steps_, opt_steps_)
-    env_iters = lcm // cfg.sched.env_batch
-    opt_iters = lcm // cfg.sched.opt_batch
+    env_iters, opt_iters = lcm // env_steps_, lcm // opt_steps_
 
     pbar = tqdm(total=cfg.sched.num_frames)
     should_end = lambda: env_step >= cfg.sched.num_frames
+
+    pool = ThreadPoolExecutor(max_workers=1)
 
     while not should_end():
         if should_val:
@@ -297,57 +338,65 @@ def main():
             q_polyak.step(train_env.num_envs)
 
         for _ in range(opt_iters):
-            batch = sampler.sample(cfg.sched.opt_batch)
-            if isinstance(sampler, PrioritizedSampler):
-                idxes, weights = batch
-                weights = torch.as_tensor(weights, device=device)
-                batch = buffer[idxes]
-            else:
-                idxes = batch
-                batch = buffer[idxes]
+            with prof.profile("train_step"):
+                batch = sampler.sample(cfg.sched.opt_batch)
+                if isinstance(sampler, PrioritizedSampler):
+                    idxes, weights = batch
+                    weights = torch.as_tensor(weights, device=device)
+                    batch = buffer[idxes]
+                else:
+                    idxes = batch
+                    batch = buffer[idxes]
 
-            batch = [to_tensor_seq(s) for s in batch]
-            batch = ChunkBatch.collate_fn(batch)
-            batch = batch.to(device=device)
-            batch.obs = batch.obs / 255.0
-            batch.reward = batch.reward.to(batch.obs.dtype)
+                batch = [to_tensor_seq(s) for s in batch]
+                batch = ChunkBatch.collate_fn(batch)
+                batch = batch.to(device=device)
+                batch.obs = batch.obs / 255.0
+                batch.reward = batch.reward.to(batch.obs.dtype)
 
-            with torch.no_grad():
-                z = enc(batch.obs[-1])
+                with torch.no_grad():
+                    z = enc(batch.obs[-1])
+                    q.apply(reset_noise_)
+                    act = q(z).argmax(-1)
+                    target = target_q(z).gather(-1, act[..., None]).squeeze(-1)
+                    target = (1.0 - batch.term.to(dtype=target.dtype)) * target
+                    R = sum(
+                        batch.reward[i] * cfg.gamma**i
+                        for i in range(len(batch.reward))
+                    )
+                    target = R + cfg.gamma ** len(batch.reward) * target
+
                 q.apply(reset_noise_)
-                act = q(z).argmax(-1)
-                target = target_q(z).gather(-1, act[..., None]).squeeze(-1)
-                target = (1.0 - batch.term.to(dtype=target.dtype)) * target
-                R = sum(
-                    batch.reward[i] * cfg.gamma**i for i in range(len(batch.reward))
+                pred = (
+                    q(enc(batch.obs[0])).gather(-1, batch.act[0][..., None]).squeeze(-1)
                 )
-                target = R + cfg.gamma ** len(batch.reward) * target
+                if isinstance(target, ValueDist):
+                    q_loss = ValueDist.proj_kl_div(pred, target)
+                elif isinstance(target, Tensor):
+                    q_loss = F.mse_loss(pred, target, reduction="none")
+                else:
+                    raise NotImplementedError(type(target))
 
-            q.apply(reset_noise_)
-            pred = q(enc(batch.obs[0])).gather(-1, batch.act[0][..., None]).squeeze(-1)
-            if isinstance(target, ValueDist):
-                q_loss = ValueDist.proj_kl_div(pred, target)
-            elif isinstance(target, Tensor):
-                q_loss = F.mse_loss(pred, target, reduction="none")
-            else:
-                raise NotImplementedError(type(target))
+                if isinstance(sampler, PrioritizedSampler):
+                    q_loss = weights * q_loss
 
-            if isinstance(sampler, PrioritizedSampler):
-                prio = q_loss.detach().cpu().numpy()
-                sampler.update(idxes, prio)
-                q_loss = (weights * q_loss).mean()
-            else:
-                q_loss = q_loss.mean()
+                def _update_prio():
+                    prio = q_loss.detach().cpu().numpy()
+                    sampler.update(idxes, prio)
 
-            opt.zero_grad(set_to_none=True)
-            q_loss.backward()
-            if cfg.optimizer.grad_clip is not None:
-                nn.utils.clip_grad_norm_(opt_params, cfg.optimizer.grad_clip)
-            opt.step()
+                update_fut = pool.submit(_update_prio)
 
-            if should_log:
-                board.add_scalar("train/q_loss", q_loss)
-                board.add_scalar("train/expl_eps", train_agent.eps)
+                opt.zero_grad(set_to_none=True)
+                q_loss.mean().backward()
+                if cfg.optimizer.grad_clip is not None:
+                    nn.utils.clip_grad_norm_(opt_params, cfg.optimizer.grad_clip)
+                opt.step()
+
+                update_fut.result()
+
+                if should_log:
+                    board.add_scalar("train/q_loss", q_loss.mean())
+                    board.add_scalar("train/expl_eps", train_agent.eps)
 
 
 if __name__ == "__main__":

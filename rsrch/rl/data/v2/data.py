@@ -73,7 +73,9 @@ class StepBatch(Generic[ObsType, ActType]):
 
 
 def _stack(xs, dim=0, device=None):
-    if isinstance(xs[0], Tensor):
+    if isinstance(xs, Tensor) and dim == 0:
+        return xs.to(device=device)
+    elif isinstance(xs[0], Tensor):
         return torch.stack(xs, dim=dim).to(device=device)
     else:
         return torch.as_tensor(np.stack(xs, axis=dim), device=device)
@@ -135,6 +137,22 @@ class Seq:
             reward=self.reward[beg : end - 1],
             term=self.term and end == len(self.obs) - 1,
         )
+
+
+class NumpySeq(Seq):
+    obs: np.ndarray
+    act: np.ndarray
+    reward: np.ndarray
+    term: bool
+
+
+def to_numpy_seq(seq: Seq):
+    return NumpySeq(
+        obs=np.asarray(seq.obs),
+        act=np.asarray(seq.act),
+        reward=np.asarray(seq.reward),
+        term=seq.term,
+    )
 
 
 class TensorSeq(Seq):

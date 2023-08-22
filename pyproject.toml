@@ -60,6 +60,8 @@ black = { version = "^23.3.0", extras = ["jupyter"] }
 nbconvert = "^7.3.1"
 pylint = "^2.17.4"
 isort = ">=5"
+sphinx = "^7.2.2"
+furo = "^2023.8.19"
 
 [tool.poetry.group.conda]
 optional = true
@@ -68,7 +70,7 @@ optional = true
 requests = "2.29.0"
 
 
-[tool.poe.tasks.on-gpu]
+[tool.poe.tasks.gpu-setup]
 shell = """
   export TORCH=$(\
     poetry export -f requirements.txt \
@@ -92,6 +94,7 @@ shell = """
   pip uninstall -y opencv-python
   pip install -U opencv-python-headless==${OPENCV}
 """
+
 
 [build-system]
 requires = ["poetry-core>=1.5"]

@@ -101,6 +101,17 @@ class Exp:
 
 
 @dataclass
+class Profile:
+    enabled: bool
+    wait: int
+    warmup: int
+    active: int
+    repeat: int
+    export_stack: bool
+    export_trace: bool
+
+
+@dataclass
 class Config:
     env: Env
     sched: Sched
@@ -116,3 +127,4 @@ class Config:
     expl_eps: float | schedule
     decorr: Decorr
     exp: Exp
+    profile: Profile

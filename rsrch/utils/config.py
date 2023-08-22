@@ -128,7 +128,7 @@ def parse(data: dict, cls: Type[T]) -> T:
 def update_(d1: dict, d2: dict):
     """Update d1 with keys and values from d2 in a recursive fashion."""
     for k, v in d2.items():
-        if k in d1:
+        if isinstance(v, dict) and k in d1:
             update_(d1[k], v)
         else:
             d1[k] = v

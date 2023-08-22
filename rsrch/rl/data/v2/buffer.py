@@ -8,6 +8,7 @@ from rsrch.utils.vectorize import vectorize
 
 from .data import Seq, Step
 from .sampler import Sampler
+from .store import RAMStore, Store
 
 __all__ = ["StepBuffer", "ChunkBuffer"]
 
@@ -53,45 +54,57 @@ class ChunkBuffer(Mapping[int, Seq]):
         self,
         chunk_size: int,
         step_cap: int,
+        frame_stack: int = None,
         sampler: Sampler = None,
+        store: Store = None,
     ):
         self.chunk_size = chunk_size
         self.step_cap = step_cap
         self.sampler = sampler
+        self.frame_stack = frame_stack
 
         self._step_count = 0
         self._ep_ptr = 0
-        self.episodes = deque()
+        self.episodes = {}
         self._chunk_ptr = 0
         self.chunks = deque()
+        self.store = store if store is not None else RAMStore()
+        self._store_map = {}
 
     def on_reset(self, obs):
         while self._step_count >= self.step_cap:
             self._popleft()
         ep_id = self._ep_ptr
         self._ep_ptr += 1
-        ep = Seq([obs], [], [], False)
-        self.episodes.append(ep)
+
+        if self.frame_stack is not None:
+            ep = Seq([*obs], [], [], False)
+        else:
+            ep = Seq([obs], [], [], False)
+
+        self.episodes[ep_id] = ep
         self._step_count += 1
         return ep_id
 
     def _popleft(self):
         ep_id, offset = self.chunks.popleft()
-        ep_idx = len(self.episodes) - (self._ep_ptr - ep_id)
-        is_final = offset + self.chunk_size >= len(self.episodes[ep_idx].act)
+        is_final = offset + self.chunk_size >= len(self.episodes[ep_id].act)
         if is_final:
-            self.episodes.popleft()
+            del self.episodes[ep_id]
+            if ep_id in self._store_map:
+                del self.store[self._store_map[ep_id]]
         if self.sampler is not None:
             self.sampler.popleft()
         self._step_count -= 1
 
     def on_step(self, ep_id: int, act, next_obs, reward, term, trunc):
-        ep_idx = len(self.episodes) - (self._ep_ptr - ep_id)
-        ep = self.episodes[ep_idx]
+        ep = self.episodes[ep_id]
 
         while self._step_count >= self.step_cap:
             self._popleft()
         ep.act.append(act)
+        if self.frame_stack is not None:
+            next_obs = next_obs[-1]
         ep.obs.append(next_obs)
         ep.reward.append(reward)
         ep.term = ep.term or term
@@ -107,7 +120,9 @@ class ChunkBuffer(Mapping[int, Seq]):
                 self.sampler.append()
 
         if term or trunc:
-            ...
+            store_id = self.store.add(ep)
+            self._store_map[ep_id] = store_id
+            self.episodes[ep_id] = self.store[store_id]
 
         return chunk_id
 
@@ -135,13 +150,18 @@ class ChunkBuffer(Mapping[int, Seq]):
 
         idx = len(self.chunks) - (self._chunk_ptr - id)
         ep_id, off = self.chunks[idx]
-
-        ep_idx = len(self.episodes) - (self._ep_ptr - ep_id)
-        ep = self.episodes[ep_idx]
+        ep = self.episodes[ep_id]
 
         size = self.chunk_size
+        if self.frame_stack is None:
+            obs = ep.obs[off : off + size + 1]
+        else:
+            obs = []
+            for k in range(size + 1):
+                obs.append(ep.obs[off + k : off + k + self.frame_stack])
+
         return Seq(
-            obs=ep.obs[off : off + size + 1],
+            obs=obs,
             act=ep.act[off : off + size],
             reward=ep.reward[off : off + size],
             term=ep.term and off + size == len(ep.act),

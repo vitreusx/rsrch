@@ -1,10 +1,7 @@
-import gc
-from copy import copy, deepcopy
 from functools import wraps
 from typing import Iterable
 
 import numpy as np
-import psutil
 import ray
 
 from rsrch.rl import gym
@@ -111,8 +108,7 @@ class RayVectorEnv(gym.VectorEnv):
     def reset_wait(self, *, seed=None, options=None):
         results = ray.get(self._reset_fut)
         obs, info = zip(*results)
-        # The deepcopy detaches obs from shared memory
-        obs = deepcopy(self._concat(obs))
+        obs = self._concat(obs)
         info = self._merge_infos(info)
         return obs, info
 
@@ -141,8 +137,7 @@ class RayVectorEnv(gym.VectorEnv):
         results = ray.get(self._step_fut)
         del self._step_fut
         next_obs, reward, term, trunc, info = zip(*results)
-        # The deepcopy detaches obs from shared memory
-        next_obs = deepcopy(self._concat(next_obs))
+        next_obs = self._concat(next_obs)
         reward = np.array(self._concat(reward))
         term = np.array(self._concat(term))
         trunc = np.array(self._concat(trunc))

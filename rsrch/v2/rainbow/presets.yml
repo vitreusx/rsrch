@@ -4,6 +4,9 @@ debug:
   buffer.prefill: 10e3
   sched.val_episodes: 1
 expl_via_eps:
+  buffer.capacity: 250e3
   expl_eps: linear(1.0, 0.01, $(sched.num_frames / 10))
   noisy_nets:
     enabled: false
+  # profile:
+  #   enabled: true
