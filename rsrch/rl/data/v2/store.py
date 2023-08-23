@@ -223,12 +223,12 @@ class ArrayStore(Store):
 
 
 class TensorStore(Store):
-    def __init__(self, capacity: int, safety_margin=0.2, device=None, pin_memory=True):
+    def __init__(self, capacity: int, safety_margin=0.1, device=None, pin_memory=True):
+        capacity = int((1.0 + safety_margin) * capacity)
         self._capacity = capacity
         self._device = device
         self._pin_memory = pin_memory
-        mem_size = int((1.0 + safety_margin) * capacity)
-        self._alloc = Allocator(mem_size=mem_size)
+        self._alloc = Allocator(mem_size=capacity)
         self.obs = None
         self.act = None
         self.reward = self._create([], torch.float32)

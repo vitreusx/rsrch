@@ -77,12 +77,8 @@ class ChunkBuffer(Mapping[int, Seq]):
         ep_id = self._ep_ptr
         self._ep_ptr += 1
 
-        if self.frame_stack is not None:
-            ep = Seq([*obs], [], [], False)
-        else:
-            ep = Seq([obs], [], [], False)
-
-        self.episodes[ep_id] = ep
+        obs = [obs] * (self.frame_stack or 1)
+        self.episodes[ep_id] = Seq(obs, [], [], False)
         self._step_count += 1
         return ep_id
 
@@ -103,8 +99,6 @@ class ChunkBuffer(Mapping[int, Seq]):
         while self._step_count >= self.step_cap:
             self._popleft()
         ep.act.append(act)
-        if self.frame_stack is not None:
-            next_obs = next_obs[-1]
         ep.obs.append(next_obs)
         ep.reward.append(reward)
         ep.term = ep.term or term

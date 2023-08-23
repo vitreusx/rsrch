@@ -130,7 +130,7 @@ class OptVectorEnv(gym.VectorEnv):
             comm, _ = self._workers[idx]
             infos.append(comm.recv())
 
-        obs = self.data["obs"]
+        obs = self.data["obs"].copy()
         info = self._merge_infos(infos)
         return obs, info
 
@@ -148,15 +148,16 @@ class OptVectorEnv(gym.VectorEnv):
             comm, _ = self._workers[idx]
             infos.append(comm.recv())
 
-        next_obs = self.data["obs"]
-        reward = self.data["reward"]
-        term = self.data["term"]
-        trunc = self.data["trunc"]
+        next_obs = np.array(self.data["obs"])
+        reward = np.array(self.data["reward"])
+        term = np.array(self.data["term"])
+        trunc = np.array(self.data["trunc"])
         info = self._merge_infos(infos)
         if "final_observation" in info:
             for idx in range(self.num_envs):
                 if info["final_observation"][idx]:
-                    info["final_observation"][idx] = self.data["final_obs"][idx]
+                    final_obs = np.array(self.data["final_obs"][idx])
                 else:
-                    info["final_observation"][idx] = None
+                    final_obs = None
+                info["final_observation"][idx] = final_obs
         return next_obs, reward, term, trunc, info

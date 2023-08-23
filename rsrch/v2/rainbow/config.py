@@ -5,7 +5,7 @@ from rsrch.utils.sched import schedule
 
 
 @dataclass
-class ForAtari:
+class Atari:
     screen_size: int
     frame_stack: int
     frame_skip: int
@@ -17,7 +17,7 @@ class ForAtari:
 @dataclass
 class Env:
     name: str
-    for_atari: Optional[ForAtari]
+    atari: Optional[Atari]
     reward_clip: Optional[tuple[float, float]]
     time_limit: Optional[int]
 
@@ -56,6 +56,7 @@ class Optimizer:
     lr: float
     eps: float
     grad_clip: Optional[float]
+    amp: str
 
 
 @dataclass

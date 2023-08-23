@@ -1,12 +1,5 @@
-debug:
-  sched.env_batch: 4
-  sched.num_frames: 100e3
-  buffer.prefill: 10e3
-  sched.val_episodes: 1
-expl_via_eps:
-  buffer.capacity: 250e3
-  expl_eps: linear(1.0, 0.01, $(sched.num_frames / 10))
-  noisy_nets:
-    enabled: false
-  # profile:
-  #   enabled: true
+testing:
+  expl_eps: linear(1.0, 0.01, $(sched.num_frames))
+  noisy_nets.enabled: false
+  buffer.capacity: 500e3
+  sched.num_frames: 5e6

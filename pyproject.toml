@@ -95,6 +95,15 @@ shell = """
   pip install -U opencv-python-headless==${OPENCV}
 """
 
+[tool.poe.tasks.wandb]
+shell = """
+  if [ "$(docker ps -a | grep wandb-local)" ]; then
+    wandb server stop
+  else
+    wandb server start -p ${port}
+  fi
+"""
+args = [{ name = "port", default = "8081" }]
 
 [build-system]
 requires = ["poetry-core>=1.5"]

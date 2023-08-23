@@ -1,5 +1,6 @@
 import math
 import os
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -43,33 +44,48 @@ def parse_env_name(env_name: str):
 
 
 class QVecAgent(gym.VecAgent):
-    def __init__(self, enc: nn.Module, q: nn.Module):
+    def __init__(self, enc: nn.Module, q: nn.Module, frame_stack: int):
         self.enc = enc
         self.q = q
         self.device = next(enc.parameters()).device
-        self._obs = None
+        self.frame_stack = frame_stack
+        self._obs = [None for _ in range(frame_stack)]
 
-    def _convert_obs(self, obs):
+    def _convert(self, obs):
         if isinstance(obs[0], Tensor):
             return torch.stack(obs).to(device=self.device, dtype=torch.float32)
         else:
             return torch.as_tensor(
-                np.stack(obs),
-                device=self.device,
-                dtype=torch.float32,
+                np.stack(obs), device=self.device, dtype=torch.float32
             )
+
+    @torch.inference_mode()
+    def reset(self, obs, mask):
+        if all(mask):
+            self._obs = [self._convert(obs)] * self.frame_stack
+        else:
+            obs = [x for m, x in zip(mask, obs) if m]
+            obs = self._convert(obs)
+            for k in range(self.frame_stack):
+                self._obs[k][mask] = obs
 
     @torch.inference_mode()
     def observe(self, obs, mask):
         if all(mask):
-            self._obs = self._convert_obs(obs)
+            obs = self._convert(obs)
+            for k in range(self.frame_stack):
+                self._obs[k] = self._obs[k + 1] if k + 1 < self.frame_stack else obs
         else:
             obs = [x for m, x in zip(mask, obs) if m]
-            self._obs[mask] = self._convert_obs(obs)
+            obs = self._convert(obs)
+            for k in range(self.frame_stack - 1):
+                self._obs[k][mask] = self._obs[k + 1][mask]
+            self._obs[-1][mask] = obs
 
     @torch.inference_mode()
     def policy(self):
-        q_values = self.q(self.enc(self._obs))
+        obs = torch.stack(self._obs, dim=1)
+        q_values = self.q(self.enc(obs))
 
         if isinstance(q_values, Tensor):
             return q_values.argmax(-1).cpu().numpy()
@@ -79,7 +95,7 @@ class QVecAgent(gym.VecAgent):
 
 def main():
     # cfg_spec = ["config.yml", "presets.yml:debug"]
-    cfg_spec = ["config.yml", "presets.yml:expl_via_eps"]
+    cfg_spec = ["config.yml", "presets.yml:testing"]
 
     data = {}
     cwd = Path(__file__).parent
@@ -119,13 +135,9 @@ def main():
 
     env_type, env_name = parse_env_name(cfg.env.name)
 
-    frame_stack = 1
-    if env_type == "atari":
-        frame_stack = cfg.env.for_atari.frame_stack
-
     def make_env():
         if env_type == "atari":
-            atari_cfg = cfg.env.for_atari
+            atari_cfg = cfg.env.atari
             env = gym.make(f"ALE/{env_name}", frameskip=atari_cfg.frame_skip)
             env = gym.wrappers.AtariPreprocessing(
                 env=env,
@@ -133,19 +145,12 @@ def main():
                 screen_size=atari_cfg.screen_size,
                 terminal_on_life_loss=atari_cfg.term_on_loss_of_life,
                 grayscale_obs=atari_cfg.grayscale,
-                grayscale_newaxis=(atari_cfg.frame_stack == 1),
+                grayscale_newaxis=False,
                 scale_obs=False,
                 noop_max=atari_cfg.noop_max,
             )
         else:
             raise ValueError(env_type)
-
-        if frame_stack > 1:
-            env = gym.wrappers.FrameStack(
-                env=env,
-                num_stack=frame_stack,
-                lz4_compress=False,
-            )
 
         if cfg.env.time_limit is not None:
             env = gym.wrappers.TimeLimit(env, cfg.env.time_limit)
@@ -162,6 +167,17 @@ def main():
             env.reward_range = (r_min, r_max)
 
         return env
+
+    frame_stack = 1
+    if env_type == "atari":
+        frame_stack = cfg.env.atari.frame_stack
+
+    base_spec = gym.EnvSpec(make_train_env())
+    if frame_stack > 1:
+        spec_env = gym.wrappers.FrameStack(make_train_env(), frame_stack)
+        agent_spec = gym.EnvSpec(spec_env)
+    else:
+        agent_spec = base_spec
 
     if cfg.pr.enabled:
         if isinstance(cfg.pr.beta, float):
@@ -199,11 +215,6 @@ def main():
         num_workers=env_workers,
     )
 
-    env_spec = gym.EnvSpec(
-        train_env.single_observation_space,
-        train_env.single_action_space,
-    )
-
     prefill_agent = gym.vector.RandomVecAgent(train_env)
     prefill_iter = steps(train_env, prefill_agent, max_steps=cfg.buffer.prefill)
 
@@ -218,7 +229,7 @@ def main():
             ep_ids[env_idx], _ = buffer.push(ep_ids[env_idx], batch[env_idx])
             env_step += 1
 
-    obs_shape = env_spec.observation_space.shape
+    obs_shape = agent_spec.observation_space.shape
     if cfg.encoder.type == "nature":
         enc = NatureEncoder(obs_shape)
     elif cfg.encoder.type == "impala":
@@ -252,7 +263,7 @@ def main():
         return mod
 
     def make_q():
-        num_actions = env_spec.action_space.n
+        num_actions = agent_spec.action_space.n
         q = QHead(enc.out_features, num_actions, cfg.dist)
         if cfg.noisy_nets.enabled:
             rewrite_module_(q, apply_noisy)
@@ -275,7 +286,15 @@ def main():
     opt = torch.optim.Adam(opt_params, lr=cfg.optimizer.lr, eps=cfg.optimizer.eps)
     q_polyak = polyak.Polyak(q, target_q, every=cfg.sched.sync_q_every)
 
-    val_agent = QVecAgent(enc, q)
+    amp_enabled = cfg.optimizer.amp != "float32"
+    scaler = torch.cuda.amp.GradScaler(enabled=amp_enabled)
+    autocast = lambda: torch.autocast(
+        device_type=device.type,
+        dtype=getattr(torch, cfg.optimizer.amp),
+        enabled=amp_enabled,
+    )
+
+    val_agent = QVecAgent(enc, q, frame_stack)
     should_val = cron.Every(lambda: env_step, cfg.exp.val_every)
 
     expl_eps = cfg.expl_eps
@@ -298,7 +317,7 @@ def main():
         init_obs = None
 
     train_agent = gym.vector.EpsVecAgent(
-        opt=QVecAgent(enc, q),
+        opt=QVecAgent(enc, q, frame_stack),
         rand=gym.vector.RandomVecAgent(train_env),
         eps=expl_eps(env_step),
         num_envs=train_env.num_envs,
@@ -342,7 +361,9 @@ def main():
                 batch = sampler.sample(cfg.sched.opt_batch)
                 if isinstance(sampler, PrioritizedSampler):
                     idxes, weights = batch
-                    weights = torch.as_tensor(weights, device=device)
+                    weights = torch.as_tensor(
+                        weights, device=device, dtype=torch.float32
+                    )
                     batch = buffer[idxes]
                 else:
                     idxes = batch
@@ -354,48 +375,59 @@ def main():
                 batch.obs = batch.obs / 255.0
                 batch.reward = batch.reward.to(batch.obs.dtype)
 
-                with torch.no_grad():
-                    z = enc(batch.obs[-1])
+                with autocast():
+                    with torch.no_grad():
+                        z = enc(batch.obs[-1])
+                        q.apply(reset_noise_)
+                        act = q(z).argmax(-1)
+                        target = target_q(z).gather(-1, act[..., None]).squeeze(-1)
+                        target = (1.0 - batch.term.to(dtype=target.dtype)) * target
+                        R = sum(
+                            batch.reward[i] * cfg.gamma**i
+                            for i in range(len(batch.reward))
+                        )
+                        target = R + cfg.gamma ** len(batch.reward) * target
+
+                with autocast():
                     q.apply(reset_noise_)
-                    act = q(z).argmax(-1)
-                    target = target_q(z).gather(-1, act[..., None]).squeeze(-1)
-                    target = (1.0 - batch.term.to(dtype=target.dtype)) * target
-                    R = sum(
-                        batch.reward[i] * cfg.gamma**i
-                        for i in range(len(batch.reward))
+                    pred = (
+                        q(enc(batch.obs[0]))
+                        .gather(-1, batch.act[0][..., None])
+                        .squeeze(-1)
                     )
-                    target = R + cfg.gamma ** len(batch.reward) * target
+                    if isinstance(target, ValueDist):
+                        q_loss = ValueDist.proj_kl_div(pred, target)
+                    elif isinstance(target, Tensor):
+                        q_loss = F.mse_loss(pred, target, reduction="none")
+                    else:
+                        raise NotImplementedError(type(target))
 
-                q.apply(reset_noise_)
-                pred = (
-                    q(enc(batch.obs[0])).gather(-1, batch.act[0][..., None]).squeeze(-1)
-                )
-                if isinstance(target, ValueDist):
-                    q_loss = ValueDist.proj_kl_div(pred, target)
-                elif isinstance(target, Tensor):
-                    q_loss = F.mse_loss(pred, target, reduction="none")
-                else:
-                    raise NotImplementedError(type(target))
+                    if isinstance(sampler, PrioritizedSampler):
+                        q_loss = weights * q_loss
 
-                if isinstance(sampler, PrioritizedSampler):
-                    q_loss = weights * q_loss
+                    q_loss_ = q_loss.mean()
 
                 def _update_prio():
-                    prio = q_loss.detach().cpu().numpy()
+                    prio = q_loss
+                    if isinstance(target, Tensor):
+                        prio = prio.sqrt()
+                    prio = prio.detach().cpu().numpy()
                     sampler.update(idxes, prio)
 
                 update_fut = pool.submit(_update_prio)
 
                 opt.zero_grad(set_to_none=True)
-                q_loss.mean().backward()
+                scaler.scale(q_loss_).backward()
+                scaler.unscale_(opt)
                 if cfg.optimizer.grad_clip is not None:
                     nn.utils.clip_grad_norm_(opt_params, cfg.optimizer.grad_clip)
-                opt.step()
+                scaler.step(opt)
+                scaler.update()
 
                 update_fut.result()
 
                 if should_log:
-                    board.add_scalar("train/q_loss", q_loss.mean())
+                    board.add_scalar("train/q_loss", q_loss_)
                     board.add_scalar("train/expl_eps", train_agent.eps)
 
 
