@@ -1,52 +1,16 @@
 {
     "configurations": [
         {
-            "name": "Rainbow V2",
+            "name": "Alien",
             "type": "python",
             "request": "launch",
             "module": "rsrch.v2.rainbow",
             "pythonArgs": [
                 "-O"
             ],
-            "justMyCode": false
-        },
-        {
-            "name": "Rainbow",
-            "type": "python",
-            "request": "launch",
-            "module": "rsrch.hub.rainbow",
-            "pythonArgs": [
-                "-O"
-            ],
-            "justMyCode": false
-        },
-        {
-            "name": "A2C",
-            "type": "python",
-            "request": "launch",
-            "module": "rsrch.hub.a2c",
-            "pythonArgs": [
-                "-O"
-            ],
-            "justMyCode": false
-        },
-        {
-            "name": "Dreamer v2",
-            "type": "python",
-            "request": "launch",
-            "module": "rsrch.hub.dreamer.v2_opt",
-            "pythonArgs": [
-                "-O"
-            ],
-            "justMyCode": false
-        },
-        {
-            "name": "Dreamer v2-ext",
-            "type": "python",
-            "request": "launch",
-            "module": "rsrch.hub.dreamer.v2_ext",
-            "pythonArgs": [
-                "-O"
+            "args": [
+                "-c",
+                "env.name=ALE/Alien-v5"
             ],
             "justMyCode": false
         },

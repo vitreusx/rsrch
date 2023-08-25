@@ -2,13 +2,10 @@ from collections import deque
 from collections.abc import Mapping
 from typing import Iterable, Optional
 
-import numpy as np
-
-from rsrch.utils.vectorize import vectorize
 
 from .data import Seq, Step
 from .sampler import Sampler
-from .store import RAMStore, Store
+from .store import Store, TwoLevelStore
 
 __all__ = ["StepBuffer", "ChunkBuffer"]
 
@@ -53,70 +50,66 @@ class ChunkBuffer(Mapping[int, Seq]):
     def __init__(
         self,
         chunk_size: int,
-        step_cap: int,
+        capacity: int,
         frame_stack: int = None,
         sampler: Sampler = None,
-        store: Store = None,
+        persist: Store = None,
     ):
         self.chunk_size = chunk_size
-        self.step_cap = step_cap
+        self.capacity = capacity
         self.sampler = sampler
         self.frame_stack = frame_stack
 
-        self._step_count = 0
-        self._ep_ptr = 0
-        self.episodes = {}
-        self._chunk_ptr = 0
         self.chunks = deque()
-        self.store = store if store is not None else RAMStore()
-        self._store_map = {}
+        self._chunk_ids = range(0, 0)
+
+        if persist is None:
+            persist = {}
+        self.episodes = TwoLevelStore(cache={}, persist=persist)
+        self._ep_ptr = 0
 
     def on_reset(self, obs):
-        while self._step_count >= self.step_cap:
-            self._popleft()
         ep_id = self._ep_ptr
         self._ep_ptr += 1
 
         obs = [obs] * (self.frame_stack or 1)
         self.episodes[ep_id] = Seq(obs, [], [], False)
-        self._step_count += 1
         return ep_id
 
     def _popleft(self):
-        ep_id, offset = self.chunks.popleft()
-        is_final = offset + self.chunk_size >= len(self.episodes[ep_id].act)
-        if is_final:
-            del self.episodes[ep_id]
-            if ep_id in self._store_map:
-                del self.store[self._store_map[ep_id]]
+        ep_id, off = self.chunks.popleft()
+        self._chunk_ids = range(self._chunk_ids.start + 1, self._chunk_ids.stop)
         if self.sampler is not None:
             self.sampler.popleft()
-        self._step_count -= 1
+
+        ep = self.episodes[ep_id]
+        if off + self.chunk_size == len(ep.act):
+            del self.episodes[ep_id]
 
     def on_step(self, ep_id: int, act, next_obs, reward, term, trunc):
-        ep = self.episodes[ep_id]
-
-        while self._step_count >= self.step_cap:
+        while len(self._chunk_ids) >= self.capacity:
             self._popleft()
+
+        ep = self.episodes[ep_id]
         ep.act.append(act)
         ep.obs.append(next_obs)
         ep.reward.append(reward)
         ep.term = ep.term or term
-        self._step_count += 1
 
         chunk_id = None
         if len(ep.act) >= self.chunk_size:
-            chunk_id = self._chunk_ptr
-            self._chunk_ptr += 1
+            chunk_id = self._chunk_ids.stop
+            self._chunk_ids = range(self._chunk_ids.start, chunk_id + 1)
             offset = len(ep.act) - self.chunk_size
             self.chunks.append((ep_id, offset))
             if self.sampler is not None:
                 self.sampler.append()
 
         if term or trunc:
-            store_id = self.store.add(ep)
-            self._store_map[ep_id] = store_id
-            self.episodes[ep_id] = self.store[store_id]
+            if len(ep.act) >= self.chunk_size:
+                self.episodes.persist(ep_id)
+            else:
+                del self.episodes[ep_id]
 
         return chunk_id
 
@@ -132,17 +125,20 @@ class ChunkBuffer(Mapping[int, Seq]):
             ep_id = None
         return ep_id, chunk_id
 
+    def keys(self):
+        return self._chunk_ids
+
     def __iter__(self):
-        return iter(range(self._chunk_ptr - len(self.chunks), self._chunk_ptr))
+        return iter(self.keys())
 
     def __len__(self):
-        return len(self.chunks)
+        return len(self.keys())
 
     def __getitem__(self, id):
         if isinstance(id, Iterable):
             return [self[i] for i in id]
 
-        idx = len(self.chunks) - (self._chunk_ptr - id)
+        idx = id - self._chunk_ids.start
         ep_id, off = self.chunks[idx]
         ep = self.episodes[ep_id]
 

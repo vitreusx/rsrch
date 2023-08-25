@@ -1,3 +1,5 @@
+import argparse
+import asyncio
 import math
 import os
 from collections import deque
@@ -22,12 +24,12 @@ from rsrch.rl.data.v2 import *
 from rsrch.rl.data.v2.store import TensorStore
 from rsrch.rl.utils import polyak
 from rsrch.utils import config, cron, sched
+from rsrch.rl.gym.vector.decorr import decorrelate
 
 from .config import Config
 from .distq import ValueDist
 from .nets import *
-from .opt_env import OptVectorEnv
-from .ray_env import RayVectorEnv
+from .nets import ImpalaResidual
 
 
 def parse_env_name(env_name: str):
@@ -44,30 +46,32 @@ def parse_env_name(env_name: str):
 
 
 class QVecAgent(gym.VecAgent):
-    def __init__(self, enc: nn.Module, q: nn.Module, frame_stack: int):
-        self.enc = enc
+    def __init__(self, q: nn.Module, frame_stack: int):
         self.q = q
-        self.device = next(enc.parameters()).device
+        self.device = next(q.parameters()).device
         self.frame_stack = frame_stack
         self._obs = [None for _ in range(frame_stack)]
 
     def _convert(self, obs):
         if isinstance(obs[0], Tensor):
-            return torch.stack(obs).to(device=self.device, dtype=torch.float32)
+            obs = torch.stack(obs).to(device=self.device, dtype=torch.float32)
         else:
-            return torch.as_tensor(
+            obs = torch.as_tensor(
                 np.stack(obs), device=self.device, dtype=torch.float32
             )
+        obs = obs / 255.0
+        return obs
 
     @torch.inference_mode()
     def reset(self, obs, mask):
         if all(mask):
-            self._obs = [self._convert(obs)] * self.frame_stack
+            self._obs = [self._convert(obs) for _ in range(self.frame_stack)]
         else:
             obs = [x for m, x in zip(mask, obs) if m]
             obs = self._convert(obs)
+            idxes = [idx for idx, m in enumerate(mask) if m]
             for k in range(self.frame_stack):
-                self._obs[k][mask] = obs
+                self._obs[k][idxes] = obs
 
     @torch.inference_mode()
     def observe(self, obs, mask):
@@ -78,14 +82,15 @@ class QVecAgent(gym.VecAgent):
         else:
             obs = [x for m, x in zip(mask, obs) if m]
             obs = self._convert(obs)
+            idxes = [idx for idx, m in enumerate(mask) if m]
             for k in range(self.frame_stack - 1):
-                self._obs[k][mask] = self._obs[k + 1][mask]
-            self._obs[-1][mask] = obs
+                self._obs[k][idxes] = self._obs[k + 1][idxes]
+            self._obs[-1][idxes] = obs
 
     @torch.inference_mode()
     def policy(self):
         obs = torch.stack(self._obs, dim=1)
-        q_values = self.q(self.enc(obs))
+        q_values = self.q(obs)
 
         if isinstance(q_values, Tensor):
             return q_values.argmax(-1).cpu().numpy()
@@ -94,14 +99,27 @@ class QVecAgent(gym.VecAgent):
 
 
 def main():
-    # cfg_spec = ["config.yml", "presets.yml:debug"]
-    cfg_spec = ["config.yml", "presets.yml:testing"]
+    p = argparse.ArgumentParser()
+    p.add_argument("-c", "--config", nargs="*")
+    p.add_argument("--preset", default="testing")
 
-    data = {}
-    cwd = Path(__file__).parent
-    for spec in cfg_spec:
-        config.update_(data, config.read_yml(spec, cwd))
-    cfg = config.parse(data, Config)
+    args = p.parse_args()
+
+    cfg_specs = []
+
+    script_cwd = Path(__file__).parent
+    defaults_path = str((script_cwd / "config.yml").absolute())
+    presets_path = str((script_cwd / "presets.yml").absolute())
+
+    cfg_specs.append(defaults_path)
+    if args.preset is not None:
+        cfg_specs.append(f"{presets_path}:{args.preset}")
+
+    if args.config is not None:
+        cfg_specs.extend(args.config)
+
+    cfg_dict = config.specs_to_data(cfg_specs)
+    cfg = config.parse(cfg_dict, Config)
 
     # ray.init(address="auto")
 
@@ -160,10 +178,15 @@ def main():
     def make_train_env():
         env = make_env()
 
-        if cfg.env.reward_clip is not None:
-            r_min, r_max = cfg.env.reward_clip
-            clamp_r = lambda r: min(max(r, r_min), r_max)
-            env = gym.wrappers.TransformReward(env, clamp_r)
+        if cfg.env.reward in ("keep", None):
+            rew_f = lambda r: r
+        elif cfg.env.reward == "sign":
+            env = gym.wrappers.TransformReward(env, lambda r: np.sign(r))
+            env.reward_range = (-1, 1)
+        elif isinstance(cfg.env.reward, tuple):
+            r_min, r_max = cfg.env.reward
+            rew_f = lambda r: np.clip(r, r_min, r_max)
+            env = gym.wrappers.TransformReward(env, rew_f)
             env.reward_range = (r_min, r_max)
 
         return env
@@ -186,17 +209,18 @@ def main():
             max_size=cfg.buffer.capacity,
             alpha=cfg.pr.alpha,
             beta=cfg.pr.beta(0.0),
+            eps=cfg.pr.eps,
+            batch_max=cfg.pr.batch_max,
         )
     else:
         sampler = UniformSampler()
 
     buffer = ChunkBuffer(
-        chunk_size=cfg.multi_step.n,
-        step_cap=cfg.buffer.capacity,
+        chunk_size=cfg.multi_step.n + 1,
+        capacity=cfg.buffer.capacity,
         frame_stack=frame_stack,
         sampler=sampler,
-        store=TensorStore(capacity=cfg.buffer.capacity, pin_memory=True),
-        # store=MemoryMappedStore(),
+        persist=TensorStore(capacity=cfg.buffer.capacity, pin_memory=True),
     )
 
     env_step = 0
@@ -205,52 +229,52 @@ def main():
     if env_workers == "auto":
         env_workers = os.cpu_count()
 
-    train_env = OptVectorEnv(
-        env_fns=[make_train_env] * cfg.sched.env_batch,
-        num_workers=env_workers,
-    )
-
-    val_env = OptVectorEnv(
+    val_env = gym.vector.AsyncVectorEnv2(
         env_fns=[make_env] * cfg.exp.val_envs,
         num_workers=env_workers,
     )
 
-    prefill_agent = gym.vector.RandomVecAgent(train_env)
-    prefill_iter = steps(train_env, prefill_agent, max_steps=cfg.buffer.prefill)
-
-    prefill_pbar = tqdm(
-        prefill_iter,
-        desc="Prefill",
-        total=cfg.buffer.prefill // train_env.num_envs,
+    env_fns = [make_train_env] * cfg.sched.env_batch
+    if cfg.decorr.enabled:
+        env_fns = decorrelate(env_fns)
+    train_env = gym.vector.AsyncVectorEnv2(
+        env_fns=env_fns,
+        num_workers=env_workers,
     )
-    ep_ids = [None for _ in range(train_env.num_envs)]
-    for batch in prefill_pbar:
-        for env_idx in range(train_env.num_envs):
-            ep_ids[env_idx], _ = buffer.push(ep_ids[env_idx], batch[env_idx])
-            env_step += 1
+    init_obs = None
+    if cfg.decorr.enabled:
+        init_obs = train_env.call("_observation")
 
-    obs_shape = agent_spec.observation_space.shape
-    if cfg.encoder.type == "nature":
-        enc = NatureEncoder(obs_shape)
-    elif cfg.encoder.type == "impala":
-        if cfg.encoder.variant.startswith("small"):
-            enc = ImpalaSmall(obs_shape)
-        elif cfg.encoder.variant.startswith("large"):
-            _, model_size = cfg.encoder.variant.split("/")
-            model_size = int(model_size)
-            enc = ImpalaLarge(obs_shape, model_size)
+    def make_enc():
+        obs_shape = agent_spec.observation_space.shape
+        if cfg.encoder.type == "nature":
+            enc = NatureEncoder(obs_shape)
+        elif cfg.encoder.type == "impala":
+            if cfg.encoder.variant.startswith("small"):
+                enc = ImpalaSmall(obs_shape)
+            elif cfg.encoder.variant.startswith("large"):
+                _, model_size = cfg.encoder.variant.split("/")
+                model_size = int(model_size)
+                enc = ImpalaLarge(obs_shape, model_size)
 
-    if cfg.encoder.spectral_norm != "none":
-        assert cfg.encoder.spectral_norm == "all"
+        if cfg.encoder.spectral_norm != "none":
+            assert cfg.encoder.spectral_norm == "all"
 
-        def apply_sn(name, mod):
-            if isinstance(mod, nn.Conv2d):
-                mod = nn.utils.spectral_norm(mod)
-            return mod
+            def apply_sn_res(name, mod):
+                if isinstance(mod, nn.Conv2d):
+                    mod = nn.utils.spectral_norm(mod)
+                return mod
 
-        rewrite_module_(enc, apply_sn)
+            def apply_sn(name, mod):
+                if isinstance(mod, ImpalaResidual):
+                    mod = rewrite_module_(mod, apply_sn_res)
 
-    enc = enc.to(device)
+                return mod
+
+            rewrite_module_(enc, apply_sn)
+
+        enc = enc.to(device)
+        return enc
 
     def apply_noisy(name, mod):
         if isinstance(mod, nn.Linear):
@@ -263,11 +287,12 @@ def main():
         return mod
 
     def make_q():
+        enc = make_enc()
         num_actions = agent_spec.action_space.n
-        q = QHead(enc.out_features, num_actions, cfg.dist)
+        head = QHead(enc.out_features, num_actions, cfg.dist)
         if cfg.noisy_nets.enabled:
-            rewrite_module_(q, apply_noisy)
-        return q
+            rewrite_module_(head, apply_noisy)
+        return nn.Sequential(enc, head)
 
     q = make_q().to(device)
     target_q = make_q().to(device)
@@ -281,7 +306,7 @@ def main():
         if isinstance(mod, NoisyLinear):
             mod.reset_noise_()
 
-    opt_params = [*q.parameters(), *enc.parameters()]
+    opt_params = [*q.parameters()]
     assert cfg.optimizer.name == "adam"
     opt = torch.optim.Adam(opt_params, lr=cfg.optimizer.lr, eps=cfg.optimizer.eps)
     q_polyak = polyak.Polyak(q, target_q, every=cfg.sched.sync_q_every)
@@ -294,46 +319,28 @@ def main():
         enabled=amp_enabled,
     )
 
-    val_agent = QVecAgent(enc, q, frame_stack)
+    val_agent = QVecAgent(q, frame_stack)
     should_val = cron.Every(lambda: env_step, cfg.exp.val_every)
 
     expl_eps = cfg.expl_eps
     if isinstance(expl_eps, float):
         expl_eps = sched.Constant(expl_eps)
 
-    if cfg.decorr.enabled:
-        decorr_steps = cfg.decorr.num_steps
-        if decorr_steps == "auto":
-            decorr_steps = np.mean([len(x) for x in buffer.episodes.values()])
-            decorr_steps *= train_env.num_envs
-
-        decorr_env = gym.vector.SaveState(train_env)
-        decorr_agent = gym.vector.RandomVecAgent(decorr_env)
-        for _ in steps(decorr_env, decorr_agent, max_steps=decorr_steps):
-            ...
-
-        init_obs = decorr_env._obs
-    else:
-        init_obs = None
-
     train_agent = gym.vector.EpsVecAgent(
-        opt=QVecAgent(enc, q, frame_stack),
+        opt=QVecAgent(q, frame_stack),
         rand=gym.vector.RandomVecAgent(train_env),
         eps=expl_eps(env_step),
         num_envs=train_env.num_envs,
     )
-    env_batch_iter = iter(steps(train_env, train_agent, init_obs=init_obs))
+    env_batch_iter = async_steps(train_env, train_agent, init_obs=init_obs)
     ep_ids = [None for _ in range(train_env.num_envs)]
-
-    env_steps_ = int(cfg.sched.env_batch * cfg.sched.replay_ratio)
-    opt_steps_ = cfg.sched.opt_batch
-    lcm = math.lcm(env_steps_, opt_steps_)
-    env_iters, opt_iters = lcm // env_steps_, lcm // opt_steps_
 
     pbar = tqdm(total=cfg.sched.num_frames)
     should_end = lambda: env_step >= cfg.sched.num_frames
 
-    pool = ThreadPoolExecutor(max_workers=1)
+    opt_batch_ = int(cfg.sched.replay_ratio * cfg.sched.env_batch)
+    assert opt_batch_ % cfg.sched.env_batch == 0
+    opt_steps = opt_batch_ // cfg.sched.opt_batch
 
     while not should_end():
         if should_val:
@@ -346,89 +353,86 @@ def main():
 
             board.add_scalar("val/returns", np.mean(val_returns))
 
-        for _ in range(env_iters):
-            env_batch = next(env_batch_iter)
-            q.apply(reset_noise_)
-            train_agent.eps = expl_eps(env_step)
-            for idx in range(train_env.num_envs):
-                ep_ids[idx], _ = buffer.push(ep_ids[idx], env_batch[idx])
-            env_step += train_env.num_envs
-            pbar.update(train_env.num_envs)
-            q_polyak.step(train_env.num_envs)
+        next(env_batch_iter)
 
-        for _ in range(opt_iters):
-            with prof.profile("train_step"):
-                batch = sampler.sample(cfg.sched.opt_batch)
-                if isinstance(sampler, PrioritizedSampler):
-                    idxes, weights = batch
-                    weights = torch.as_tensor(
-                        weights, device=device, dtype=torch.float32
-                    )
-                    batch = buffer[idxes]
-                else:
-                    idxes = batch
-                    batch = buffer[idxes]
-
-                batch = [to_tensor_seq(s) for s in batch]
-                batch = ChunkBatch.collate_fn(batch)
-                batch = batch.to(device=device)
-                batch.obs = batch.obs / 255.0
-                batch.reward = batch.reward.to(batch.obs.dtype)
-
-                with autocast():
-                    with torch.no_grad():
-                        z = enc(batch.obs[-1])
-                        q.apply(reset_noise_)
-                        act = q(z).argmax(-1)
-                        target = target_q(z).gather(-1, act[..., None]).squeeze(-1)
-                        target = (1.0 - batch.term.to(dtype=target.dtype)) * target
-                        R = sum(
-                            batch.reward[i] * cfg.gamma**i
-                            for i in range(len(batch.reward))
-                        )
-                        target = R + cfg.gamma ** len(batch.reward) * target
-
-                with autocast():
-                    q.apply(reset_noise_)
-                    pred = (
-                        q(enc(batch.obs[0]))
-                        .gather(-1, batch.act[0][..., None])
-                        .squeeze(-1)
-                    )
-                    if isinstance(target, ValueDist):
-                        q_loss = ValueDist.proj_kl_div(pred, target)
-                    elif isinstance(target, Tensor):
-                        q_loss = F.mse_loss(pred, target, reduction="none")
-                    else:
-                        raise NotImplementedError(type(target))
-
+        if len(buffer) >= cfg.buffer.prefill:
+            for _ in range(opt_steps):
+                with prof.profile("train_step"):
+                    batch = sampler.sample(cfg.sched.opt_batch)
                     if isinstance(sampler, PrioritizedSampler):
-                        q_loss = weights * q_loss
+                        idxes, weights = batch
+                        weights = torch.as_tensor(weights, device=device)
+                        batch = buffer[idxes]
+                    else:
+                        idxes = batch
+                        batch = buffer[idxes]
 
-                    q_loss_ = q_loss.mean()
+                    batch = [to_tensor_seq(s) for s in batch]
+                    batch = ChunkBatch.collate_fn(batch)
+                    batch = batch.to(device=device)
+                    batch.obs = batch.obs / 255.0
+                    batch.reward = batch.reward.to(batch.obs.dtype)
 
-                def _update_prio():
-                    prio = q_loss
-                    if isinstance(target, Tensor):
-                        prio = prio.sqrt()
-                    prio = prio.detach().cpu().numpy()
+                    with torch.no_grad():
+                        with autocast():
+                            q.apply(reset_noise_)
+                            act = q(batch.obs[-1]).argmax(-1)
+                            target = (
+                                target_q(batch.obs[-1])
+                                .gather(-1, act[..., None])
+                                .squeeze(-1)
+                            )
+                            target = (1.0 - batch.term.type_as(target)) * target
+                            R = sum(
+                                batch.reward[i] * cfg.gamma**i
+                                for i in range(len(batch.reward))
+                            ).type_as(target)
+                            target = R + cfg.gamma ** len(batch.reward) * target
+
+                    with autocast():
+                        q.apply(reset_noise_)
+                        pred = (
+                            q(batch.obs[0])
+                            .gather(-1, batch.act[0][..., None])
+                            .squeeze(-1)
+                        )
+                        if isinstance(target, ValueDist):
+                            prio = q_loss = ValueDist.proj_kl_div(pred, target)
+                        elif isinstance(target, Tensor):
+                            prio = (pred - target).abs()
+                            q_loss = prio.square()
+                        else:
+                            raise NotImplementedError(type(target))
+
+                        if isinstance(sampler, PrioritizedSampler):
+                            q_loss = weights.type_as(q_loss) * q_loss
+
+                        mean_q_loss = q_loss.mean()
+
+                    prio = prio.float().detach().cpu().numpy()
                     sampler.update(idxes, prio)
 
-                update_fut = pool.submit(_update_prio)
+                    opt.zero_grad(set_to_none=True)
+                    scaler.scale(mean_q_loss).backward()
+                    if cfg.optimizer.grad_clip is not None:
+                        scaler.unscale_(opt)
+                        nn.utils.clip_grad_norm_(opt_params, cfg.optimizer.grad_clip)
+                    scaler.step(opt)
+                    scaler.update()
 
-                opt.zero_grad(set_to_none=True)
-                scaler.scale(q_loss_).backward()
-                scaler.unscale_(opt)
-                if cfg.optimizer.grad_clip is not None:
-                    nn.utils.clip_grad_norm_(opt_params, cfg.optimizer.grad_clip)
-                scaler.step(opt)
-                scaler.update()
+                    if should_log:
+                        board.add_scalar("train/q_loss", mean_q_loss)
+                        board.add_scalar("train/expl_eps", train_agent.eps)
+                        board.add_scalar("train/mean_q_pred", pred.mean())
 
-                update_fut.result()
-
-                if should_log:
-                    board.add_scalar("train/q_loss", q_loss_)
-                    board.add_scalar("train/expl_eps", train_agent.eps)
+        env_batch = next(env_batch_iter)
+        q.apply(reset_noise_)
+        train_agent.eps = expl_eps(env_step)
+        for idx in range(train_env.num_envs):
+            ep_ids[idx], _ = buffer.push(ep_ids[idx], env_batch[idx])
+        env_step += train_env.num_envs
+        pbar.update(train_env.num_envs)
+        q_polyak.step(train_env.num_envs)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-from gymnasium.vector import VectorEnv, VectorEnvWrapper
+from .base import *
 
 
 class SaveState(VectorEnvWrapper):

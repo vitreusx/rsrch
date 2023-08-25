@@ -44,6 +44,7 @@ dacite = "^1.8.1"
 ray = { version = "^2.3.1", extras = ["default"] }
 pydantic = "<2"
 grpcio = "<=1.49.1"
+cloudpickle = "^2.2.1"
 
 [tool.poetry.group.ext]
 optional = true

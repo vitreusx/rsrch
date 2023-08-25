@@ -4,8 +4,11 @@ from typing import Iterable
 
 import numpy as np
 
-from rsrch.rl import gym
+from .base import *
 from rsrch.types.shared import shared_ndarray
+
+
+__all__ = ["AsyncVectorEnv2"]
 
 
 class EnvWorker(mp.Process):
@@ -14,7 +17,7 @@ class EnvWorker(mp.Process):
         self.data = data
         self.idxes = idxes
         self.comm = comm
-        self._sync_env = gym.vector.SyncVectorEnv(env_fns)
+        self._sync_env = SyncVectorEnv(env_fns)
 
     def run(self):
         while True:
@@ -36,11 +39,15 @@ class EnvWorker(mp.Process):
                         if x is not None:
                             self.data["final_obs"][idx] = x
                 self.comm.send(info)
+            elif msg == "call":
+                name, args, kwargs = data
+                results = self._sync_env.call(name, args, kwargs)
+                self.comm.send(results)
             else:
                 raise ValueError(msg)
 
 
-class OptVectorEnv(gym.VectorEnv):
+class AsyncVectorEnv2(VectorEnv):
     def __init__(self, env_fns, num_workers=None):
         dummy_env = env_fns[0]()
         super().__init__(
@@ -161,3 +168,16 @@ class OptVectorEnv(gym.VectorEnv):
                     final_obs = None
                 info["final_observation"][idx] = final_obs
         return next_obs, reward, term, trunc, info
+
+    def call_async(self, name, *args, **kwargs):
+        data = (name, args, kwargs)
+        for idx in range(self.num_workers):
+            comm, _ = self._workers[idx]
+            comm.send(("call", data))
+
+    def call_wait(self):
+        results = []
+        for idx in range(self.num_workers):
+            comm, _ = self._workers[idx]
+            results.extend(comm.recv())
+        return results

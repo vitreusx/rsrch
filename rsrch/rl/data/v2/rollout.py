@@ -1,3 +1,4 @@
+import asyncio
 from functools import singledispatch
 from typing import Iterable, overload
 
@@ -5,7 +6,7 @@ from rsrch.rl import gym
 
 from .data import Seq, Step, StepBatch
 
-__all__ = ["one_step", "steps", "one_episode", "episodes"]
+__all__ = ["one_step", "steps", "async_steps", "one_episode", "episodes"]
 
 
 def one_step(env: gym.Env, agent: gym.Agent, obs):
@@ -85,18 +86,74 @@ def _(
         cur_obs = obs
         next_obs, reward, term, trunc, info = env.step(acts)
         agent.step(acts)
-        done = term | trunc
 
         # Vector envs autoreset, so we need to splice next_obs and
         # info["final_observation"] to recover proper values
         obs = next_obs
         if "final_observation" in info:
             final_obs = info["final_observation"]
-            reset_mask = [x is not None for x in final_obs]
+            reset_mask = info["_final_observation"]
             agent.observe(final_obs, reset_mask)
             agent.reset(next_obs, reset_mask)
             total_eps += sum(reset_mask)
-            next_mask = [not reset for reset in reset_mask]
+            next_mask = [not r for r in reset_mask]
+            if any(next_mask):
+                agent.observe(next_obs, next_mask)
+        else:
+            next_mask = [True for _ in range(num_envs)]
+            agent.observe(next_obs, next_mask)
+
+        yield StepBatch(cur_obs, acts, next_obs, reward, term, trunc)
+
+        total_steps += num_envs
+        if max_steps is not None:
+            if total_steps >= max_steps:
+                return
+
+        if max_episodes is not None:
+            if total_eps >= max_episodes:
+                return
+
+
+def async_steps(
+    env: gym.VectorEnv,
+    agent: gym.VecAgent,
+    max_steps=None,
+    max_episodes=None,
+    init_obs=None,
+):
+    total_eps, total_steps = 0, 0
+
+    if max_steps == 0 or max_episodes == 0:
+        return
+
+    if init_obs is None:
+        obs, _ = env.reset()
+    else:
+        obs = init_obs
+
+    num_envs = len(obs)
+    mask = [True for _ in range(num_envs)]
+    agent.reset(obs, mask)
+
+    while True:
+        acts = agent.policy()
+        env.step_async(acts)
+        yield
+        cur_obs = obs
+        next_obs, reward, term, trunc, info = env.step_wait()
+        agent.step(acts)
+
+        # Vector envs autoreset, so we need to splice next_obs and
+        # info["final_observation"] to recover proper values
+        obs = next_obs
+        if "final_observation" in info:
+            final_obs = info["final_observation"]
+            reset_mask = info["_final_observation"]
+            agent.observe(final_obs, reset_mask)
+            agent.reset(next_obs, reset_mask)
+            total_eps += sum(reset_mask)
+            next_mask = [not r for r in reset_mask]
             if any(next_mask):
                 agent.observe(next_obs, next_mask)
         else:

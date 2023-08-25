@@ -7,7 +7,7 @@ env:
     term_on_loss_of_life: true
     grayscale: true
     noop_max: 30
-  reward_clip: [-1.0, 1.0]
+  reward: sign
   time_limit: 108e3
 sched:
   num_frames: 10e6
@@ -48,6 +48,8 @@ pr:
   enabled: true
   alpha: 0.8
   beta: linear(0.45, 1.0, ${sched.num_frames})
+  eps: 1e-6
+  batch_max: false
 gamma: 0.99
 expl_eps: 0.0
 decorr:

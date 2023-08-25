@@ -1,5 +1,12 @@
 testing:
   expl_eps: linear(1.0, 0.01, $(sched.num_frames))
   noisy_nets.enabled: false
-  buffer.capacity: 500e3
+  buffer.capacity: 1e6
   sched.num_frames: 5e6
+  # optimizer.lr: 2.5e-6
+  exp.log_every: 128
+  sched.opt_batch: 128
+  sched.env_batch: 32
+  # pr.batch_max: true
+  # optimizer.amp:
+  profile.enabled: true

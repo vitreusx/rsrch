@@ -1,0 +1,13 @@
+env_steps: 4000
+epochs: 100
+buffer_cap: 1e6
+gamma: 0.99
+tau: 0.995
+lr: 1e-3
+min_ent: neg_vol
+batch_size: 100
+prefill: 10e3
+val_episodes: 10
+max_ep_len: 1000
+env_name: ALE/Alien-v5
+num_q_values: 2

@@ -18,7 +18,7 @@ class Atari:
 class Env:
     name: str
     atari: Optional[Atari]
-    reward_clip: Optional[tuple[float, float]]
+    reward: tuple[float, float] | str | None
     time_limit: Optional[int]
 
 
@@ -85,6 +85,8 @@ class Pr:
     enabled: bool
     alpha: float
     beta: float | schedule
+    eps: float
+    batch_max: bool
 
 
 @dataclass

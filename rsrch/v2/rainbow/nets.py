@@ -71,12 +71,12 @@ class ImpalaLarge(nn.Sequential):
         super().__init__(
             ImpalaBlock(obs_shape[0], 16 * model_size),
             ImpalaBlock(16 * model_size, 32 * model_size),
-            ImpalaBlock(32 * model_size, 64 * model_size),
+            ImpalaBlock(32 * model_size, 32 * model_size),
             nn.ReLU(),
             nn.AdaptiveMaxPool2d((8, 8)),
             nn.Flatten(),
         )
-        self.out_features = 4096 * model_size
+        self.out_features = 2048 * model_size
 
 
 class QHead(nn.Module):

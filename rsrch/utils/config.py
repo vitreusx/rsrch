@@ -82,11 +82,11 @@ def _cast(x, t):
             except:
                 pass
         raise ValueError()
-    elif orig in (Tuple, List, Set):
+    elif orig in (Tuple, List, Set, tuple, list, set):
         # In this case, since python 3.8, generics are the same as builtins
         # (i.e. Tuple == tuple), so we can use orig for construction
         return orig([_cast(xi, ti) for xi, ti in zip(x, get_args(t))])
-    elif orig in (Dict,):
+    elif orig in (Dict, dict):
         # Same story with dict
         kt, vt = get_args(t)
         return {k: _cast(xi, vt) for k, xi in x.items()}
@@ -159,14 +159,15 @@ def normalize_(d: dict):
     return d
 
 
-def parse_var(s: str):
+def parse_var(spec: str):
     """Parses a key=value string. Value may be quoted."""
-    i = s.find("=")
-    k, v = s[:i], s[(i + 1) :]
-    k, v = k.strip(), v.strip()
-    if v[0] == v[-1] and v[0] in ('"', "'"):
-        v = v[1:-1]
-    return k, v
+    parts = re.findall(EQ_PAT, spec)
+    if len(parts) > 0:
+        k, v = parts[0], parts[1:]
+        v = "=".join(v)
+        return k, v
+    else:
+        raise ValueError(spec)
 
 
 def read_yml(spec: str, cwd=None):
@@ -180,8 +181,9 @@ def read_yml(spec: str, cwd=None):
         path = parts[0]
         with open(cwd / path, "r") as f:
             return yaml.safe_load(f)
-    elif len(parts) == 2:
-        path, sec = parts
+    elif len(parts) > 1:
+        path, sec = parts[:-1], parts[-1]
+        path = ":".join(path)
         with open(cwd / path, "r") as f:
             data = yaml.safe_load(f)
         for k in sec.split("."):
@@ -189,3 +191,25 @@ def read_yml(spec: str, cwd=None):
         return data
     else:
         raise ValueError(f'Wrong YAML spec string "{spec}"')
+
+
+def parse_spec(spec: str, cwd=None):
+    try:
+        data = read_yml(spec, cwd)
+    except:
+        k, v = parse_var(spec)
+        k = k.split(".")
+        data = {}
+        cur = data
+        for ki in k[:-1]:
+            cur[ki] = {}
+            cur = cur[ki]
+        cur[k[-1]] = v
+    return data
+
+
+def specs_to_data(specs, cwd=None):
+    data = {}
+    for spec in specs:
+        update_(data, parse_spec(spec, cwd))
+    return data
