@@ -49,13 +49,13 @@ class StepBuffer(Mapping[int, Step]):
 class ChunkBuffer(Mapping[int, Seq]):
     def __init__(
         self,
-        chunk_size: int,
+        nsteps: int,
         capacity: int,
         frame_stack: int = None,
         sampler: Sampler = None,
         persist: Store = None,
     ):
-        self.chunk_size = chunk_size
+        self.nsteps = nsteps
         self.capacity = capacity
         self.sampler = sampler
         self.frame_stack = frame_stack
@@ -83,7 +83,7 @@ class ChunkBuffer(Mapping[int, Seq]):
             self.sampler.popleft()
 
         ep = self.episodes[ep_id]
-        if off + self.chunk_size == len(ep.act):
+        if off + self.nsteps == len(ep.act):
             del self.episodes[ep_id]
 
     def on_step(self, ep_id: int, act, next_obs, reward, term, trunc):
@@ -97,16 +97,16 @@ class ChunkBuffer(Mapping[int, Seq]):
         ep.term = ep.term or term
 
         chunk_id = None
-        if len(ep.act) >= self.chunk_size:
+        if len(ep.act) >= self.nsteps:
             chunk_id = self._chunk_ids.stop
             self._chunk_ids = range(self._chunk_ids.start, chunk_id + 1)
-            offset = len(ep.act) - self.chunk_size
+            offset = len(ep.act) - self.nsteps
             self.chunks.append((ep_id, offset))
             if self.sampler is not None:
                 self.sampler.append()
 
         if term or trunc:
-            if len(ep.act) >= self.chunk_size:
+            if len(ep.act) >= self.nsteps:
                 self.episodes.persist(ep_id)
             else:
                 del self.episodes[ep_id]
@@ -142,7 +142,7 @@ class ChunkBuffer(Mapping[int, Seq]):
         ep_id, off = self.chunks[idx]
         ep = self.episodes[ep_id]
 
-        size = self.chunk_size
+        size = self.nsteps
         if self.frame_stack is None:
             obs = ep.obs[off : off + size + 1]
         else:

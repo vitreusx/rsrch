@@ -216,7 +216,7 @@ def main():
         sampler = UniformSampler()
 
     buffer = ChunkBuffer(
-        chunk_size=cfg.multi_step.n + 1,
+        nsteps=cfg.multi_step.n,
         capacity=cfg.buffer.capacity,
         frame_stack=frame_stack,
         sampler=sampler,

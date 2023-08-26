@@ -1,6 +1,6 @@
 testing:
-  expl_eps: linear(1.0, 0.01, $(sched.num_frames))
-  noisy_nets.enabled: false
+  # expl_eps: linear(1.0, 0.01, $(sched.num_frames))
+  # noisy_nets.enabled: false
   buffer.capacity: 1e6
   sched.num_frames: 5e6
   # optimizer.lr: 2.5e-6
