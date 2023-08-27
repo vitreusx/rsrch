@@ -2,13 +2,13 @@ env:
   name: ALE/Pong-v5
   atari:
     screen_size: 84
-    frame_stack: 4
     frame_skip: 4
     term_on_loss_of_life: true
     grayscale: true
     noop_max: 30
   reward: sign
   time_limit: 108e3
+  stack: 4
 sched:
   num_frames: 10e6
   opt_batch: 256
@@ -59,7 +59,7 @@ exp:
   val_every: 100e3
   val_episodes: 16
   val_envs: ${val_episodes}
-  log_every: 1e3
+  log_every: 128
 profile:
   enabled: false
   wait: 3

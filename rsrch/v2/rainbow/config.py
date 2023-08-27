@@ -7,7 +7,6 @@ from rsrch.utils.sched import schedule
 @dataclass
 class Atari:
     screen_size: int
-    frame_stack: int
     frame_skip: int
     term_on_loss_of_life: bool
     grayscale: bool
@@ -20,6 +19,7 @@ class Env:
     atari: Optional[Atari]
     reward: tuple[float, float] | str | None
     time_limit: Optional[int]
+    stack: int
 
 
 @dataclass

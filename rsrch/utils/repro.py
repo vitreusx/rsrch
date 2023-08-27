@@ -20,3 +20,16 @@ def use_deterministic(mode=True):
 def seed_worker(worker_id):
     worker_seed: int = torch.initial_seed() % 2**32
     set_seeds(worker_seed)
+
+
+class RandomState:
+    def __init__(self, seed=None):
+        torch.manual_seed(seed)
+        random.seed(seed)
+        np.random.seed(seed)
+
+    def __getstate__(self):
+        ...
+
+    def __setstate__(self, state):
+        ...

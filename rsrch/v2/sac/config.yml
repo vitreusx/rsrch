@@ -1,13 +1,51 @@
-env_steps: 4000
-epochs: 100
-buffer_cap: 1e6
+buffer:
+  capacity: 1e6
+  prefill: 2e4
+sched:
+  total_steps: 1e6
+  env_batch: 1
+  opt_batch: 256
+  value:
+    opt_every: 1
+    opt_iters: ${opt_every}
+  actor:
+    opt_every: 2
+    opt_iters: ${opt_every}
+infra:
+  device: cuda
+  env_workers: 8
+env:
+  name: ALE/Alien-v5
+  atari:
+    screen_size: 84
+    frame_skip: 4
+    term_on_life_loss: true
+    grayscale: true
+    noop_max: 30
+  reward: sign
+  time_limit: 1000
+actor:
+  memory: 4
+  opt:
+    name: adam
+    lr: 3e-4
+    eps: 1e-4
+value:
+  target:
+    sync_every: 8000
+    tau: 0.0
+  opt:
+    name: adam
+    lr: 3e-4
+    eps: 1e-4
+alpha:
+  autotune: true
+  ent_scale: 0.89
+  value: null
+  opt: ${value.opt}
 gamma: 0.99
-tau: 0.995
-lr: 1e-3
-min_ent: neg_vol
-batch_size: 100
-prefill: 10e3
-val_episodes: 10
-max_ep_len: 1000
-env_name: ALE/Alien-v5
-num_q_values: 2
+exp:
+  val_every: 10e3
+  val_episodes: 16
+  val_envs: ${val_episodes}
+  log_every: 128

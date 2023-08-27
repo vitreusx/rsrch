@@ -58,6 +58,7 @@ class AsyncVectorEnv2(VectorEnv):
 
         if num_workers is None:
             num_workers = self.num_envs
+        num_workers = min(num_workers, self.num_envs)
 
         self.num_workers = num_workers
         self._workloads = []

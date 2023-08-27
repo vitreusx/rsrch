@@ -125,14 +125,11 @@ class ChunkBuffer(Mapping[int, Seq]):
             ep_id = None
         return ep_id, chunk_id
 
-    def keys(self):
-        return self._chunk_ids
-
     def __iter__(self):
-        return iter(self.keys())
+        return iter(self._chunk_ids)
 
     def __len__(self):
-        return len(self.keys())
+        return len(self._chunk_ids)
 
     def __getitem__(self, id):
         if isinstance(id, Iterable):

@@ -8,10 +8,19 @@ class Profiler(ABC):
     def profile(self, name: str) -> ContextManager:
         ...
 
-    def wrap(self, func):
-        @wraps(func)
-        def _wrapped(*args, **kwargs):
-            with self.profile(func.__name__):
-                return func(*args, **kwargs)
+    def annotate(self, _func=None, *, name=None):
+        def decorator(func):
+            if name is None:
+                name = func.__name__
 
-        return _wrapped
+            @wraps(func)
+            def _wrapped(*args, **kwargs):
+                with self.profile(name):
+                    return func(*args, **kwargs)
+
+            return _wrapped
+
+        if _func is None:
+            return decorator
+        else:
+            return decorator(_func)

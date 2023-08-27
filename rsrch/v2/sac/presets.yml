@@ -1,0 +1,30 @@
+discrete:
+  buffer.prefill: 2e4
+  value.target:
+    sync_every: 8000
+    tau: 0.0
+  sched:
+    total_steps: 5e6
+    env_batch: 1
+    opt_batch: 256
+    value:
+      opt_every: 1
+      opt_iters: ${opt_every}
+    actor:
+      opt_every: 2
+      opt_iters: ${opt_every}
+  actor.memory: 4
+cont:
+  buffer.prefill: 5e3
+  value.target:
+    sync_every: 1
+    tau: 0.995
+  sched:
+    total_steps: 1e6
+    env_batch: 1
+    opt_batch: 64
+    value:
+      opt_every: 4
+      opt_iters: 1
+    actor: ${value}
+  actor.memory: 1

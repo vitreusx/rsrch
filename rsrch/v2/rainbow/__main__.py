@@ -1,13 +1,8 @@
 import argparse
-import asyncio
-import math
 import os
-from collections import deque
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-
+import torch.multiprocessing as mp
 import numpy as np
-import ray
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
@@ -153,7 +148,7 @@ def main():
 
     env_type, env_name = parse_env_name(cfg.env.name)
 
-    def make_env():
+    def make_val_env():
         if env_type == "atari":
             atari_cfg = cfg.env.atari
             env = gym.make(f"ALE/{env_name}", frameskip=atari_cfg.frame_skip)
@@ -176,7 +171,7 @@ def main():
         return env
 
     def make_train_env():
-        env = make_env()
+        env = make_val_env()
 
         if cfg.env.reward in ("keep", None):
             rew_f = lambda r: r
@@ -191,13 +186,9 @@ def main():
 
         return env
 
-    frame_stack = 1
-    if env_type == "atari":
-        frame_stack = cfg.env.atari.frame_stack
-
     base_spec = gym.EnvSpec(make_train_env())
-    if frame_stack > 1:
-        spec_env = gym.wrappers.FrameStack(make_train_env(), frame_stack)
+    if cfg.env.stack > 1:
+        spec_env = gym.wrappers.FrameStack(make_train_env(), cfg.env.stack)
         agent_spec = gym.EnvSpec(spec_env)
     else:
         agent_spec = base_spec
@@ -218,7 +209,7 @@ def main():
     buffer = ChunkBuffer(
         nsteps=cfg.multi_step.n,
         capacity=cfg.buffer.capacity,
-        frame_stack=frame_stack,
+        frame_stack=cfg.env.stack,
         sampler=sampler,
         persist=TensorStore(capacity=cfg.buffer.capacity, pin_memory=True),
     )
@@ -230,7 +221,7 @@ def main():
         env_workers = os.cpu_count()
 
     val_env = gym.vector.AsyncVectorEnv2(
-        env_fns=[make_env] * cfg.exp.val_envs,
+        env_fns=[make_val_env] * cfg.exp.val_envs,
         num_workers=env_workers,
     )
 
@@ -319,7 +310,7 @@ def main():
         enabled=amp_enabled,
     )
 
-    val_agent = QVecAgent(q, frame_stack)
+    val_agent = QVecAgent(q, cfg.env.stack)
     should_val = cron.Every(lambda: env_step, cfg.exp.val_every)
 
     expl_eps = cfg.expl_eps
@@ -327,7 +318,7 @@ def main():
         expl_eps = sched.Constant(expl_eps)
 
     train_agent = gym.vector.EpsVecAgent(
-        opt=QVecAgent(q, frame_stack),
+        opt=QVecAgent(q, cfg.env.stack),
         rand=gym.vector.RandomVecAgent(train_env),
         eps=expl_eps(env_step),
         num_envs=train_env.num_envs,

@@ -1,7 +1,7 @@
 import re
 from copy import copy
 from pathlib import Path
-from types import SimpleNamespace, UnionType
+from types import UnionType
 from typing import *
 
 import dacite
@@ -25,44 +25,82 @@ COMMA_PAT = quote_preserving_split(":")
 EQ_PAT = quote_preserving_split("=")
 
 
-def resolve(data, top_g=None, g_ref=None):
-    """Evaluate any $(...) and ${...} expressions in the dictionary."""
+class Namespace(dict):
+    def __setattr__(self, key, value):
+        self.__setitem__(key, value)
 
-    # If starting, initialize top_g (global scope) and g_ref (current scope ref).
-    # The global scope is passed to eval for $(...) expressions; current scope
-    # ref is used for modifying global scope on the fly.
-    if top_g is None:
-        top_g = SimpleNamespace()
-        g_ref = top_g
+    def __getattr__(self, key):
+        if key in self:
+            return self.__getitem__(key)
 
+
+class _Lazy:
+    def __init__(self, expr: str, path: list):
+        self._expr = expr
+        self._path = path
+
+    def eval(self, g: dict):
+        cur, local = g, g
+        for k in self._path[:-1]:
+            cur = cur[k]
+            if isinstance(cur, dict):
+                local = cur
+        g = {**g, **local}
+        return eval(self._expr, g)
+
+    def __repr__(self):
+        loc = ".".join(str(x) for x in self._path)
+        return f"Lazy({loc}: {self._expr})"
+
+
+def mark_lazy(value, path=[]):
+    if isinstance(value, dict):
+        new_value = Namespace()
+        for k, v in [*value.items()]:
+            new_value[k] = mark_lazy(v, [*path, k])
+        value = new_value
+    elif isinstance(value, list):
+        for i, v in enumerate(value):
+            value[i] = mark_lazy(v, [*path, i])
+    elif isinstance(value, str):
+        for pat in (VAR_PAT, EVAL_PAT):
+            m = re.match(pat, value)
+            if m is not None:
+                value = _Lazy(m["expr"], path)
+                break
+    return value
+
+
+def _resolve_once(data, g):
+    lazy = 0
     if isinstance(data, dict):
-        # Recurse into a dict
+        for k, v in [*data.items()]:
+            new_v, v_lazy = _resolve_once(v, g)
+            data[k] = new_v
+            lazy += v_lazy
+    elif isinstance(data, list):
+        for i, v in enumerate(data):
+            new_v, v_lazy = _resolve_once(v, g)
+            data[i] = new_v
+            lazy += v_lazy
+    elif isinstance(data, _Lazy):
+        try:
+            data = data.eval(g)
+        except:
+            pass
+        lazy += isinstance(data, _Lazy)
+    return data, lazy
 
-        res_data = {}
-        for k, v in data.items():
-            if isinstance(v, dict):
-                # If field is nested, add an appropriate key to global scope
-                # and recurse, passing ref to nested field entry in top_g.
-                setattr(g_ref, k, SimpleNamespace())
-                res_v = resolve(v, top_g, getattr(g_ref, k))
-            else:
-                # Otherwise, resolve the value without g_ref and set it
-                # afterwards.
-                scope = {**top_g.__dict__, **g_ref.__dict__}
-                res_v = resolve(v, top_g, scope)
-                setattr(g_ref, k, res_v)
-            res_data[k] = res_v
-        return res_data
-    else:
-        # Not a dict
-        if isinstance(data, str):
-            # If it's a string, replace all $(...)'s with eval(..., top_g)
-            repl = lambda m: repr(eval(m["expr"], g_ref))
-            data = re.sub(VAR_PAT, repl, data)
-            data = re.sub(EVAL_PAT, repl, data)
-            return data
-        else:
-            return data
+
+def resolve(data):
+    data = mark_lazy(data)
+    prev_lazy = None
+    while prev_lazy != 0:
+        data, cur_lazy = _resolve_once(data, data)
+        if prev_lazy == cur_lazy:
+            break
+        prev_lazy = cur_lazy
+    return data
 
 
 def _cast(x, t):
@@ -108,7 +146,7 @@ def _fix_types(x, t):
 T = TypeVar("T")
 
 
-def parse(data: dict, cls: Type[T]) -> T:
+def parse_data(data: dict, cls: Type[T]) -> T:
     """Parse data into a class. The data may be obtained from e.g. YAML file, and cls must be a dataclass. One can use $(...) expressions for evaluation (like in Bash). Moreover, one can use non-builtin classes in the cls dataclass, which will get converted via the constructor from a base type."""
 
     # Normalize compound keys
@@ -212,4 +250,11 @@ def specs_to_data(specs, cwd=None):
     data = {}
     for spec in specs:
         update_(data, parse_spec(spec, cwd))
+    return data
+
+
+def parse(specs: list[str], cls: Type[T] = None, cwd=None) -> dict | T:
+    data = specs_to_data(specs, cwd=cwd)
+    if cls is not None:
+        data = parse_data(data, cls)
     return data

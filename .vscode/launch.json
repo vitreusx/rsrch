@@ -1,6 +1,20 @@
 {
     "configurations": [
         {
+            "name": "Rainbow (v2)",
+            "type": "python",
+            "request": "launch",
+            "module": "rsrch.v2.rainbow",
+            "pythonArgs": [
+                "-O"
+            ],
+            "args": [
+                "-c",
+                "env.name=${input:envName}"
+            ],
+            "justMyCode": false
+        },
+        {
             "name": "Alien",
             "type": "python",
             "request": "launch",
@@ -14,5 +28,13 @@
             ],
             "justMyCode": false
         },
+    ],
+    "inputs": [
+        {
+            "id": "envName",
+            "description": "Environment name",
+            "type": "promptString",
+            "default": "ALE/Pong-v5",
+        }
     ]
 }

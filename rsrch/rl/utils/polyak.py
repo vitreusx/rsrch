@@ -9,8 +9,7 @@ def update(source: nn.Module, target: nn.Module, tau: float):
 
 
 def sync(source: nn.Module, target: nn.Module):
-    for target_p, source_p in zip(target.parameters(), source.parameters()):
-        target_p.data.copy_(source_p.data)
+    target.load_state_dict(source.state_dict())
 
 
 class Polyak:

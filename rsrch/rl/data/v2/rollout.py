@@ -10,7 +10,7 @@ __all__ = ["one_step", "steps", "async_steps", "one_episode", "episodes"]
 
 
 def one_step(env: gym.Env, agent: gym.Agent, obs):
-    act = agent.policy()
+    act = agent.policy(obs)
     next_obs, reward, term, trunc, _ = env.step(act)
     agent.step(act)
     agent.observe(next_obs)
@@ -82,7 +82,7 @@ def _(
     agent.reset(obs, mask)
 
     while True:
-        acts = agent.policy()
+        acts = agent.policy(obs)
         cur_obs = obs
         next_obs, reward, term, trunc, info = env.step(acts)
         agent.step(acts)
@@ -137,7 +137,7 @@ def async_steps(
     agent.reset(obs, mask)
 
     while True:
-        acts = agent.policy()
+        acts = agent.policy(obs)
         env.step_async(acts)
         yield
         cur_obs = obs
