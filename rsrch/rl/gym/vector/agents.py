@@ -2,9 +2,8 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
-from .base import utils
+from . import utils
 from ..env import EnvSpec, VectorEnv
-from .. import spaces
 from ..spaces import Space
 
 
@@ -21,17 +20,17 @@ class VecAgent(ABC):
         self.single_action_space = action_space
         self.action_space = utils.batch_space(action_space, num_envs)
 
-    def reset(self, obs, mask):
-        return self.observe(obs, mask)
-
-    def observe(self, obs, mask):
+    def reset(self, env_idx, obs, info):
         pass
 
     @abstractmethod
-    def policy(self, obs=None):
+    def policy(self, last_obs):
         ...
 
     def step(self, act):
+        pass
+
+    def observe(self, env_idx, obs, reward, term, trunc, info):
         pass
 
 
@@ -43,7 +42,7 @@ class RandomVecAgent(VecAgent):
             env.single_action_space,
         )
 
-    def policy(self, obs=None):
+    def policy(self, _):
         return self.action_space.sample()
 
 
@@ -58,19 +57,19 @@ class EpsVecAgent(VecAgent):
         self._rand = rand
         self.eps = eps
 
-    def reset(self, obs, mask):
-        return self._opt.reset(obs, mask), self._rand.reset(obs, mask)
+    def reset(self, *args):
+        return self._opt.reset(*args), self._rand.reset(*args)
 
-    def observe(self, obs, mask):
-        return self._opt.observe(obs, mask), self._rand.observe(obs, mask)
+    def observe(self, *args):
+        return self._opt.observe(*args), self._rand.observe(*args)
 
-    def policy(self, obs=None):
+    def policy(self, last_obs):
         use_rand = np.random.rand(self.num_envs) < self.eps
-        opt_p, rand_p = self._opt.policy(obs), self._rand.policy(obs)
+        opt_p, rand_p = self._opt.policy(last_obs), self._rand.policy(last_obs)
         return [rand_p[i] if use_rand[i] else opt_p[i] for i in range(self.num_envs)]
 
-    def step(self, act):
-        return self._opt.step(act), self._rand.step(act)
+    def step(self, *args):
+        return self._opt.step(*args), self._rand.step(*args)
 
 
 class VecAgentWrapper(VecAgent):
@@ -82,14 +81,14 @@ class VecAgentWrapper(VecAgent):
         )
         self._agent = agent
 
-    def reset(self, obs, mask):
-        return self._agent.reset(obs, mask)
+    def reset(self, *args):
+        return self._agent.reset(*args)
 
-    def observe(self, obs, mask):
-        return self._agent.observe(obs, mask)
+    def observe(self, *args):
+        return self._agent.observe(*args)
 
-    def policy(self, obs=None):
-        return self._agent.policy(obs)
+    def policy(self, last_obs):
+        return self._agent.policy(last_obs)
 
-    def step(self, act):
-        return self._agent.step(act)
+    def step(self, *args):
+        return self._agent.step(*args)

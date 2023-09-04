@@ -42,10 +42,19 @@ alpha:
   autotune: true
   ent_scale: 0.89
   value: null
-  opt: ${value.opt}
+  opt: ${_root.value.opt}
 gamma: 0.99
 exp:
   val_every: 10e3
   val_episodes: 16
   val_envs: ${val_episodes}
   log_every: 128
+profile:
+  enabled: false
+  _mult: $(max(sched.value.opt_every,sched.actor.opt_every))
+  wait: $(3*_mult)
+  warmup: $(2*_mult)
+  active: $(5*_mult)
+  repeat: 4
+  export_trace: true
+  export_stack: true

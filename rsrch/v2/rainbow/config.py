@@ -1,25 +1,7 @@
 from dataclasses import dataclass
 from typing import Optional
-
+from rsrch.rl.utils.make_env import EnvConfig
 from rsrch.utils.sched import schedule
-
-
-@dataclass
-class Atari:
-    screen_size: int
-    frame_skip: int
-    term_on_loss_of_life: bool
-    grayscale: bool
-    noop_max: int
-
-
-@dataclass
-class Env:
-    name: str
-    atari: Optional[Atari]
-    reward: tuple[float, float] | str | None
-    time_limit: Optional[int]
-    stack: int
 
 
 @dataclass
@@ -116,7 +98,7 @@ class Profile:
 
 @dataclass
 class Config:
-    env: Env
+    env: EnvConfig
     sched: Sched
     infra: Infra
     buffer: Buffer
@@ -131,3 +113,4 @@ class Config:
     decorr: Decorr
     exp: Exp
     profile: Profile
+    memory: int

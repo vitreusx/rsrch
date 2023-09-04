@@ -1,9 +1,10 @@
-import multiprocessing as mp
+import torch.multiprocessing as mp
 from multiprocessing.connection import Connection
 from typing import Iterable
 
 import numpy as np
-
+import torch
+from copy import deepcopy
 from .base import *
 from rsrch.types.shared import shared_ndarray
 
@@ -12,37 +13,52 @@ __all__ = ["AsyncVectorEnv2"]
 
 
 class EnvWorker(mp.Process):
-    def __init__(self, env_fns, idxes, data, comm: Connection, **kwargs):
+    def __init__(
+        self,
+        worker_idx,
+        env_fns,
+        idxes,
+        data,
+        comm: Connection,
+        queue: mp.Queue,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
+        self.worker_idx = worker_idx
+        self._env_fns = env_fns
         self.data = data
         self.idxes = idxes
         self.comm = comm
-        self._sync_env = SyncVectorEnv(env_fns)
+        self.queue = queue
 
     def run(self):
+        self._sync_env = SyncVectorEnv(self._env_fns, copy=False)
+
         while True:
             msg, data = self.comm.recv()
             if msg == "reset":
                 obs, info = self._sync_env.reset(**data)
-                self.data["obs"][self.idxes] = obs
-                self.comm.send(info)
+                for idx, env_idx in enumerate(self.idxes):
+                    self.data["obs"][env_idx] = obs[idx]
+                self.queue.put((self.worker_idx, info))
             elif msg == "step":
                 actions = self.data["act"][self.idxes]
                 next_obs, reward, term, trunc, info = self._sync_env.step(actions)
-                self.data["obs"][self.idxes] = next_obs
-                self.data["reward"][self.idxes] = reward
-                self.data["term"][self.idxes] = term
-                self.data["trunc"][self.idxes] = trunc
+                for idx, env_idx in enumerate(self.idxes):
+                    self.data["obs"][env_idx] = next_obs[idx]
+                    self.data["reward"][env_idx] = reward[idx]
+                    self.data["term"][env_idx] = term[idx]
+                    self.data["trunc"][env_idx] = trunc[idx]
                 if "final_observation" in info:
                     for idx, x in enumerate(info["final_observation"]):
                         info["final_observation"][idx] = x is not None
                         if x is not None:
                             self.data["final_obs"][idx] = x
-                self.comm.send(info)
+                self.queue.put((self.worker_idx, info))
             elif msg == "call":
                 name, args, kwargs = data
                 results = self._sync_env.call(name, args, kwargs)
-                self.comm.send(results)
+                self.queue.put((self.worker_idx, results))
             else:
                 raise ValueError(msg)
 
@@ -70,34 +86,62 @@ class AsyncVectorEnv2(VectorEnv):
 
         self._pivots = np.cumsum([0, *self._workloads])
 
-        obs_shape = self.single_observation_space.shape
-        obs_dtype = self.single_observation_space.dtype
-        act_shape = self.single_action_space.shape
-        act_dtype = self.single_action_space.dtype
+        obs, info = dummy_env.reset()
+        act = self.single_action_space.sample()
+        next_obs, reward, term, trunc, info = dummy_env.step(act)
 
         self.data = {
-            "obs": shared_ndarray([self.num_envs, *obs_shape], obs_dtype),
-            "final_obs": shared_ndarray([self.num_envs, *obs_shape], obs_dtype),
-            "act": shared_ndarray([self.num_envs, *act_shape], act_dtype),
-            "reward": shared_ndarray([self.num_envs], np.float32),
-            "term": shared_ndarray([self.num_envs], bool),
-            "trunc": shared_ndarray([self.num_envs], bool),
+            "obs": self._alloc(obs),
+            "final_obs": self._alloc(obs),
+            "act": self._alloc(act),
+            "reward": self._alloc(reward),
+            "term": self._alloc(term),
+            "trunc": self._alloc(trunc),
         }
 
         env_fns = self._slice(env_fns)
         self._workers = []
+        self._queue = mp.Queue()
         for idx in range(self.num_workers):
             parent, child = mp.Pipe(duplex=True)
-            idxes = slice(self._pivots[idx], self._pivots[idx + 1])
-            worker = EnvWorker(env_fns[idx], idxes, self.data, child)
+            idxes = range(self._pivots[idx], self._pivots[idx + 1])
+            worker = EnvWorker(idx, env_fns[idx], idxes, self.data, child, self._queue)
             worker.start()
             self._workers.append((parent, worker))
+
+    def _alloc(self, like):
+        if isinstance(like, torch.Tensor):
+            return torch.empty(
+                size=[self.num_envs, *like.shape],
+                dtype=like.dtype,
+                device=like.device,
+                pin_memory=True,
+            ).share_memory_()
+        elif isinstance(like, np.ndarray):
+            return shared_ndarray(
+                shape=[self.num_envs, *like.shape],
+                dtype=like.dtype,
+            )
+        else:
+            return shared_ndarray(
+                shape=[self.num_envs],
+                dtype=type(like),
+            )
 
     def _slice(self, x):
         return [x[s:e] for s, e in zip(self._pivots, self._pivots[1:])]
 
     def _concat(self, x):
         return [y for z in x for y in z]
+
+    def _cat(self, x):
+        if isinstance(x[0], torch.Tensor):
+            return torch.cat(x) if len(x[0].shape) > 0 else torch.stack(x)
+        else:
+            return np.concatenate(x) if len(x[0].shape) > 0 else np.stack(x)
+
+    def _detach(self, x):
+        return deepcopy(x)
 
     def _merge_infos(self, info):
         all_keys = {k for d in info for k in d}
@@ -119,31 +163,23 @@ class AsyncVectorEnv2(VectorEnv):
             seed = [None] * self.num_envs
         seed = self._slice(seed)
 
-        if options is not None:
-            options = [
-                {k: options[k][i] for k in options} for i in range(self.num_envs)
-            ]
-        else:
-            options = [None] * self.num_envs
-        options = self._slice(options)
-
         for idx in range(self.num_workers):
             comm, _ = self._workers[idx]
-            data = {"seed": seed[idx], "options": options[idx]}
+            data = {"seed": seed[idx], "options": options}
             comm.send(("reset", data))
 
     def reset_wait(self, *, timeout=None, seed=None, options=None):
-        infos = []
-        for idx in range(self.num_workers):
-            comm, _ = self._workers[idx]
-            infos.append(comm.recv())
+        infos = [None for _ in range(self.num_workers)]
+        for _ in range(self.num_workers):
+            worker_idx, info = self._queue.get()
+            infos[worker_idx] = info
 
-        obs = self.data["obs"].copy()
+        obs = tuple(self._detach(self.data["obs"]))
         info = self._merge_infos(infos)
         return obs, info
 
     def step_async(self, actions):
-        actions = self._slice(actions)
+        actions = self._slice(self._cat(actions))
         for idx in range(self.num_workers):
             idxes = slice(self._pivots[idx], self._pivots[idx + 1])
             self.data["act"][idxes] = actions[idx]
@@ -151,20 +187,20 @@ class AsyncVectorEnv2(VectorEnv):
             comm.send(("step", None))
 
     def step_wait(self, timeout=None):
-        infos = []
-        for idx in range(self.num_workers):
-            comm, _ = self._workers[idx]
-            infos.append(comm.recv())
+        infos = [None for _ in range(self.num_workers)]
+        for _ in range(self.num_workers):
+            worker_idx, info = self._queue.get()
+            infos[worker_idx] = info
 
-        next_obs = np.array(self.data["obs"])
-        reward = np.array(self.data["reward"])
-        term = np.array(self.data["term"])
-        trunc = np.array(self.data["trunc"])
+        next_obs = tuple(self._detach(self.data["obs"]))
+        reward = self.data["reward"]
+        term = self.data["term"]
+        trunc = self.data["trunc"]
         info = self._merge_infos(infos)
         if "final_observation" in info:
             for idx in range(self.num_envs):
                 if info["final_observation"][idx]:
-                    final_obs = np.array(self.data["final_obs"][idx])
+                    final_obs = self._detach(self.data["final_obs"][idx])
                 else:
                     final_obs = None
                 info["final_observation"][idx] = final_obs
@@ -177,8 +213,9 @@ class AsyncVectorEnv2(VectorEnv):
             comm.send(("call", data))
 
     def call_wait(self):
-        results = []
-        for idx in range(self.num_workers):
-            comm, _ = self._workers[idx]
-            results.extend(comm.recv())
-        return results
+        all_results = [None for _ in range(self.num_workers)]
+        for _ in range(self.num_workers):
+            worker_idx, results = self._queue.get()
+            all_results[worker_idx] = results
+        all_results = [res for results in all_results for res in results]
+        return all_results

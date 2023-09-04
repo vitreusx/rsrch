@@ -1,10 +1,10 @@
 from typing import overload
 
-from gymnasium import Env
-from gymnasium.vector import VectorEnv
+from .base import Env
 import torch.distributions as D
 
-from .spaces import Space
+from .spaces.base import Space
+from gymnasium.vector import VectorEnv
 
 
 class EnvSpec:

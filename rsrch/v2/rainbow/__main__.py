@@ -1,10 +1,8 @@
-import argparse
+from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
-import torch.multiprocessing as mp
 import numpy as np
 import torch
-import torch.nn.functional as F
 from torch import Tensor, nn
 from tqdm.auto import tqdm
 
@@ -15,11 +13,11 @@ from rsrch.exp.prof.torch import TorchProfiler
 from rsrch.exp.vcs import WandbVCS
 from rsrch.nn.rewrite import rewrite_module_
 from rsrch.rl import gym
-from rsrch.rl.data.v2 import *
-from rsrch.rl.data.v2.store import TensorStore
+from rsrch.rl.data import *
 from rsrch.rl.utils import polyak
+from rsrch.rl.utils.make_env import EnvFactory
 from rsrch.utils import config, cron, sched
-from rsrch.rl.gym.vector.decorr import decorrelate
+from rsrch.rl.utils.decorr import decorrelate
 
 from .config import Config
 from .distq import ValueDist
@@ -27,96 +25,63 @@ from .nets import *
 from .nets import ImpalaResidual
 
 
-def parse_env_name(env_name: str):
-    parts = env_name.split(":")
-    if len(parts) == 1:
-        env_type = "unknown"
-        if env_name.startswith("ALE/"):
-            env_type = "atari"
-            env_name = env_name[len("ALE/") :]
-    else:
-        env_type, env_name = parts
-
-    return env_type, env_name
+T = gym.spaces.transforms
 
 
 class QVecAgent(gym.VecAgent):
-    def __init__(self, q: nn.Module, frame_stack: int):
+    def __init__(self, q: nn.Module, venv: gym.VectorEnv, memory: int, obs_t=None):
+        super().__init__(
+            venv.num_envs,
+            venv.single_observation_space,
+            venv.single_action_space,
+        )
         self.q = q
-        self.device = next(q.parameters()).device
-        self.frame_stack = frame_stack
-        self._obs = [None for _ in range(frame_stack)]
+        self.obs_t = obs_t
 
-    def _convert(self, obs):
-        if isinstance(obs[0], Tensor):
-            obs = torch.stack(obs).to(device=self.device, dtype=torch.float32)
+        assert isinstance(venv.single_observation_space, gym.spaces.TensorSpace)
+        assert isinstance(venv.single_action_space, gym.spaces.TensorSpace)
+
+        self.net_device = next(q.parameters()).device
+        self.env_device = venv.single_action_space.device
+
+        if obs_t is None:
+            obs_space = venv.single_observation_space
         else:
-            obs = torch.as_tensor(
-                np.stack(obs), device=self.device, dtype=torch.float32
-            )
-        obs = obs / 255.0
-        return obs
+            obs_space = obs_t.codomain
+
+        self.memory = torch.empty(
+            [venv.num_envs, memory, *obs_space.shape],
+            device=self.net_device,
+            dtype=obs_space.dtype,
+        )
+
+    def reset(self, env_idx, obs, info):
+        if self.obs_t is not None:
+            obs = self.obs_t(obs)
+        self.memory[env_idx] = obs.to(self.net_device)
+
+    def observe(self, env_idx, obs, reward, term, trunc, info):
+        self.memory[env_idx, :-1] = self.memory[env_idx, 1:].clone()
+        if self.obs_t is not None:
+            obs = self.obs_t(obs)
+        self.memory[env_idx, -1] = obs.to(self.net_device)
 
     @torch.inference_mode()
-    def reset(self, obs, mask):
-        if all(mask):
-            self._obs = [self._convert(obs) for _ in range(self.frame_stack)]
-        else:
-            obs = [x for m, x in zip(mask, obs) if m]
-            obs = self._convert(obs)
-            idxes = [idx for idx, m in enumerate(mask) if m]
-            for k in range(self.frame_stack):
-                self._obs[k][idxes] = obs
-
-    @torch.inference_mode()
-    def observe(self, obs, mask):
-        if all(mask):
-            obs = self._convert(obs)
-            for k in range(self.frame_stack):
-                self._obs[k] = self._obs[k + 1] if k + 1 < self.frame_stack else obs
-        else:
-            obs = [x for m, x in zip(mask, obs) if m]
-            obs = self._convert(obs)
-            idxes = [idx for idx, m in enumerate(mask) if m]
-            for k in range(self.frame_stack - 1):
-                self._obs[k][idxes] = self._obs[k + 1][idxes]
-            self._obs[-1][idxes] = obs
-
-    @torch.inference_mode()
-    def policy(self):
-        obs = torch.stack(self._obs, dim=1)
-        q_values = self.q(obs)
-
+    def policy(self, _):
+        q_values = self.q(self.memory.flatten(1, 2))
         if isinstance(q_values, Tensor):
-            return q_values.argmax(-1).cpu().numpy()
+            act = q_values.argmax(-1)
         elif isinstance(q_values, ValueDist):
-            return q_values.mean.argmax(-1).cpu().numpy()
+            act = q_values.mean.argmax(-1)
+        return tuple(act.to(self.env_device))
 
 
 def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("-c", "--config", nargs="*")
-    p.add_argument("--preset", default="testing")
-
-    args = p.parse_args()
-
-    cfg_specs = []
-
-    script_cwd = Path(__file__).parent
-    defaults_path = str((script_cwd / "config.yml").absolute())
-    presets_path = str((script_cwd / "presets.yml").absolute())
-
-    cfg_specs.append(defaults_path)
-    if args.preset is not None:
-        cfg_specs.append(f"{presets_path}:{args.preset}")
-
-    if args.config is not None:
-        cfg_specs.extend(args.config)
-
-    cfg_dict = config.specs_to_data(cfg_specs)
-    cfg = config.parse(cfg_dict, Config)
-
-    # ray.init(address="auto")
+    cfg = config.from_args(
+        cls=Config,
+        defaults=Path(__file__).parent / "config.yml",
+        presets=Path(__file__).parent / "presets.yml",
+    )
 
     device = {"gpu": "cuda", "cpu": "cpu"}[cfg.infra.device]
     device = torch.device(device)
@@ -146,52 +111,47 @@ def main():
     vcs = WandbVCS()
     vcs.save()
 
-    env_type, env_name = parse_env_name(cfg.env.name)
+    env_f = EnvFactory(cfg.env)
 
     def make_val_env():
-        if env_type == "atari":
-            atari_cfg = cfg.env.atari
-            env = gym.make(f"ALE/{env_name}", frameskip=atari_cfg.frame_skip)
-            env = gym.wrappers.AtariPreprocessing(
-                env=env,
-                frame_skip=1,
-                screen_size=atari_cfg.screen_size,
-                terminal_on_life_loss=atari_cfg.term_on_loss_of_life,
-                grayscale_obs=atari_cfg.grayscale,
-                grayscale_newaxis=False,
-                scale_obs=False,
-                noop_max=atari_cfg.noop_max,
-            )
-        else:
-            raise ValueError(env_type)
-
-        if cfg.env.time_limit is not None:
-            env = gym.wrappers.TimeLimit(env, cfg.env.time_limit)
-
+        env = env_f.val_env()
+        env = gym.wrappers.ToTensor(env)
         return env
 
-    def make_train_env():
+    def make_eff_env():
         env = make_val_env()
-
-        if cfg.env.reward in ("keep", None):
-            rew_f = lambda r: r
-        elif cfg.env.reward == "sign":
-            env = gym.wrappers.TransformReward(env, lambda r: np.sign(r))
-            env.reward_range = (-1, 1)
-        elif isinstance(cfg.env.reward, tuple):
-            r_min, r_max = cfg.env.reward
-            rew_f = lambda r: np.clip(r, r_min, r_max)
-            env = gym.wrappers.TransformReward(env, rew_f)
-            env.reward_range = (r_min, r_max)
-
+        if cfg.memory > 1:
+            env = gym.wrappers.FrameStack2(env, cfg.memory)
+            env = gym.wrappers.Apply(env, T.Concat(env.observation_space, 0))
+        env = gym.wrappers.ToTensor(env, device)
         return env
 
-    base_spec = gym.EnvSpec(make_train_env())
-    if cfg.env.stack > 1:
-        spec_env = gym.wrappers.FrameStack(make_train_env(), cfg.env.stack)
-        agent_spec = gym.EnvSpec(spec_env)
-    else:
-        agent_spec = base_spec
+    def make_exp_env():
+        env = env_f.train_env()
+        if isinstance(env.observation_space, gym.spaces.Image):
+            obs_t = T.ToTensorImage(env.observation_space, normalize=False)
+        elif isinstance(env.observation_space, gym.spaces.Box):
+            obs_t = T.ToTensorBox(env.observation_space)
+        env = gym.wrappers.Apply(env, obs_t, T.ToTensor(env.action_space).inv)
+        return env
+
+    env_spec = gym.EnvSpec(make_eff_env())
+    val_spec = gym.EnvSpec(make_val_env())
+    exp_spec = gym.EnvSpec(make_exp_env())
+
+    class ExpToVal(T.SpaceTransform):
+        def __init__(self):
+            super().__init__(exp_spec.observation_space, val_spec.observation_space)
+            self.norm = None
+            if isinstance(exp_spec.observation_space, gym.spaces.TensorImage):
+                self.norm = T.NormalizeImage(exp_spec.observation_space)
+
+        def __call__(self, obs: Tensor) -> Tensor:
+            if self.norm is not None:
+                obs = self.norm(obs)
+            return obs
+
+    exp_to_val = ExpToVal()
 
     if cfg.pr.enabled:
         if isinstance(cfg.pr.beta, float):
@@ -209,10 +169,33 @@ def main():
     buffer = ChunkBuffer(
         nsteps=cfg.multi_step.n,
         capacity=cfg.buffer.capacity,
-        frame_stack=cfg.env.stack,
+        stack_out=cfg.memory,
         sampler=sampler,
         persist=TensorStore(capacity=cfg.buffer.capacity, pin_memory=True),
     )
+
+    class ProcessBatch:
+        def __call__(self, batch: list[Seq]) -> ChunkBatch:
+            if cfg.memory > 1:
+                for seq in batch:
+                    obs = []
+                    for o in seq.obs:
+                        o = (
+                            o.flatten(0, 1)
+                            if isinstance(o, Tensor)
+                            else torch.cat(o, 0)
+                        )
+                        obs.append(o)
+                    seq.obs = obs
+
+            batch = ChunkBatch.collate_fn(batch)
+            batch = batch.to(device)
+            if isinstance(exp_spec.observation_space, gym.spaces.TensorImage):
+                batch.obs = batch.obs / 255.0
+
+            return batch
+
+    process_batch = ProcessBatch()
 
     env_step = 0
 
@@ -225,19 +208,28 @@ def main():
         num_workers=env_workers,
     )
 
-    env_fns = [make_train_env] * cfg.sched.env_batch
+    env_fns = [make_exp_env] * cfg.sched.env_batch
     if cfg.decorr.enabled:
         env_fns = decorrelate(env_fns)
-    train_env = gym.vector.AsyncVectorEnv2(
+
+    exp_env = gym.vector.AsyncVectorEnv2(
         env_fns=env_fns,
         num_workers=env_workers,
     )
-    init_obs = None
+
+    init = None
+    ep_ids = [None for _ in range(exp_env.num_envs)]
+
     if cfg.decorr.enabled:
-        init_obs = train_env.call("_observation")
+        states = exp_env.call("state")
+        obs, infos = zip(*states)
+        info = gym.vector.utils.merge_vec_infos(infos)
+        init = obs, info
+        for env_idx in range(exp_env.num_envs):
+            ep_ids[env_idx] = buffer.on_reset(obs, info)
 
     def make_enc():
-        obs_shape = agent_spec.observation_space.shape
+        obs_shape = env_spec.observation_space.shape
         if cfg.encoder.type == "nature":
             enc = NatureEncoder(obs_shape)
         elif cfg.encoder.type == "impala":
@@ -279,7 +271,7 @@ def main():
 
     def make_q():
         enc = make_enc()
-        num_actions = agent_spec.action_space.n
+        num_actions = env_spec.action_space.n
         head = QHead(enc.out_features, num_actions, cfg.dist)
         if cfg.noisy_nets.enabled:
             rewrite_module_(head, apply_noisy)
@@ -310,21 +302,20 @@ def main():
         enabled=amp_enabled,
     )
 
-    val_agent = QVecAgent(q, cfg.env.stack)
+    val_agent = QVecAgent(q, val_env, cfg.memory)
     should_val = cron.Every(lambda: env_step, cfg.exp.val_every)
 
     expl_eps = cfg.expl_eps
     if isinstance(expl_eps, float):
         expl_eps = sched.Constant(expl_eps)
 
-    train_agent = gym.vector.EpsVecAgent(
-        opt=QVecAgent(q, cfg.env.stack),
-        rand=gym.vector.RandomVecAgent(train_env),
+    train_agent = gym.vector.agents.EpsVecAgent(
+        opt=QVecAgent(q, exp_env, cfg.memory, exp_to_val),
+        rand=gym.vector.agents.RandomVecAgent(exp_env),
         eps=expl_eps(env_step),
-        num_envs=train_env.num_envs,
+        num_envs=exp_env.num_envs,
     )
-    env_batch_iter = async_steps(train_env, train_agent, init_obs=init_obs)
-    ep_ids = [None for _ in range(train_env.num_envs)]
+    env_batch_iter = rollout.events(exp_env, train_agent, init=init)
 
     pbar = tqdm(total=cfg.sched.num_frames)
     should_end = lambda: env_step >= cfg.sched.num_frames
@@ -333,18 +324,46 @@ def main():
     assert opt_batch_ % cfg.sched.env_batch == 0
     opt_steps = opt_batch_ // cfg.sched.opt_batch
 
+    pool = ThreadPoolExecutor()
+
+    def update_prio(idxes, prio):
+        prio = prio.float().detach().cpu().numpy()
+        sampler.update(idxes, prio)
+
     while not should_end():
         if should_val:
             val_returns = []
             q.apply(zero_noise_)
-            for _, ep in episodes(
+            val_iter = rollout.episodes(
                 val_env, val_agent, max_episodes=cfg.exp.val_episodes
-            ):
+            )
+            for _, ep in val_iter:
                 val_returns.append(sum(ep.reward))
 
             board.add_scalar("val/returns", np.mean(val_returns))
 
-        next(env_batch_iter)
+        q.apply(reset_noise_)
+        train_agent.eps = expl_eps(env_step)
+
+        while True:
+            ev = next(env_batch_iter)
+            if isinstance(ev, rollout.Async):
+                break
+            elif isinstance(ev, rollout.Reset):
+                ep_ids[ev.env_idx] = buffer.on_reset(ev.obs, ev.info)
+            elif isinstance(ev, rollout.Step):
+                buffer.on_step(
+                    ep_ids[ev.env_idx],
+                    ev.act,
+                    ev.next_obs,
+                    ev.reward,
+                    ev.term,
+                    ev.trunc,
+                )
+
+                env_step += 1
+                pbar.update()
+                q_polyak.step()
 
         if len(buffer) >= cfg.buffer.prefill:
             for _ in range(opt_steps):
@@ -358,11 +377,7 @@ def main():
                         idxes = batch
                         batch = buffer[idxes]
 
-                    batch = [to_tensor_seq(s) for s in batch]
-                    batch = ChunkBatch.collate_fn(batch)
-                    batch = batch.to(device=device)
-                    batch.obs = batch.obs / 255.0
-                    batch.reward = batch.reward.to(batch.obs.dtype)
+                    batch = process_batch(batch)
 
                     with torch.no_grad():
                         with autocast():
@@ -400,8 +415,7 @@ def main():
 
                         mean_q_loss = q_loss.mean()
 
-                    prio = prio.float().detach().cpu().numpy()
-                    sampler.update(idxes, prio)
+                    task = pool.submit(update_prio, idxes, prio)
 
                     opt.zero_grad(set_to_none=True)
                     scaler.scale(mean_q_loss).backward()
@@ -411,19 +425,12 @@ def main():
                     scaler.step(opt)
                     scaler.update()
 
+                    task.result()
+
                     if should_log:
                         board.add_scalar("train/q_loss", mean_q_loss)
                         board.add_scalar("train/expl_eps", train_agent.eps)
                         board.add_scalar("train/mean_q_pred", pred.mean())
-
-        env_batch = next(env_batch_iter)
-        q.apply(reset_noise_)
-        train_agent.eps = expl_eps(env_step)
-        for idx in range(train_env.num_envs):
-            ep_ids[idx], _ = buffer.push(ep_ids[idx], env_batch[idx])
-        env_step += train_env.num_envs
-        pbar.update(train_env.num_envs)
-        q_polyak.step(train_env.num_envs)
 
 
 if __name__ == "__main__":

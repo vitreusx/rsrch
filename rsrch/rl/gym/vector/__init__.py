@@ -1,7 +1,5 @@
 from .base import *
 
-from .agents import *
-from .wrappers import *
-from .async_env import *
-
-__all__ = ["VectorEnv"]
+from . import agents, utils
+from .async_env import AsyncVectorEnv2
+from .agents import VecAgent

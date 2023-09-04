@@ -10,12 +10,11 @@ class Profiler(ABC):
 
     def annotate(self, _func=None, *, name=None):
         def decorator(func):
-            if name is None:
-                name = func.__name__
+            _name = name if name is not None else func.__name__
 
             @wraps(func)
             def _wrapped(*args, **kwargs):
-                with self.profile(name):
+                with self.profile(_name):
                     return func(*args, **kwargs)
 
             return _wrapped

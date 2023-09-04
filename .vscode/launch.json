@@ -1,40 +1,54 @@
 {
     "configurations": [
         {
-            "name": "Rainbow (v2)",
+            "name": "Rainbow",
             "type": "python",
             "request": "launch",
             "module": "rsrch.v2.rainbow",
             "pythonArgs": [
-                "-O"
+                "-O",
+            ],
+            // "args": [
+            //     "-p",
+            //     "${input:preset}"
+            // ],
+            "justMyCode": false
+        },
+        {
+            "name": "PPO",
+            "type": "python",
+            "request": "launch",
+            "module": "rsrch.v2.ppo",
+            "pythonArgs": [
+                "-O",
             ],
             "args": [
-                "-c",
-                "env.name=${input:envName}"
+                "-p",
+                "${input:preset}"
             ],
             "justMyCode": false
         },
         {
-            "name": "Alien",
+            "name": "SAC",
             "type": "python",
             "request": "launch",
-            "module": "rsrch.v2.rainbow",
+            "module": "rsrch.v2.sac",
             "pythonArgs": [
                 "-O"
             ],
             "args": [
-                "-c",
-                "env.name=ALE/Alien-v5"
+                "-p",
+                "${input:preset}"
             ],
             "justMyCode": false
         },
     ],
     "inputs": [
         {
-            "id": "envName",
-            "description": "Environment name",
+            "id": "preset",
+            "description": "Preset",
             "type": "promptString",
-            "default": "ALE/Pong-v5",
+            "default": "Pong-v5",
         }
     ]
 }

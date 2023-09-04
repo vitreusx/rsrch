@@ -1,8 +1,6 @@
-from gymnasium import *
+from .base import *
 
-del spaces, vector, wrappers
-
-from . import agents, spaces, vector, wrappers
-from .agents import *
-from .env import *
-from .vector import *
+from . import agents, spaces, env, wrappers, vector
+from .vector import VectorEnv, VecAgent
+from .agents import Agent
+from .env import EnvSpec

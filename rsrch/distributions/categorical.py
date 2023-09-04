@@ -97,8 +97,8 @@ class Categorical(Distribution, Tensorlike):
 
     def entropy(self):
         min_real = torch.finfo(self.logits.dtype).min
-        logits = torch.clamp(self.logits, min=min_real)
-        p_log_p = logits * self.probs
+        log_probs = torch.clamp(self.log_probs, min=min_real)
+        p_log_p = log_probs * self.probs
         return -p_log_p.sum(-1)
 
 

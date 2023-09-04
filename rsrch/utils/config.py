@@ -1,17 +1,19 @@
+from __future__ import annotations
+import argparse
+from enum import Enum
+import io
 import re
 from copy import copy
 from pathlib import Path
 from types import UnionType
 from typing import *
-
+from dataclasses import is_dataclass
 import dacite
 import ruamel.yaml as yaml
+from mako.template import Template
 
-# A simple ${...} pattern
-VAR_PAT = r"\${(?P<expr>[^}]*)}"
-
-# A simple $(...) pattern
-EVAL_PAT = r"\$\((?P<expr>[^\)]*)\)"
+# Either $(...) or ${...} covering entire text
+EVAL_PATS = [r"^\$\((?P<expr>[^\)]*)\)$", r"^\${(?P<expr>[^\)]*)}$"]
 
 
 def quote_preserving_split(sep: str):
@@ -26,6 +28,8 @@ EQ_PAT = quote_preserving_split("=")
 
 
 class Namespace(dict):
+    """A dict also accessible via attr access."""
+
     def __setattr__(self, key, value):
         self.__setitem__(key, value)
 
@@ -35,9 +39,19 @@ class Namespace(dict):
 
 
 class _Lazy:
-    def __init__(self, expr: str, path: list):
-        self._expr = expr
+    """A "lazy value" in the dict in the form of its location in the tree and the expr to evaluate."""
+
+    def __init__(self, value, path: list):
+        self._value = value
         self._path = path
+        self._eval_fn = self._make_eval_fn()
+
+    def _make_eval_fn(self):
+        for pat in EVAL_PATS:
+            m = re.match(pat, self._value)
+            if m is not None:
+                return lambda g: eval(m["expr"], g)
+        return lambda g: Template(self._value).render(**g)
 
     def eval(self, g: dict):
         cur, local = g, g
@@ -46,14 +60,20 @@ class _Lazy:
             if isinstance(cur, dict):
                 local = cur
         g = {**g, **local}
-        return eval(self._expr, g)
+        if "buffer" in g:
+            # Due to a limitation in Mako, we cannot pass "buffer" variable
+            # directly, if it is defined
+            del g["buffer"]
+        return self._eval_fn(g)
 
     def __repr__(self):
         loc = ".".join(str(x) for x in self._path)
-        return f"Lazy({loc}: {self._expr})"
+        return f"Lazy({loc}: {self._value})"
 
 
 def mark_lazy(value, path=[]):
+    """Convert $(...)'s and ${...} to _Lazy objects."""
+
     if isinstance(value, dict):
         new_value = Namespace()
         for k, v in [*value.items()]:
@@ -63,15 +83,13 @@ def mark_lazy(value, path=[]):
         for i, v in enumerate(value):
             value[i] = mark_lazy(v, [*path, i])
     elif isinstance(value, str):
-        for pat in (VAR_PAT, EVAL_PAT):
-            m = re.match(pat, value)
-            if m is not None:
-                value = _Lazy(m["expr"], path)
-                break
+        value = _Lazy(value, path)
     return value
 
 
 def _resolve_once(data, g):
+    """Try to convert _Lazy objects to regular values, w/o recursion."""
+
     lazy = 0
     if isinstance(data, dict):
         for k, v in [*data.items()]:
@@ -93,10 +111,12 @@ def _resolve_once(data, g):
 
 
 def resolve(data):
+    """Convert $(...)'s and ${...}'s to regular values."""
     data = mark_lazy(data)
     prev_lazy = None
     while prev_lazy != 0:
-        data, cur_lazy = _resolve_once(data, data)
+        g = {**data, **{"_root": data}}
+        data, cur_lazy = _resolve_once(data, g)
         if prev_lazy == cur_lazy:
             break
         prev_lazy = cur_lazy
@@ -213,22 +233,29 @@ def read_yml(spec: str, cwd=None):
 
     if cwd is None:
         cwd = Path.cwd()
+    cwd = Path(cwd)
 
-    parts = re.findall(COMMA_PAT, spec)
-    if len(parts) == 1:
-        path = parts[0]
-        with open(cwd / path, "r") as f:
-            return yaml.safe_load(f)
-    elif len(parts) > 1:
-        path, sec = parts[:-1], parts[-1]
-        path = ":".join(path)
-        with open(cwd / path, "r") as f:
-            data = yaml.safe_load(f)
-        for k in sec.split("."):
-            data = data[k]
-        return data
+    if (cwd / spec).exists():
+        path = cwd / spec
+        sec = None
     else:
-        raise ValueError(f'Wrong YAML spec string "{spec}"')
+        parts = re.findall(COMMA_PAT, spec)
+        if len(parts) == 1:
+            path = cwd / parts[0]
+            sec = None
+        else:
+            path, sec = parts[:-1], parts[-1]
+            path = cwd / ":".join(path)
+
+    with open(path, "r") as f:
+        data = yaml.safe_load(f)
+        if sec is not None:
+            for k in sec.split("."):
+                if isinstance(data, list):
+                    data = data[int(k)]
+                else:
+                    data = data[k]
+        return data
 
 
 def parse_spec(spec: str, cwd=None):
@@ -258,3 +285,51 @@ def parse(specs: list[str], cls: Type[T] = None, cwd=None) -> dict | T:
     if cls is not None:
         data = parse_data(data, cls)
     return data
+
+
+def nested_fields(cls: Type[T]):
+    fields = {}
+    for name, field in cls.__dataclass_fields__.items():
+        if is_dataclass(field.type):
+            nested = nested_fields(field.type)
+            fields.update({f"{field.name}.{k}": t for k, t in nested.items()})
+        else:
+            fields[field.name] = field.type
+    return fields
+
+
+def from_args(cls: Type[T], defaults: Path = None, presets: Path = None) -> T:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-c", "--config", nargs="*")
+    if presets is not None:
+        parser.add_argument("-p", "--presets", nargs="*")
+
+    # nested_ = nested_fields(cls)
+    # for k, t in nested_.items():
+    #     parser.add_argument(f"--{k}")
+
+    args, unknown = parser.parse_known_args()
+    cfg_specs = []
+    if defaults is not None:
+        cfg_specs.append(str(defaults.absolute()))
+    if args.config is not None:
+        cfg_specs.extend(args.config)
+    if presets is not None and args.presets is not None:
+        preset_file = str(Path(presets).absolute())
+        cfg_specs.extend(f"{preset_file}:{preset}" for preset in args.presets)
+
+    data = specs_to_data(cfg_specs)
+
+    unk_dict = {}
+    for key, value in zip(unknown[::2], unknown[1::2]):
+        if key.startswith("+"):
+            unk_dict[key[1:]] = value
+
+    if len(unk_dict) > 0:
+        ss = io.StringIO()
+        yaml.safe_dump(unk_dict, ss)
+        ss.seek(0)
+        unk_dict = yaml.safe_load(ss)
+        update_(data, unk_dict)
+
+    return parse_data(data, cls)

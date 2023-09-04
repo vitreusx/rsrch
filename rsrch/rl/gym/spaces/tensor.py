@@ -2,9 +2,8 @@ import typing
 from typing import SupportsFloat
 
 import torch
-from .base import Space
+from .base import Space, Tuple
 from torch import Tensor
-
 
 __all__ = ["TensorSpace", "TensorBox", "TensorDiscrete"]
 
@@ -12,15 +11,15 @@ __all__ = ["TensorSpace", "TensorBox", "TensorDiscrete"]
 class TensorSpace(Space[Tensor]):
     def __init__(
         self,
-        shape: typing.Sequence[int] | torch.Size | None = None,
-        dtype: torch.dtype | None = None,
+        shape: typing.Sequence[int] | torch.Size,
+        dtype: torch.dtype,
         device: torch.device | None = None,
         seed: int | torch.Generator | None = None,
     ):
         super().__init__()
-        self._shape = None if shape is None else torch.Size(shape)
+        self._shape = torch.Size(shape)
         self.dtype = dtype
-        self.device = device
+        self.device = device if device is not None else torch.device("cpu")
 
         if isinstance(seed, (int, type(None))):
             self._seed = seed
@@ -40,6 +39,16 @@ class TensorSpace(Space[Tensor]):
             if self._seed is not None:
                 self._gen = self._gen.manual_seed(self._seed)
         return self._gen
+
+    @gen.setter
+    def _(self, value):
+        self._gen = value
+
+    def seed(self, seed: int | None = None) -> list[int]:
+        if seed is None:
+            seed = self.gen.seed()
+        self.gen = self.gen.manual_seed(seed)
+        return [seed]
 
     def __getstate__(self):
         state = dict(self.__dict__)
@@ -181,6 +190,16 @@ class TensorBox(TensorSpace):
         sample = sample.to(dtype=self.dtype)
         return sample
 
+    def __eq__(self, other):
+        if not isinstance(other, TensorBox):
+            return False
+        return (
+            torch.allclose(self.low, other.low)
+            and torch.allclose(self.high, other.high)
+            and self.dtype == other.dtype
+            and self.device == other.device
+        )
+
     def __repr__(self) -> str:
         return f"TensorBox({self._low_repr}, {self._high_repr}, {tuple(self.shape)}, {self.dtype})"
 
@@ -218,6 +237,15 @@ class TensorDiscrete(TensorSpace):
                 dtype=self.dtype,
                 generator=self.gen,
             )
+
+    def __eq__(self, other):
+        if not isinstance(other, TensorDiscrete):
+            return False
+        return (
+            self.n == other.n
+            and self.device == other.device
+            and self.dtype == other.dtype
+        )
 
     def __repr__(self) -> str:
         if self.start == 0:

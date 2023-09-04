@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Generic, List, Optional, Sequence, SupportsFloat, TypeVar
+from functools import singledispatch
 
 import numpy as np
 import torch
@@ -36,6 +37,8 @@ class Step(Generic[ObsType, ActType]):
     """Whether next_obs is terminal (in MDP sense, not in the "needs reset" sense)."""
     trunc: Optional[bool] = None
     """Whether the episode has been truncated."""
+    info: Optional[dict] = None
+    """Info dict for the step."""
 
     @property
     def done(self):
@@ -51,6 +54,7 @@ class StepBatch(Generic[ObsType, ActType]):
     reward: Sequence[SupportsFloat]
     term: Sequence[bool]
     trunc: Optional[Sequence[bool]] = None
+    info: Optional[Sequence[dict]] = None
 
     def __len__(self):
         return len(self.obs)
@@ -60,16 +64,15 @@ class StepBatch(Generic[ObsType, ActType]):
             yield self[idx]
 
     def __getitem__(self, idx):
-        data = [
-            self.obs[idx],
-            self.act[idx],
-            self.next_obs[idx],
-            self.reward[idx],
-            self.term[idx],
-        ]
-        if self.trunc is not None:
-            data.append(self.trunc[idx])
-        return Step(*data)
+        return Step(
+            obs=self.obs[idx],
+            act=self.act[idx],
+            next_obs=self.next_obs[idx],
+            reward=self.reward[idx],
+            term=self.term[idx],
+            trunc=self.trunc[idx] if self.trunc is not None else None,
+            info=self.info[idx] if self.info is not None else None,
+        )
 
 
 def _stack(xs, dim=0, device=None):
@@ -79,6 +82,11 @@ def _stack(xs, dim=0, device=None):
         return torch.stack(xs, dim=dim).to(device=device)
     else:
         return torch.as_tensor(np.stack(xs, axis=dim), device=device)
+
+
+def _stack2d(xs: list, device=None):
+    xs = [_stack(x) for x in xs]
+    return torch.stack(xs, 1).to(device=device)
 
 
 @dataclass
@@ -122,6 +130,8 @@ class Seq:
     """Sequence [r_2, ..., r_T] of rewards. By convention, rewards are assigned to the next state, thus the indexing starts from 2. In general, r_t = r(s_{t-1}, a_{t-1}, s_t)."""
     term: bool
     """Whether the final state s_T is terminal."""
+    info: Optional[Sequence[dict]] = None
+    """Sequence of info dicts."""
 
     def __len__(self):
         return len(self.act)
@@ -136,6 +146,7 @@ class Seq:
             act=self.act[beg : end - 1],
             reward=self.reward[beg : end - 1],
             term=self.term and end == len(self.obs) - 1,
+            info=self.info[beg:end],
         )
 
 
@@ -233,10 +244,19 @@ class ChunkBatch:
         )
 
     @staticmethod
-    def collate_fn(batch: List[TensorSeq]):
-        return ChunkBatch(
-            obs=_stack([x.obs for x in batch], dim=1),
-            act=_stack([x.act for x in batch], dim=1),
-            reward=_stack([x.reward for x in batch], dim=1),
-            term=torch.as_tensor([x.term for x in batch]),
-        )
+    def collate_fn(batch: List[Seq]):
+        bs, seq_len = len(batch), len(batch[0].obs)
+        obs, act, reward = [], [], []
+        for j in range(seq_len):
+            for i in range(bs):
+                obs.append(batch[i].obs[j])
+                if j > 0:
+                    act.append(batch[i].act[j - 1])
+                    reward.append(batch[i].reward[j - 1])
+        obs = _stack(obs)
+        obs = obs.reshape(seq_len, bs, *obs.shape[1:])
+        act = _stack(act)
+        act = act.reshape(seq_len - 1, bs, *act.shape[1:])
+        reward = torch.tensor(reward).reshape(seq_len - 1, bs)
+        term = torch.tensor([x.term for x in batch], device=obs.device)
+        return ChunkBatch(obs, act, reward, term)

@@ -3,12 +3,11 @@ env:
   atari:
     screen_size: 84
     frame_skip: 4
-    term_on_loss_of_life: true
+    term_on_life_loss: true
     grayscale: true
     noop_max: 30
   reward: sign
   time_limit: 108e3
-  stack: 4
 sched:
   num_frames: 10e6
   opt_batch: 256
@@ -52,8 +51,9 @@ pr:
   batch_max: false
 gamma: 0.99
 expl_eps: 0.0
+memory: 4
 decorr:
-  enabled: true
+  enabled: false
   num_steps: auto
 exp:
   val_every: 100e3
@@ -61,7 +61,7 @@ exp:
   val_envs: ${val_episodes}
   log_every: 128
 profile:
-  enabled: false
+  enabled: true
   wait: 3
   warmup: 2
   active: 5
