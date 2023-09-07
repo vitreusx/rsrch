@@ -1,12 +1,15 @@
 env:
   name: CartPole-v1
+  type: classic
   atari:
     screen_size: 84
     frame_skip: 4
-    term_on_life_loss: true
+    term_on_life_loss: false
     grayscale: true
     noop_max: 30
     frame_stack: 4
+    fire_reset: true
+    episodic_life: true
   reward: sign
   time_limit: 108e3
 total_steps: 500e3
@@ -30,4 +33,5 @@ clip_grad: 0.5
 log_every: 128
 val_every: 10e3
 decorrelate: false
-share_encoder: false
+share_encoder: true
+custom_init: true

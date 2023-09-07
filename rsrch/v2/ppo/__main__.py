@@ -63,19 +63,6 @@ class CriticHead(nn.Sequential):
         )
 
 
-class SafeCategorical(nn.Module):
-    def __init__(self, in_features: int, num_classes: int, min_prob: float):
-        super().__init__()
-        self.head = nn.Linear(in_features, num_classes, bias=False)
-        self.max_logits = np.log(1 / min_prob - num_classes + 1)
-
-    def forward(self, x: Tensor) -> D.Categorical:
-        logits: Tensor = self.head(x)
-        logits = logits - logits.min(-1, keepdim=True).values
-        logits = logits.clamp_max(self.max_logits)
-        return D.Categorical(logits=logits)
-
-
 class ActorHead(nn.Module):
     def __init__(self, env_spec: gym.EnvSpec, enc_dim: int):
         super().__init__()
@@ -95,8 +82,14 @@ class ActorHead(nn.Module):
         return self.net(z)
 
 
+def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
+    if isinstance(layer, (nn.Linear, nn.Conv2d)):
+        torch.nn.init.orthogonal_(layer.weight, std)
+        torch.nn.init.constant_(layer.bias, bias_const)
+
+
 class ActorCritic(nn.Module):
-    def __init__(self, env_spec: gym.EnvSpec, share_enc=False):
+    def __init__(self, env_spec: gym.EnvSpec, share_enc=False, custom_init=False):
         super().__init__()
         self._share_enc = share_enc
 
@@ -111,6 +104,20 @@ class ActorCritic(nn.Module):
             critic_enc = Encoder(env_spec)
             critic_head = CriticHead(critic_enc.enc_dim)
             self.critic = nn.Sequential(critic_enc, critic_head)
+
+        if custom_init:
+            self._custom_init()
+
+    def _custom_init(self):
+        if self._share_enc:
+            self.enc.apply(layer_init)
+            self.actor_head.apply(lambda x: layer_init(x, std=1e-2))
+            self.critic_head.apply(lambda x: layer_init(x, std=1.0))
+        else:
+            self.actor[0].apply(layer_init)
+            self.actor[1].apply(lambda x: layer_init(x, std=1e-2))
+            self.critic[0].apply(layer_init)
+            self.critic[1].apply(lambda x: layer_init(x, std=1.0))
 
     def forward(self, state: Tensor, values=True):
         if self._share_enc:
@@ -186,10 +193,13 @@ def main():
 
     env_spec = gym.EnvSpec(make_train_env())
 
-    actor_critic = ActorCritic(env_spec, share_enc=cfg.share_encoder).to(device)
+    actor_critic = ActorCritic(
+        env_spec, share_enc=cfg.share_encoder, custom_init=cfg.custom_init
+    ).to(device)
     opt = torch.optim.Adam(actor_critic.parameters(), lr=cfg.lr, eps=cfg.opt_eps)
 
-    train_agent = val_agent = ACAgent(actor_critic, env_spec)
+    train_agent = ACAgent(actor_critic, env_spec)
+    val_agent = ACAgent(actor_critic, env_spec)
 
     ep_ids = [None for _ in range(train_env.num_envs)]
     buf = OnlineBuffer()

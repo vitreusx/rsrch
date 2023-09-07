@@ -7,7 +7,7 @@ import torch
 from copy import deepcopy
 from .base import *
 from rsrch.types.shared import shared_ndarray
-
+from .utils import split_vec_info, merge_vec_infos
 
 __all__ = ["AsyncVectorEnv2"]
 
@@ -101,10 +101,12 @@ class AsyncVectorEnv2(VectorEnv):
 
         env_fns = self._slice(env_fns)
         self._workers = []
+        self._idxes = []
         self._queue = mp.Queue()
         for idx in range(self.num_workers):
             parent, child = mp.Pipe(duplex=True)
             idxes = range(self._pivots[idx], self._pivots[idx + 1])
+            self._idxes.append(idxes)
             worker = EnvWorker(idx, env_fns[idx], idxes, self.data, child, self._queue)
             worker.start()
             self._workers.append((parent, worker))
@@ -143,17 +145,18 @@ class AsyncVectorEnv2(VectorEnv):
     def _detach(self, x):
         return deepcopy(x)
 
-    def _merge_infos(self, info):
-        all_keys = {k for d in info for k in d}
-        new_info = {}
-        for k in all_keys:
-            vlist = []
-            for i in range(self.num_workers):
-                workload = self._workloads[i]
-                v = False if k.startswith("_") else None
-                vlist.extend(info[i][k] if k in info[i] else [v] * workload)
-            new_info[k] = vlist
-        return new_info
+    def _merge(self, sv_infos):
+        merged = {}
+        for idxes, sv_info in zip(self._idxes, sv_infos):
+            for k, v in sv_info.items():
+                if k.startswith("_"):
+                    continue
+                if k not in merged:
+                    merged[k] = np.empty(self.num_envs, dtype=type(v))
+                    merged["_" + k] = np.empty(self.num_envs, dtype=type)
+                merged[k][idxes] = v
+                merged["_" + k][idxes] = sv_info["_" + k]
+        return merged
 
     def reset_async(self, *, seed=None, options=None):
         if seed is not None:
@@ -175,7 +178,7 @@ class AsyncVectorEnv2(VectorEnv):
             infos[worker_idx] = info
 
         obs = tuple(self._detach(self.data["obs"]))
-        info = self._merge_infos(infos)
+        info = self._merge(infos)
         return obs, info
 
     def step_async(self, actions):
@@ -196,7 +199,7 @@ class AsyncVectorEnv2(VectorEnv):
         reward = self.data["reward"]
         term = self.data["term"]
         trunc = self.data["trunc"]
-        info = self._merge_infos(infos)
+        info = self._merge(infos)
         if "final_observation" in info:
             for idx in range(self.num_envs):
                 if info["final_observation"][idx]:

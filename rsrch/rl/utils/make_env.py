@@ -17,8 +17,11 @@ class EnvConfig:
         grayscale: bool
         noop_max: int
         frame_stack: Optional[int]
+        fire_reset: bool
+        episodic_life: bool
 
     name: str
+    type: str
     atari: Atari
     reward: str | tuple[int, int]
     time_limit: Optional[int]
@@ -30,12 +33,16 @@ class EnvFactory:
         self.record_stats = record_stats
 
     def _base_env(self):
-        if self.cfg.name.startswith("ALE/"):
+        if self.cfg.type == "atari":
             atari = self.cfg.atari
-            env = gym.make(self.cfg.name, frameskip=atari.frame_skip)
+            env = gym.make(self.cfg.name, frameskip=1)
+
+            if self.record_stats:
+                env = gym.wrappers.RecordEpisodeStatistics(env)
+
             env = gym.wrappers.AtariPreprocessing(
                 env=env,
-                frame_skip=1,
+                frame_skip=atari.frame_skip,
                 screen_size=atari.screen_size,
                 terminal_on_life_loss=atari.term_on_life_loss,
                 grayscale_obs=atari.grayscale,
@@ -44,8 +51,15 @@ class EnvFactory:
                 noop_max=atari.noop_max,
             )
 
+            if atari.episodic_life:
+                env = gym.wrappers.EpisodicLifeEnv(env)
+
+            if atari.fire_reset:
+                if "FIRE" in env.unwrapped.get_action_meanings():
+                    env = gym.wrappers.FireResetEnv(env)
+
             channels_last = True
-            if atari.frame_stack is not None:
+            if atari.frame_stack is not None and atari.frame_stack > 1:
                 env = gym.wrappers.FrameStack(env, atari.frame_stack)
                 env = gym.wrappers.Apply(env, np.array)
                 channels_last = False
@@ -63,9 +77,6 @@ class EnvFactory:
 
         if self.cfg.time_limit is not None:
             env = gym.wrappers.TimeLimit(env, self.cfg.time_limit)
-
-        if self.record_stats:
-            env = gym.wrappers.RecordEpisodeStatistics(env)
 
         return env
 

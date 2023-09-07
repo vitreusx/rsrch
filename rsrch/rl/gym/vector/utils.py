@@ -11,7 +11,7 @@ def split_vec_info(info: dict, num_envs: int):
             continue
         for i in range(num_envs):
             if f"_{k}" in info:
-                if info[f"_{k}"]:
+                if info[f"_{k}"][i]:
                     split[i][k] = info[k][i]
             else:
                 split[i][k] = info[k]
@@ -20,17 +20,14 @@ def split_vec_info(info: dict, num_envs: int):
 
 def merge_vec_infos(infos: list[dict]):
     num_envs = len(infos)
-    all_keys = {k for info in infos for k in info.keys()}
-    vec_info = {
-        **{k: [None for _ in range(num_envs)] for k in all_keys},
-        **{f"_{k}": np.zeros(num_envs, dtype=bool) for k in all_keys},
-    }
-
+    vec_info = {}
     for i, env_info in enumerate(infos):
-        for k in env_info.keys():
+        for k, v in env_info.items():
+            if k not in vec_info:
+                vec_info[k] = np.empty(num_envs, dtype=type(v))
+                vec_info["_" + k] = np.zeros(num_envs, dtype=bool)
             vec_info[k][i] = env_info[k]
-            vec_info[f"_{k}"][i] = True
-
+            vec_info["_" + k][i] = True
     return vec_info
 
 

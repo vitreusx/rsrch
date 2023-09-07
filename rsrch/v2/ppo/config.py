@@ -28,3 +28,4 @@ class Config:
     vf_coeff: float
     decorrelate: bool
     share_encoder: bool
+    custom_init: bool

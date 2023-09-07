@@ -180,7 +180,7 @@ class ImageToImage(SpaceTransform):
         domain_high = self.domain.high
         if self.domain._channels_last and not self.codomain._channels_last:
             domain_high = domain_high.transpose(2, 0, 1)
-        elif not self.domain.channels_last and self.codomain._channels_last:
+        elif not self.domain._channels_last and self.codomain._channels_last:
             domain_high = domain_high.transpose(1, 2, 0)
         self._scale = self.codomain.high / domain_high
 

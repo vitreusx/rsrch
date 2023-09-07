@@ -1,5 +1,6 @@
 atari: &atari
   env.name: ALE/Pong-v5
+  env.type: atari
   train_envs: 8
   update_batch: 256
   total_steps: 10e6
@@ -7,8 +8,9 @@ atari: &atari
 Pong-v5:
   <<: *atari
   env.name: ALE/Pong-v5
-Alien-v5:
+Alien-v4:
   <<: *atari
-  env.name: ALE/Alien-v5
+  env.name: AlienNoFrameskip-v4
 CartPole-v1:
   env.name: CartPole-v1
+  env.type: classic

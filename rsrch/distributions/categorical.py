@@ -56,7 +56,10 @@ class Categorical(Distribution, Tensorlike):
     @property
     def probs(self) -> Tensor:
         if self._probs is None:
-            self._probs = F.softmax(self.logits, -1)
+            if self._normalized:
+                self._probs = self._logits.exp()
+            else:
+                self._probs = F.softmax(self.logits, -1)
         return self._probs
 
     @property
@@ -91,7 +94,7 @@ class Categorical(Distribution, Tensorlike):
 
     def log_prob(self, value: Tensor) -> Tensor:
         value = value.long().unsqueeze(-1)
-        value, log_pmf = torch.broadcast_tensors(value, self.logits)
+        value, log_pmf = torch.broadcast_tensors(value, self.log_probs)
         value = value[..., :1]
         return log_pmf.gather(-1, value).squeeze(-1)
 

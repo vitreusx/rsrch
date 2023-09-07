@@ -135,6 +135,9 @@ def _cast(x, t):
     elif orig in (Union, Optional, UnionType):
         # Note: get_args(Optional[t]) == (t, None)
         for ti in get_args(t):
+            if isinstance(x, ti):
+                return x
+        for ti in get_args(t):
             try:
                 return _cast(x, ti)
             except:

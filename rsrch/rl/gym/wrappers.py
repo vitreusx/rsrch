@@ -99,3 +99,47 @@ class FrameStack2(Wrapper):
         next_obs, reward, term, trunc, info = super().step(action)
         self._memory.append(next_obs)
         return tuple(self._memory), reward, term, trunc, info
+
+
+class EpisodicLifeEnv(Wrapper):
+    def __init__(self, env: Env):
+        super().__init__(env)
+        self.lives = 0
+        self.was_real_done = True
+
+    def step(self, action):
+        next_obs, reward, term, trunc, info = super().step(action)
+        self.was_real_done = term or trunc
+
+        lives = self.env.unwrapped.ale.lives()
+        if 0 < lives < self.lives:
+            term = True
+        self.lives = lives
+
+        return next_obs, reward, term, trunc, info
+
+    def reset(self, **kwargs):
+        if self.was_real_done:
+            obs, info = super().reset(**kwargs)
+        else:
+            res = super().step(0)
+            obs, info = res[0], res[-1]
+        self.lives = self.env.unwrapped.ale.lives()
+        return obs, info
+
+
+class FireResetEnv(Wrapper):
+    def __init__(self, env: Env):
+        super().__init__(env)
+        assert env.unwrapped.get_action_meanings()[1] == "FIRE"
+        assert len(env.unwrapped.get_action_meanings()) >= 3
+
+    def reset(self, **kwargs):
+        self.env.reset(**kwargs)
+        obs, _, term, trunc, _ = self.env.step(1)
+        if term or trunc:
+            self.env.reset(**kwargs)
+        obs, _, term, trunc, info = self.env.step(2)
+        if term or trunc:
+            self.env.reset(**kwargs)
+        return obs, info
