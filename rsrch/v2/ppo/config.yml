@@ -35,3 +35,4 @@ val_every: 10e3
 decorrelate: false
 share_encoder: true
 custom_init: true
+seed: 42

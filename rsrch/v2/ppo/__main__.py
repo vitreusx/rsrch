@@ -16,6 +16,7 @@ from rsrch.rl.data import rollout
 from rsrch.rl.utils.decorr import decorrelate
 from rsrch.rl.utils.make_env import EnvFactory
 from rsrch.utils import config, cron, stats
+from . import config
 from .config import Config
 
 
@@ -70,9 +71,6 @@ class ActorHead(nn.Module):
         if isinstance(env_spec.action_space, gym.spaces.TensorDiscrete):
             num_actions = int(env_spec.action_space.n)
             self.net = dh.Categorical(enc_dim, num_actions)
-            # self.net = SafeCategorical(
-            #     enc_dim, num_actions, min_prob=1e-2 / num_actions
-            # )
         elif isinstance(env_spec.action_space, gym.spaces.TensorBox):
             self.net = dh.Normal(enc_dim, env_spec.action_space.shape)
         else:
@@ -141,6 +139,82 @@ def gae_adv_est(r, v, gamma, gae_lambda):
     return adv, ret
 
 
+class EnvFactory:
+    def __init__(self, cfg: config.Env, record_stats=True):
+        self.cfg = cfg
+        self.record_stats = record_stats
+
+    def _base_env(self):
+        if self.cfg.type == "atari":
+            atari = self.cfg.atari
+            env = gym.make(self.cfg.name, frameskip=1)
+
+            if self.record_stats:
+                env = gym.wrappers.RecordEpisodeStatistics(env)
+
+            env = gym.wrappers.AtariPreprocessing(
+                env=env,
+                frame_skip=atari.frame_skip,
+                screen_size=atari.screen_size,
+                terminal_on_life_loss=atari.term_on_life_loss,
+                grayscale_obs=atari.grayscale,
+                grayscale_newaxis=(atari.frame_stack is None),
+                scale_obs=False,
+                noop_max=atari.noop_max,
+            )
+
+            if atari.episodic_life:
+                env = gym.wrappers.EpisodicLifeEnv(env)
+
+            if atari.fire_reset:
+                if "FIRE" in env.unwrapped.get_action_meanings():
+                    env = gym.wrappers.FireResetEnv(env)
+
+            channels_last = True
+            if atari.frame_stack is not None and atari.frame_stack > 1:
+                env = gym.wrappers.FrameStack(env, atari.frame_stack)
+                env = gym.wrappers.Apply(env, np.array)
+                channels_last = False
+
+            env = gym.wrappers.Apply(
+                env,
+                T.BoxAsImage(
+                    env.observation_space,
+                    channels_last=channels_last,
+                ),
+            )
+
+        else:
+            env = gym.make(self.cfg.name)
+
+        if self.cfg.time_limit is not None:
+            env = gym.wrappers.TimeLimit(env, self.cfg.time_limit)
+
+        return env
+
+    def val_env(self):
+        env = self._base_env()
+        env = gym.wrappers.ToTensor(env)
+        return env
+
+    def train_env(self):
+        env = self.val_env()
+
+        if self.cfg.reward in ("keep", None):
+            rew_f = lambda r: r
+        elif self.cfg.reward == "sign":
+            env = gym.wrappers.TransformReward(env, lambda r: np.sign(r))
+            env.reward_range = (-1, 1)
+        elif isinstance(self.cfg.reward, tuple):
+            r_min, r_max = self.cfg.reward
+            rew_f = lambda r: np.clip(r, r_min, r_max)
+            env = gym.wrappers.TransformReward(env, rew_f)
+            env.reward_range = (r_min, r_max)
+
+        env = gym.wrappers.ToTensor(env)
+        return env
+
+
 def main():
     cfg = config.from_args(
         cls=Config,
@@ -150,17 +224,9 @@ def main():
 
     device = torch.device(cfg.device)
 
-    def make_env(env_fn):
-        def _env_fn():
-            env = env_fn()
-            env = gym.wrappers.ToTensor(env)
-            return env
-
-        return _env_fn
-
     env_f = EnvFactory(cfg.env, record_stats=True)
-    make_val_env = make_env(env_f.val_env)
-    make_train_env = make_env(env_f.train_env)
+    make_val_env = env_f.val_env
+    make_train_env = env_f.train_env
 
     def make_venv(env_fns):
         if len(env_fns) == 1:
@@ -231,8 +297,8 @@ def main():
         for _ in range(cfg.steps_per_epoch * cfg.train_envs):
             env_idx, step = next(env_iter)
             ep_ids[env_idx] = buf.push(ep_ids[env_idx], step)
-            if step.done:
-                train_ep_ret.update(step.info["episode"]["r"])
+            if "episode" in step.info:
+                board.add_scalar("train/ep_ret", step.info["episode"]["r"])
             env_step += 1
             pbar.update()
 
@@ -303,7 +369,6 @@ def main():
             board.add_scalar("train/policy_loss", policy_loss)
             board.add_scalar("train/v_loss", v_loss)
             board.add_scalar("train/ent_loss", ent_loss)
-            board.add_scalar("train/ep_ret", train_ep_ret.value)
             board.add_scalar("train/mean_v", value.mean())
 
 

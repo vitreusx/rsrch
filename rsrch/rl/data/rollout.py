@@ -106,7 +106,7 @@ def _(
     ep_idx, step_idx = 0, 0
     all_true = np.ones(env.num_envs, dtype=bool)
 
-    if init:
+    if init is not None:
         obs, info = init
     elif reset:
         obs, info = env.reset()
@@ -120,9 +120,9 @@ def _(
     while True:
         act = agent.policy(obs)
         env.step_async(act)
+        agent.step(act)
         yield Async()
         next_obs, reward, term, trunc, info = env.step_wait()
-        agent.step(act)
 
         if "final_observation" in info:
             done = info["_final_observation"]

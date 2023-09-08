@@ -15,10 +15,10 @@ class VecAgent(ABC):
 
     def __init__(self, num_envs: int, observation_space: Space, action_space: Space):
         self.num_envs = num_envs
-        self.single_observation_space = observation_space
-        self.observation_space = utils.batch_space(observation_space, num_envs)
-        self.single_action_space = action_space
-        self.action_space = utils.batch_space(action_space, num_envs)
+        # self.single_observation_space = observation_space
+        # self.observation_space = utils.batch_space(observation_space, num_envs)
+        # self.single_action_space = action_space
+        # self.action_space = utils.batch_space(action_space, num_envs)
 
     def reset(self, env_idx, obs, info):
         pass
