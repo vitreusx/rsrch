@@ -47,7 +47,7 @@ class TensorSpace(Space[Tensor]):
     def seed(self, seed: int | None = None) -> list[int]:
         if seed is None:
             seed = self.gen.seed()
-        self.gen = self.gen.manual_seed(seed)
+        self._gen = self.gen.manual_seed(seed)
         return [seed]
 
     def __getstate__(self):

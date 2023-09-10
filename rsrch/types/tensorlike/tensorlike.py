@@ -199,7 +199,7 @@ class Tensorlike:
                 fields[name] = _tensors
             return repr._new(new_shape, fields)
 
-    def at(self, idx):
+    def index(self, idx):
         if not isinstance(idx, tuple):
             idx = (idx,)
 
@@ -207,10 +207,12 @@ class Tensorlike:
         for name, tensor in self._tensor_dict.items():
             if isinstance(tensor, torch.Tensor):
                 event_dims = len(tensor.shape) - len(self.shape)
-                t_idx = (*idx, ..., *(slice(None) for _ in range(event_dims)))
+                t_idx = idx
+                if ... in idx:
+                    t_idx = (*t_idx, ..., *(slice(None) for _ in range(event_dims)))
                 tensor = tensor[t_idx]
             else:
-                tensor = tensor.at(idx)
+                tensor = tensor.index(idx)
             fields[name] = tensor
 
         new_shape = self._prototype[idx].shape
@@ -218,13 +220,18 @@ class Tensorlike:
         return self._new(new_shape, fields)
 
     def __getitem__(self, idx):
-        return self.at(idx)
+        return self.index(idx)
 
     def __setitem__(self, idx, value):
+        if not isinstance(idx, tuple):
+            idx = (idx,)
+
         for name, tensor in self._tensor_dict.items():
             if isinstance(tensor, torch.Tensor):
                 event_dims = len(tensor.shape) - len(self.shape)
-                t_idx = (*idx, ..., *(slice(None) for _ in range(event_dims)))
+                t_idx = idx
+                if ... in idx:
+                    t_idx = (*t_idx, ..., *(slice(None) for _ in range(event_dims)))
                 tensor[t_idx] = getattr(value, name)
             else:
                 tensor[idx] = getattr(value, name)
@@ -332,4 +339,15 @@ class Tensorlike:
             fields[name] = tensor.to(
                 device=device, dtype=dtype, non_blocking=non_blocking, copy=copy
             )
+        return self._new(self.shape, fields)
+
+    @torch_function(torch.clone)
+    @classmethod
+    def _torch_clone(cls, tensor):
+        return tensor.clone()
+
+    def clone(self):
+        fields = {}
+        for name, tensor in self._tensor_dict.items():
+            fields[name] = tensor.clone()
         return self._new(self.shape, fields)

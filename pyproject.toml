@@ -5,15 +5,6 @@ description = ""
 authors = ["vitreusx <jakub_bednarz@protonmail.com>"]
 readme = "README.md"
 
-[[tool.poetry.source]]
-name = "torch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-priority = "explicit"
-
-[[tool.poetry.source]]
-name = "PyPI"
-priority = "primary"
-
 [tool.poetry.dependencies]
 python = "~3.10"
 poetry = "^1.5"
@@ -32,8 +23,8 @@ mujoco = "<=2.3.3"
 ptflops = "^0.7"
 h5py = "^3.8.0"
 sympy = "^1.12"
-torch = { version = "^2.0", source = "torch-cpu" }
-torchvision = { version = "^0.15", source = "torch-cpu" }
+torch = "^2.0"
+torchvision = "^0.15"
 tensordict = "^0.1.2"
 gymnasium = { version = "^0.28.1", extras = ["accept-rom-license", "all"] }
 poethepoet = "^0.21.0"
@@ -46,6 +37,7 @@ pydantic = "<2"
 grpcio = "<=1.49.1"
 cloudpickle = "^2.2.1"
 mako = "^1.2.4"
+py-spy = "^0.3.14"
 
 [tool.poetry.group.ext]
 optional = true
@@ -76,13 +68,11 @@ requests = "2.29.0"
 shell = """
   export TORCH=$(\
     poetry export -f requirements.txt \
-    | grep -E "torch==[^ ]*" -o \
-    | sed -E 's/torch==(.*)\\+cpu/\\1/')
+    | grep -E "torch==[^ ]*" -o)
   export TORCHVISION=$(\
     poetry export -f requirements.txt \
-    | grep -E "torchvision==[^ ]*" -o \
-    | sed -E 's/torchvision==(.*)\\+cpu/\\1/')
-  pip install -U torch==${TORCH} torchvision==${TORCHVISION} \
+    | grep -E "torchvision==[^ ]*" -o)
+  pip install -U ${TORCH}+${cuda} ${TORCHVISION}+${cuda} \
     --index-url https://download.pytorch.org/whl/${cuda}
 """
 args = [{ name = "cuda", default = "cu117" }]

@@ -12,10 +12,10 @@ from .events import *
 
 
 class Agent(ABC):
-    def reset(self, reset: Reset):
+    def reset(self, data: Reset):
         pass
 
-    def observe(self, step: Step):
+    def observe(self, data: Step):
         pass
 
     @abstractmethod

@@ -91,35 +91,54 @@ class LatentAgent(gym.vector.Agent):
 
     def reset(self, data: gym.vector.VecReset):
         self._state[data.idxes] = self.wm.prior
-        self._state[data.idxes] = self.wm.obs_cell(self._state[data.idxes], data.obs)
+        state_rv = self.wm.obs_cell(self._state[data.idxes], data.obs)
+        self._state[data.idxes] = state_rv.sample()
 
     def policy(self, _):
-        return self.actor(self._state).rsample()
+        return self.actor(self._state).sample()
 
     def step(self, act):
-        self._state = self.wm.act_cell(self.state, act)
+        state_rv = self.wm.act_cell(self._state, act)
+        self._state = state_rv.sample()
 
     def observe(self, data: gym.vector.VecStep):
-        self._state[data.idxes] = self.wm.obs_cell(
-            self._state[data.idxes], data.next_obs
-        )
+        state_rv = self.wm.obs_cell(self._state[data.idxes], data.next_obs)
+        self._state[data.idxes] = state_rv.sample()
 
 
-class EnvAgent(gym.vector.AgentWrapper):
-    def __init__(self, wm: WorldModel, actor: Actor, env: gym.vector.EnvSpec):
+class VecEnvAgent(gym.vector.AgentWrapper):
+    def __init__(
+        self,
+        wm: WorldModel,
+        actor: Actor,
+        env: gym.vector.EnvSpec,
+        device=None,
+    ):
         super().__init__(LatentAgent(wm, actor, env.num_envs))
+        assert isinstance(env.single_observation_space, gym.spaces.TensorSpace)
+        assert isinstance(env.single_action_space, gym.spaces.TensorSpace)
         self.wm = wm
+        self.device = device
 
     def reset(self, data: gym.vector.VecReset):
-        data.obs = self.wm.obs_enc(data.obs)
+        if not isinstance(data.obs, Tensor):
+            data.obs = torch.stack([*data.obs])
+        data.obs = self.wm.obs_enc(data.obs.to(self.device))
         return super().reset(data)
 
-    def policy(self, _):
-        return self.wm.act_dec(super().policy(_))
+    def policy(self, obs):
+        act = super().policy(obs)
+        act = self.wm.act_dec(act)
+        return act
 
     def step(self, act):
-        return super().step(self.wm.act_enc(act))
+        if not isinstance(act, Tensor):
+            act = torch.stack(act)
+        act = self.wm.act_enc(act.to(self.device))
+        return super().step(act)
 
     def observe(self, data: gym.vector.VecStep):
-        data.next_obs = self.wm.obs_enc(data.next_obs)
+        if not isinstance(data.next_obs, Tensor):
+            data.next_obs = torch.stack([*data.next_obs])
+        data.next_obs = self.wm.obs_enc(data.next_obs.to(self.device))
         return super().observe(data)

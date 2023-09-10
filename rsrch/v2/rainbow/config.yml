@@ -1,5 +1,5 @@
 env:
-  name: ALE/Pong-v5
+  name: ALE/Alien-v5
   type: atari
   atari:
     screen_size: 84
@@ -63,11 +63,3 @@ exp:
   val_episodes: 16
   val_envs: ${val_episodes}
   log_every: 128
-profile:
-  enabled: true
-  wait: 3
-  warmup: 2
-  active: 5
-  repeat: 4
-  export_trace: true
-  export_stack: true

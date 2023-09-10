@@ -62,6 +62,8 @@ class ChunkBuffer(Mapping[int, Seq]):
         self.capacity = capacity
         self.sampler = sampler
         self.stack_in = stack_in
+        if stack_out is None and stack_in is not None:
+            stack_out = stack_in
         self.stack_out = stack_out
 
         self.chunks = deque()
@@ -122,7 +124,7 @@ class ChunkBuffer(Mapping[int, Seq]):
 
     def push(self, ep_id: Optional[int], step: Step):
         if ep_id is None:
-            ep_id = self.on_reset(step.obs)
+            ep_id = self.on_reset(step.obs, {})
 
         chunk_id = self.on_step(
             ep_id, step.act, step.next_obs, step.reward, step.term, step.trunc

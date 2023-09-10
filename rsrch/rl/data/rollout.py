@@ -6,6 +6,9 @@ from rsrch.rl import gym
 import numpy as np
 from . import data
 
+from rsrch.rl.gym.events import *
+from rsrch.rl.gym.vector.events import *
+
 
 @singledispatch
 def events(env, agent, max_steps=None, max_episodes=None, reset=True, init=None):

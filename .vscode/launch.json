@@ -1,10 +1,10 @@
 {
     "configurations": [
         {
-            "name": "PPO-cc",
+            "name": "Dreamer",
             "type": "python",
             "request": "launch",
-            "module": "rsrch.v2.ppo_cc",
+            "module": "rsrch.v2.dreamer",
             "pythonArgs": [
                 "-O",
             ],
@@ -18,10 +18,6 @@
             "pythonArgs": [
                 "-O",
             ],
-            // "args": [
-            //     "-p",
-            //     "${input:preset}"
-            // ],
             "justMyCode": false
         },
         {

@@ -51,16 +51,18 @@ class QVecAgent(gym.Agent):
         )
 
     def reset(self, reset: gym.vector.VecReset):
-        obs = torch.stack(reset.obs)
         if self.obs_t is not None:
-            obs = self.obs_t.batch(obs)
+            obs = torch.stack([self.obs_t(o) for o in reset.obs])
+        else:
+            obs = torch.stack([*reset.obs])
         self.memory[reset.idxes, :] = obs.to(self.net_device).unsqueeze(1)
 
     def observe(self, step: gym.vector.VecStep):
         self.memory[step.idxes, :-1] = self.memory[step.idxes, 1:].clone()
-        obs = torch.stack(step.next_obs)
         if self.obs_t is not None:
-            obs = self.obs_t.batch(obs)
+            obs = torch.stack([self.obs_t(o) for o in step.next_obs])
+        else:
+            obs = torch.stack([*step.next_obs])
         self.memory[step.idxes, -1] = obs.to(self.net_device)
 
     @torch.inference_mode()
@@ -86,24 +88,6 @@ def main():
     exp_dir = ExpDir("runs/rainbow")
     board = Wandb(project="rainbow", step_fn=lambda: env_step)
     should_log = cron.Every(lambda: env_step, cfg.exp.log_every)
-
-    if cfg.profile.enabled:
-        prof = TorchProfiler(
-            schedule=TorchProfiler.schedule(
-                wait=cfg.profile.wait,
-                warmup=cfg.profile.warmup,
-                active=cfg.profile.active,
-                repeat=cfg.profile.repeat,
-            ),
-            on_trace=TorchProfiler.on_trace_fn(
-                exp_dir=exp_dir.path,
-                export_trace=cfg.profile.export_trace,
-                export_stack=cfg.profile.export_stack,
-            ),
-            use_cuda=device.type == "cuda",
-        )
-    else:
-        prof = NullProfiler()
 
     vcs = WandbVCS()
     vcs.save()
@@ -345,89 +329,87 @@ def main():
         while True:
             ev = next(env_batch_iter)
             if isinstance(ev, rollout.Async):
+                env_step += exp_env.num_envs
+                pbar.update(exp_env.num_envs)
+                q_polyak.step(exp_env.num_envs)
                 break
-            elif isinstance(ev, rollout.Reset):
-                ep_ids[ev.env_idx] = buffer.on_reset(ev.obs, ev.info)
-            elif isinstance(ev, rollout.Step):
-                buffer.on_step(
-                    ep_ids[ev.env_idx],
-                    ev.act,
-                    ev.next_obs,
-                    ev.reward,
-                    ev.term,
-                    ev.trunc,
-                )
-
-                env_step += 1
-                pbar.update()
-                q_polyak.step()
+            elif isinstance(ev, rollout.VecReset):
+                for ev in [*ev]:
+                    ep_ids[ev.env_idx] = buffer.on_reset(ev.obs, ev.info)
+            elif isinstance(ev, rollout.VecStep):
+                for ev in [*ev]:
+                    buffer.on_step(
+                        ep_ids[ev.env_idx],
+                        ev.act,
+                        ev.next_obs,
+                        ev.reward,
+                        ev.term,
+                        ev.trunc,
+                    )
 
         if len(buffer) >= cfg.buffer.prefill:
             for _ in range(opt_steps):
-                with prof.profile("train_step"):
-                    batch = sampler.sample(cfg.sched.opt_batch)
-                    if isinstance(sampler, PrioritizedSampler):
-                        idxes, weights = batch
-                        weights = torch.as_tensor(weights, device=device)
-                        batch = buffer[idxes]
-                    else:
-                        idxes = batch
-                        batch = buffer[idxes]
+                batch = sampler.sample(cfg.sched.opt_batch)
+                if isinstance(sampler, PrioritizedSampler):
+                    idxes, weights = batch
+                    weights = torch.as_tensor(weights, device=device)
+                    batch = buffer[idxes]
+                else:
+                    idxes = batch
+                    batch = buffer[idxes]
 
-                    batch = process_batch(batch)
+                batch = process_batch(batch)
 
-                    with torch.no_grad():
-                        with autocast():
-                            q.apply(reset_noise_)
-                            act = q(batch.obs[-1]).argmax(-1)
-                            target = (
-                                target_q(batch.obs[-1])
-                                .gather(-1, act[..., None])
-                                .squeeze(-1)
-                            )
-                            target = (1.0 - batch.term.type_as(target)) * target
-                            R = sum(
-                                batch.reward[i] * cfg.gamma**i
-                                for i in range(len(batch.reward))
-                            ).type_as(target)
-                            target = R + cfg.gamma ** len(batch.reward) * target
-
+                with torch.no_grad():
                     with autocast():
                         q.apply(reset_noise_)
-                        pred = (
-                            q(batch.obs[0])
-                            .gather(-1, batch.act[0][..., None])
+                        act = q(batch.obs[-1]).argmax(-1)
+                        target = (
+                            target_q(batch.obs[-1])
+                            .gather(-1, act[..., None])
                             .squeeze(-1)
                         )
-                        if isinstance(target, ValueDist):
-                            prio = q_loss = ValueDist.proj_kl_div(pred, target)
-                        elif isinstance(target, Tensor):
-                            prio = (pred - target).abs()
-                            q_loss = prio.square()
-                        else:
-                            raise NotImplementedError(type(target))
+                        target = (1.0 - batch.term.type_as(target)) * target
+                        R = sum(
+                            batch.reward[i] * cfg.gamma**i
+                            for i in range(len(batch.reward))
+                        ).type_as(target)
+                        target = R + cfg.gamma ** len(batch.reward) * target
 
-                        if isinstance(sampler, PrioritizedSampler):
-                            q_loss = weights.type_as(q_loss) * q_loss
+                with autocast():
+                    q.apply(reset_noise_)
+                    pred = (
+                        q(batch.obs[0]).gather(-1, batch.act[0][..., None]).squeeze(-1)
+                    )
+                    if isinstance(target, ValueDist):
+                        prio = q_loss = ValueDist.proj_kl_div(pred, target)
+                    elif isinstance(target, Tensor):
+                        prio = (pred - target).abs()
+                        q_loss = prio.square()
+                    else:
+                        raise NotImplementedError(type(target))
 
-                        mean_q_loss = q_loss.mean()
+                    if isinstance(sampler, PrioritizedSampler):
+                        q_loss = weights.type_as(q_loss) * q_loss
 
-                    task = pool.submit(update_prio, idxes, prio)
+                    mean_q_loss = q_loss.mean()
 
-                    opt.zero_grad(set_to_none=True)
-                    scaler.scale(mean_q_loss).backward()
-                    if cfg.optimizer.grad_clip is not None:
-                        scaler.unscale_(opt)
-                        nn.utils.clip_grad_norm_(opt_params, cfg.optimizer.grad_clip)
-                    scaler.step(opt)
-                    scaler.update()
+                task = pool.submit(update_prio, idxes, prio)
 
-                    task.result()
+                opt.zero_grad(set_to_none=True)
+                scaler.scale(mean_q_loss).backward()
+                if cfg.optimizer.grad_clip is not None:
+                    scaler.unscale_(opt)
+                    nn.utils.clip_grad_norm_(opt_params, cfg.optimizer.grad_clip)
+                scaler.step(opt)
+                scaler.update()
 
-                    if should_log:
-                        board.add_scalar("train/q_loss", mean_q_loss)
-                        board.add_scalar("train/expl_eps", train_agent.eps)
-                        board.add_scalar("train/mean_q_pred", pred.mean())
+                task.result()
+
+                if should_log:
+                    board.add_scalar("train/q_loss", mean_q_loss)
+                    board.add_scalar("train/expl_eps", train_agent.eps)
+                    board.add_scalar("train/mean_q_pred", pred.mean())
 
 
 if __name__ == "__main__":

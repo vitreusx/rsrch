@@ -35,6 +35,7 @@ class EpsAgent(Agent):
         self._opt = opt
         self._rand = rand
         self.eps = eps
+        self.num_envs = num_envs
 
     def reset(self, *args):
         return self._opt.reset(*args), self._rand.reset(*args)

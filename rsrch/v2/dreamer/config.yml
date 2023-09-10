@@ -2,6 +2,8 @@ rssm:
   deter: 1024
   stoch: 1024
   hidden: 256
+  fc_layers: [128, 128, 128]
+  conv_hidden: 32
   norm_layer: null
   act_layer: elu
   dist:
@@ -17,8 +19,18 @@ env:
     term_on_life_loss: false
     grayscale: true
     noop_max: 30
-    frame_stack: 4
     fire_reset: true
     episodic_life: true
   reward: clip
   time_limit: 108e3
+  stack: 4
+seq_len: 50
+batch_size: 50
+horizon: 15
+buf_cap: 1e6
+val_episodes: 8
+env_workers: 8
+device: cuda
+val_every: 50e3
+total_steps: 10e6
+train_envs: 1

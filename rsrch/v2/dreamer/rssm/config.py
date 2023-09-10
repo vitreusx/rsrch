@@ -30,6 +30,8 @@ class Config:
     deter: int
     stoch: int
     hidden: int
+    fc_layers: list[int]
+    conv_hidden: int
     norm_layer: layer_ctor
     act_layer: layer_ctor
     dist: Dist

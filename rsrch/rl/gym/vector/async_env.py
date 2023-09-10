@@ -137,7 +137,9 @@ class AsyncVectorEnv2(VectorEnv):
         return [y for z in x for y in z]
 
     def _cat(self, x):
-        if isinstance(x[0], torch.Tensor):
+        if isinstance(x, (torch.Tensor, np.ndarray)):
+            return x
+        elif isinstance(x[0], torch.Tensor):
             return torch.cat(x) if len(x[0].shape) > 0 else torch.stack(x)
         else:
             return np.concatenate(x) if len(x[0].shape) > 0 else np.stack(x)

@@ -129,19 +129,18 @@ class RewardPred(nn.Sequential):
     def __init__(
         self,
         in_features: int,
-        hidden_dim=128,
-        num_layers=2,
+        fc_layers=[128, 128, 128],
         norm_layer=None,
         act_layer=nn.ELU,
     ):
         super().__init__(
             fc.FullyConnected(
-                [in_features, *([hidden_dim] * num_layers)],
+                [in_features, *fc_layers],
                 norm_layer=norm_layer,
                 act_layer=act_layer,
                 final_layer="act",
             ),
-            dh.Normal(hidden_dim, []),
+            dh.Normal(fc_layers[-1], []),
         )
 
 
@@ -149,19 +148,18 @@ class TermPred(nn.Sequential):
     def __init__(
         self,
         in_features: int,
-        hidden_dim=128,
-        num_layers=2,
+        fc_layers=[128, 128, 128],
         norm_layer=None,
         act_layer=nn.ELU,
     ):
         super().__init__(
             fc.FullyConnected(
-                [in_features, *([hidden_dim] * num_layers)],
+                [in_features, *fc_layers],
                 norm_layer=norm_layer,
                 act_layer=act_layer,
                 final_layer="act",
             ),
-            dh.Bernoulli(hidden_dim),
+            dh.Bernoulli(fc_layers[-1]),
         )
 
 
@@ -171,29 +169,22 @@ class StateToTensor(nn.Module):
 
 
 class Actor(nn.Sequential):
-    def __init__(
-        self,
-        act_space: gym.Space,
-        deter_dim: int,
-        stoch_dim: int,
-        fc_layers=[400, 400, 400],
-        norm_layer=None,
-        act_layer=nn.ELU,
-    ):
-        self.act_space = act_space
+    def __init__(self, env: gym.EnvSpec, cfg: Config):
+        act_space = env.action_space
+
         if isinstance(act_space, gym.spaces.TensorDiscrete):
-            head = dh.OneHotCategoricalST(fc_layers[-1], act_space.n)
+            head = dh.OneHotCategoricalST(cfg.fc_layers[-1], act_space.n)
         elif isinstance(act_space, gym.spaces.TensorBox):
-            head = dh.Normal(fc_layers[-1], act_space.shape)
+            head = dh.Normal(cfg.fc_layers[-1], act_space.shape)
         else:
             raise ValueError()
 
         super().__init__(
             StateToTensor(),
             fc.FullyConnected(
-                [deter_dim + stoch_dim, *fc_layers],
-                norm_layer=norm_layer,
-                act_layer=act_layer,
+                [cfg.deter + cfg.stoch, *cfg.fc_layers],
+                norm_layer=cfg.norm_layer,
+                act_layer=cfg.act_layer,
                 final_layer="act",
             ),
             head,
@@ -201,20 +192,13 @@ class Actor(nn.Sequential):
 
 
 class Critic(nn.Sequential):
-    def __init__(
-        self,
-        deter_dim: int,
-        stoch_dim: int,
-        fc_layers=[400, 400, 400],
-        norm_layer=None,
-        act_layer=nn.ELU,
-    ):
+    def __init__(self, cfg: Config):
         super().__init__(
             StateToTensor(),
             fc.FullyConnected(
-                [deter_dim + stoch_dim, *fc_layers, 1],
-                norm_layer=norm_layer,
-                act_layer=act_layer,
+                [cfg.deter + cfg.stoch, *cfg.fc_layers, 1],
+                norm_layer=cfg.norm_layer,
+                act_layer=cfg.act_layer,
             ),
             nn.Flatten(0),
         )
@@ -236,15 +220,24 @@ class RSSM(core.RSSM, nn.Module):
     def __init__(self, env: gym.EnvSpec, cfg: Config):
         super().__init__()
         self.env, self.cfg = env, cfg
+        self.deter, self.stoch = cfg.deter, cfg.stoch
 
         state_dim = cfg.deter + cfg.stoch
 
         if isinstance(env.observation_space, gym.spaces.TensorImage):
-            self.obs_enc = VisEncoder(env.observation_space)
-            self.obs_pred = VisDecoder(env.observation_space, state_dim)
+            self.obs_enc = VisEncoder(
+                env.observation_space,
+                cfg.conv_hidden,
+                cfg.norm_layer,
+                cfg.act_layer,
+            )
         elif isinstance(env.observation_space, gym.spaces.TensorBox):
-            self.obs_enc = ProprioEncoder(env.observation_space)
-            self.obs_pred = ProprioDecoder(env.observation_space, state_dim)
+            self.obs_enc = ProprioEncoder(
+                env.observation_space,
+                cfg.fc_layers,
+                cfg.norm_layer,
+                cfg.act_layer,
+            )
         obs_dim = self.obs_enc.enc_dim
 
         if isinstance(env.action_space, gym.spaces.TensorBox):
@@ -282,9 +275,29 @@ class RSSM(core.RSSM, nn.Module):
             self._dist_layer(self.cfg.hidden),
         )
 
-        self.prior = core.State(
-            deter=torch.zeros(cfg.deter),
-            stoch=torch.zeros(cfg.stoch),
+        self.reward_pred = RewardPred(
+            state_dim,
+            cfg.fc_layers,
+            cfg.norm_layer,
+            cfg.act_layer,
+        )
+
+        self.term_pred = TermPred(
+            state_dim,
+            cfg.fc_layers,
+            cfg.norm_layer,
+            cfg.act_layer,
+        )
+
+    @property
+    def device(self):
+        return next(self.parameters()).device
+    
+    @property
+    def prior(self):
+        return core.State(
+            deter=torch.zeros(self.deter, device=self.device),
+            stoch=torch.zeros(self.stoch, device=self.device),
         )
 
     def prior_stoch(self, x):
@@ -305,3 +318,31 @@ class RSSM(core.RSSM, nn.Module):
             return dh.Normal(in_features, self.cfg.stoch, cfg.std)
         else:
             raise ValueError(cfg.type)
+
+
+class AllNets(nn.Module):
+    def __init__(self, env: gym.EnvSpec, cfg: Config):
+        super().__init__()
+        self.wm = RSSM(env, cfg)
+
+        state_dim = cfg.deter + cfg.stoch
+
+        if isinstance(env.observation_space, gym.spaces.TensorImage):
+            self.obs_pred = VisDecoder(
+                env.observation_space,
+                state_dim,
+                cfg.conv_hidden,
+                cfg.norm_layer,
+                cfg.act_layer,
+            )
+        elif isinstance(env.observation_space, gym.spaces.TensorBox):
+            self.obs_pred = ProprioDecoder(
+                env.observation_space,
+                state_dim,
+                cfg.fc_layers,
+                cfg.norm_layer,
+                cfg.act_layer,
+            )
+
+        self.actor = Actor(env, cfg)
+        self.critic = Critic(cfg)
