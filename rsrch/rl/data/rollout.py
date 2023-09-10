@@ -1,42 +1,14 @@
-from dataclasses import dataclass
-from typing import Any, Iterable, Tuple, Union
+from typing import Iterable
 from functools import singledispatch
+from copy import copy
 
 from rsrch.rl import gym
 import numpy as np
 from . import data
 
 
-@dataclass
-class Reset:
-    env_idx: int
-    obs: Any
-    info: dict
-
-
-@dataclass
-class Step:
-    env_idx: int
-    act: Any
-    next_obs: Any
-    reward: float
-    term: bool
-    trunc: bool
-    info: dict
-
-
-@dataclass
-class Async:
-    pass
-
-
-Event = Union[Reset, Step, Async]
-
-
 @singledispatch
-def events(
-    env, agent, max_steps=None, max_episodes=None, reset=True, init=None
-) -> Iterable[Event]:
+def events(env, agent, max_steps=None, max_episodes=None, reset=True, init=None):
     raise NotImplementedError()
 
 
@@ -48,7 +20,7 @@ def _(
     max_episodes=None,
     reset=True,
     init=None,
-):
+) -> Iterable[gym.Event]:
     if max_steps is not None and max_steps <= 0:
         return
     if max_episodes is not None and max_episodes <= 0:
@@ -60,44 +32,54 @@ def _(
     if init:
         obs, info = init
     elif reset:
-        obs, info = env.reset()
-        agent.reset(obs, info)
-        yield Reset(env_idx, obs, info)
+        ev = gym.Reset(env_idx, *env.reset())
+        agent.reset(ev)
+        yield ev
     else:
         obs, info = None, None
 
     while True:
         act = agent.policy(obs)
-        next_obs, reward, term, trunc, info = env.step(act)
+        ev = gym.Step(env_idx, act, *env.step(act))
         agent.step(act)
-        agent.observe(next_obs, reward, term, trunc, info)
-        yield Step(env_idx, act, next_obs, reward, term, trunc, info)
+        agent.observe(copy(ev))
+        yield ev
 
         step_idx += 1
         if max_steps is not None:
             if step_idx >= max_steps:
                 return
 
-        if term or trunc:
+        if ev.term or ev.trunc:
             ep_idx += 1
             if max_episodes is not None:
                 if ep_idx >= max_episodes:
                     return
 
-            obs, info = env.reset()
-            agent.reset(obs, info)
-            yield Reset(env_idx, obs, info)
+            ev = gym.Reset(env_idx, *env.reset())
+            agent.reset(ev)
+            yield ev
+
+
+def _slice(i, *xs):
+    ys = []
+    for x in xs:
+        try:
+            ys.append(x[i])
+        except:
+            ys.append([x[j] for j in i])
+    return ys
 
 
 @events.register
 def _(
     env: gym.vector.VectorEnv,
-    agent: gym.vector.VecAgent,
+    agent: gym.vector.Agent,
     max_steps=None,
     max_episodes=None,
     reset=True,
     init=None,
-):
+) -> Iterable[gym.vector.VecEvent]:
     if max_steps is not None and max_steps <= 0:
         return
     if max_episodes is not None and max_episodes <= 0:
@@ -111,9 +93,10 @@ def _(
     elif reset:
         obs, info = env.reset()
         info = gym.vector.utils.split_vec_info(info, env.num_envs)
-        for env_idx in range(env.num_envs):
-            agent.reset(env_idx, obs[env_idx], info[env_idx])
-            yield Reset(env_idx, obs[env_idx], info[env_idx])
+        idxes = [*range(env.num_envs)]
+        ev = gym.vector.VecReset(idxes, obs, info)
+        agent.reset(copy(ev))
+        yield ev
     else:
         obs, info = None, None
 
@@ -121,7 +104,7 @@ def _(
         act = agent.policy(obs)
         env.step_async(act)
         agent.step(act)
-        yield Async()
+        yield gym.vector.Async()
         next_obs, reward, term, trunc, info = env.step_wait()
 
         if "final_observation" in info:
@@ -132,20 +115,29 @@ def _(
             done = ~all_true
 
         info = gym.vector.utils.split_vec_info(info, env.num_envs)
-        for i in range(env.num_envs):
-            if done[i]:
-                data = (final_obs[i], reward[i], term[i], trunc[i], final_info[i])
-                agent.observe(i, *data)
-                yield Step(i, act[i], *data)
-                agent.reset(i, next_obs[i], info[i])
-                yield Reset(i, next_obs[i], info[i])
-                ep_idx += 1
-            else:
-                data = (next_obs[i], reward[i], term[i], trunc[i], info[i])
-                agent.observe(i, *data)
-                yield Step(i, act[i], *data)
-            step_idx += 1
+        done_idxes = [i for i in range(env.num_envs) if done[i]]
+        cont_idxes = [i for i in range(env.num_envs) if not done[i]]
 
+        i = done_idxes
+        if len(i) > 0:
+            data = _slice(i, act, final_obs, reward, term, trunc, final_info)
+            ev = gym.vector.VecStep(i, *data)
+            agent.observe(copy(ev))
+            yield ev
+            data = _slice(i, next_obs, info)
+            ev = gym.vector.VecReset(i, *data)
+            agent.reset(copy(ev))
+            yield ev
+            ep_idx += len(i)
+
+        i = cont_idxes
+        if len(i) > 0:
+            data = _slice(i, act, next_obs, reward, term, trunc, info)
+            ev = gym.vector.VecStep(i, *data)
+            agent.observe(copy(ev))
+            yield ev
+
+        step_idx += env.num_envs
         obs = next_obs
 
         if max_steps is not None:
@@ -165,33 +157,42 @@ def steps(env, agent, max_steps=None, max_episodes=None, reset=True, init=None):
             obs[env_idx] = env_obs
 
     for ev in events(env, agent, max_steps, max_episodes, reset, init):
-        if isinstance(ev, Reset):
-            obs[ev.env_idx] = ev.obs
-        elif isinstance(ev, Step):
-            step = data.Step(
-                obs[ev.env_idx],
-                ev.act,
-                ev.next_obs,
-                ev.reward,
-                ev.term,
-                ev.trunc,
-                ev.info,
-            )
-            yield ev.env_idx, step
-            obs[ev.env_idx] = ev.next_obs
+        if isinstance(ev, (gym.Reset, gym.vector.VecReset)):
+            evs = [*ev] if isinstance(ev, gym.vector.VecReset) else [ev]
+            for ev in evs:
+                obs[ev.env_idx] = ev.obs
+        elif isinstance(ev, (gym.Step, gym.vector.VecStep)):
+            evs = [*ev] if isinstance(ev, gym.vector.VecStep) else [ev]
+            for ev in evs:
+                step = data.Step(
+                    obs[ev.env_idx],
+                    ev.act,
+                    ev.next_obs,
+                    ev.reward,
+                    ev.term,
+                    ev.trunc,
+                    ev.info,
+                )
+                yield ev.env_idx, step
+                obs[ev.env_idx] = ev.next_obs
 
 
 def episodes(env, agent, max_steps=None, max_episodes=None):
     eps: dict[int, data.Seq] = {}
     for ev in events(env, agent, max_steps, max_episodes):
-        if isinstance(ev, Reset):
-            eps[ev.env_idx] = data.Seq([ev.obs], [], [], False, [ev.info])
-        elif isinstance(ev, Step):
-            ep = eps[ev.env_idx]
-            ep.obs.append(ev.next_obs)
-            ep.act.append(ev.act)
-            ep.reward.append(ev.reward)
-            ep.term = ev.term
-            if ev.term or ev.trunc:
-                yield ev.env_idx, ep
-                del eps[ev.env_idx]
+        if isinstance(ev, (gym.Reset, gym.vector.VecReset)):
+            evs = [*ev] if isinstance(ev, gym.vector.VecReset) else [ev]
+            for ev in evs:
+                eps[ev.env_idx] = data.Seq([ev.obs], [], [], False, [ev.info])
+
+        elif isinstance(ev, (gym.Step, gym.vector.VecStep)):
+            evs = [*ev] if isinstance(ev, gym.vector.VecStep) else [ev]
+            for ev in evs:
+                ep = eps[ev.env_idx]
+                ep.obs.append(ev.next_obs)
+                ep.act.append(ev.act)
+                ep.reward.append(ev.reward)
+                ep.term = ev.term
+                if ev.term or ev.trunc:
+                    yield ev.env_idx, ep
+                    del eps[ev.env_idx]

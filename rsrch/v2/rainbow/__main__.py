@@ -28,13 +28,8 @@ from .nets import ImpalaResidual
 T = gym.spaces.transforms
 
 
-class QVecAgent(gym.VecAgent):
+class QVecAgent(gym.Agent):
     def __init__(self, q: nn.Module, venv: gym.VectorEnv, memory: int, obs_t=None):
-        super().__init__(
-            venv.num_envs,
-            venv.single_observation_space,
-            venv.single_action_space,
-        )
         self.q = q
         self.obs_t = obs_t
 
@@ -55,16 +50,18 @@ class QVecAgent(gym.VecAgent):
             dtype=obs_space.dtype,
         )
 
-    def reset(self, env_idx, obs, info):
+    def reset(self, reset: gym.vector.VecReset):
+        obs = torch.stack(reset.obs)
         if self.obs_t is not None:
-            obs = self.obs_t(obs)
-        self.memory[env_idx] = obs.to(self.net_device)
+            obs = self.obs_t.batch(obs)
+        self.memory[reset.idxes, :] = obs.to(self.net_device).unsqueeze(1)
 
-    def observe(self, env_idx, obs, reward, term, trunc, info):
-        self.memory[env_idx, :-1] = self.memory[env_idx, 1:].clone()
+    def observe(self, step: gym.vector.VecStep):
+        self.memory[step.idxes, :-1] = self.memory[step.idxes, 1:].clone()
+        obs = torch.stack(step.next_obs)
         if self.obs_t is not None:
-            obs = self.obs_t(obs)
-        self.memory[env_idx, -1] = obs.to(self.net_device)
+            obs = self.obs_t.batch(obs)
+        self.memory[step.idxes, -1] = obs.to(self.net_device)
 
     @torch.inference_mode()
     def policy(self, _):
@@ -111,7 +108,7 @@ def main():
     vcs = WandbVCS()
     vcs.save()
 
-    env_f = EnvFactory(cfg.env)
+    env_f = EnvFactory(cfg.env, record_stats=True, to_tensor=False)
 
     def make_val_env():
         env = env_f.val_env()
@@ -309,9 +306,9 @@ def main():
     if isinstance(expl_eps, float):
         expl_eps = sched.Constant(expl_eps)
 
-    train_agent = gym.vector.agents.EpsVecAgent(
+    train_agent = gym.vector.agents.EpsAgent(
         opt=QVecAgent(q, exp_env, cfg.memory, exp_to_val),
-        rand=gym.vector.agents.RandomVecAgent(exp_env),
+        rand=gym.vector.agents.RandomAgent(exp_env),
         eps=expl_eps(env_step),
         num_envs=exp_env.num_envs,
     )

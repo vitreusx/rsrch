@@ -143,7 +143,10 @@ class AsyncVectorEnv2(VectorEnv):
             return np.concatenate(x) if len(x[0].shape) > 0 else np.stack(x)
 
     def _detach(self, x):
-        return deepcopy(x)
+        if isinstance(x, shared_ndarray):
+            return np.array(x)
+        else:
+            return deepcopy(x)
 
     def _merge(self, sv_infos):
         merged = {}

@@ -147,13 +147,13 @@ class FireResetEnv(Wrapper[np.ndarray, int, np.ndarray, int]):
 
     def reset(self, **kwargs):
         self.env.reset(**kwargs)
-        obs, _, terminated, truncated, _ = self.env.step(1)
+        obs, _, terminated, truncated, info = self.env.step(1)
         if terminated or truncated:
-            self.env.reset(**kwargs)
-        obs, _, terminated, truncated, _ = self.env.step(2)
+            _, info = self.env.reset(**kwargs)
+        obs, _, terminated, truncated, info = self.env.step(2)
         if terminated or truncated:
-            self.env.reset(**kwargs)
-        return obs, {}
+            _, info = self.env.reset(**kwargs)
+        return obs, info
 
 
 class EpisodicLifeEnv(Wrapper[np.ndarray, int, np.ndarray, int]):

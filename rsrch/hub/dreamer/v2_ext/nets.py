@@ -125,7 +125,7 @@ class ProprioEncoder(fc.FullyConnected):
         self.enc_dim = fc_layers[-1]
 
         super().__init__(
-            num_features=[in_features, *fc_layers],
+            layer_sizes=[in_features, *fc_layers],
             norm_layer=norm_layer,
             act_layer=act_layer,
             final_layer="fc",
@@ -148,7 +148,7 @@ class ProprioDecoder(nn.Sequential):
     ):
         super().__init__(
             fc.FullyConnected(
-                num_features=[in_features, *fc_layers],
+                layer_sizes=[in_features, *fc_layers],
                 norm_layer=norm_layer,
                 act_layer=act_layer,
                 final_layer="act",

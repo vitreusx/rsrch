@@ -1,0 +1,24 @@
+rssm:
+  deter: 1024
+  stoch: 1024
+  hidden: 256
+  norm_layer: null
+  act_layer: elu
+  dist:
+    type: discrete
+    num_heads: 32
+  ensemble: 4
+env:
+  name: ALE/Alien-v5
+  type: atari
+  atari:
+    screen_size: 64
+    frame_skip: 4
+    term_on_life_loss: false
+    grayscale: true
+    noop_max: 30
+    frame_stack: 4
+    fire_reset: true
+    episodic_life: true
+  reward: clip
+  time_limit: 108e3

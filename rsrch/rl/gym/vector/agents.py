@@ -1,58 +1,37 @@
 from abc import ABC, abstractmethod
 
 import numpy as np
-
-from . import utils
 from ..env import EnvSpec, VectorEnv
-from ..spaces import Space
+from .events import *
 
 
-class VecAgent(ABC):
-    observation_space: Space
-    single_observation_space: Space
-    action_space: Space
-    single_action_space: Space
-
-    def __init__(self, num_envs: int, observation_space: Space, action_space: Space):
-        self.num_envs = num_envs
-        # self.single_observation_space = observation_space
-        # self.observation_space = utils.batch_space(observation_space, num_envs)
-        # self.single_action_space = action_space
-        # self.action_space = utils.batch_space(action_space, num_envs)
-
-    def reset(self, env_idx, obs, info):
+class Agent(ABC):
+    def reset(self, data: VecReset):
         pass
 
     @abstractmethod
-    def policy(self, last_obs):
+    def policy(self, obs):
         ...
 
     def step(self, act):
         pass
 
-    def observe(self, env_idx, obs, reward, term, trunc, info):
+    def observe(self, data: VecStep):
         pass
 
 
-class RandomVecAgent(VecAgent):
+class RandomAgent(Agent):
     def __init__(self, env: VectorEnv | EnvSpec):
-        super().__init__(
-            env.num_envs,
-            env.single_observation_space,
-            env.single_action_space,
-        )
+        super().__init__()
+        self._action_space = env.action_space
 
     def policy(self, _):
-        return self.action_space.sample()
+        return self._action_space.sample()
 
 
-class EpsVecAgent(VecAgent):
-    def __init__(self, opt: VecAgent, rand: VecAgent, eps: float, num_envs: int):
-        super().__init__(
-            num_envs,
-            opt.single_action_space,
-            opt.single_observation_space,
-        )
+class EpsAgent(Agent):
+    def __init__(self, opt: Agent, rand: Agent, eps: float, num_envs: int):
+        super().__init__()
         self._opt = opt
         self._rand = rand
         self.eps = eps
@@ -72,23 +51,19 @@ class EpsVecAgent(VecAgent):
         return self._opt.step(*args), self._rand.step(*args)
 
 
-class VecAgentWrapper(VecAgent):
-    def __init__(self, agent: VecAgent):
-        super().__init__(
-            agent.num_envs,
-            agent.single_observation_space,
-            agent.single_action_space,
-        )
+class AgentWrapper(Agent):
+    def __init__(self, agent: Agent):
+        super().__init__()
         self._agent = agent
 
-    def reset(self, *args):
-        return self._agent.reset(*args)
+    def reset(self, data: VecReset):
+        return self._agent.reset(data)
 
-    def observe(self, *args):
-        return self._agent.observe(*args)
+    def policy(self, obs):
+        return self._agent.policy(obs)
 
-    def policy(self, last_obs):
-        return self._agent.policy(last_obs)
+    def step(self, act):
+        return self._agent.step(act)
 
-    def step(self, *args):
-        return self._agent.step(*args)
+    def observe(self, data: VecStep):
+        return self._agent.observe(data)

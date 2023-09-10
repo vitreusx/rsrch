@@ -359,7 +359,7 @@ def main():
     else:
         alpha = cfg.alpha.value
 
-    class ActorAgent(gym.VecAgent):
+    class ActorAgent(gym.Agent):
         def __init__(self, num_envs: int):
             shape = [num_envs, *env_spec.observation_space.shape]
             self.memory = torch.empty(shape, device=device)

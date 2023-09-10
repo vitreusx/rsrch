@@ -163,9 +163,6 @@ class EnvFactory:
                 noop_max=atari.noop_max,
             )
 
-            if atari.episodic_life:
-                env = gym.wrappers.EpisodicLifeEnv(env)
-
             if atari.fire_reset:
                 if "FIRE" in env.unwrapped.get_action_meanings():
                     env = gym.wrappers.FireResetEnv(env)
@@ -198,7 +195,12 @@ class EnvFactory:
         return env
 
     def train_env(self):
-        env = self.val_env()
+        env = self._base_env()
+
+        if self.cfg.type == "atari":
+            atari = self.cfg.atari
+            if atari.episodic_life:
+                env = gym.wrappers.EpisodicLifeEnv(env)
 
         if self.cfg.reward in ("keep", None):
             rew_f = lambda r: r
@@ -245,7 +247,7 @@ def main():
         train_env = make_venv(train_env_fns)
         init = None
 
-    class ACAgent(gym.VecAgent):
+    class ACAgent(gym.Agent):
         def __init__(self, ac: ActorCritic, env_spec: gym.EnvSpec):
             self.ac = ac
             self._model_dev = next(ac.parameters()).device

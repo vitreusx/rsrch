@@ -8,7 +8,7 @@ T = gym.spaces.transforms
 
 
 @dataclass
-class EnvConfig:
+class Config:
     @dataclass
     class Atari:
         screen_size: int
@@ -16,7 +16,6 @@ class EnvConfig:
         term_on_life_loss: bool
         grayscale: bool
         noop_max: int
-        frame_stack: Optional[int]
         fire_reset: bool
         episodic_life: bool
 
@@ -25,19 +24,21 @@ class EnvConfig:
     atari: Atari
     reward: str | tuple[int, int]
     time_limit: Optional[int]
+    stack: Optional[int]
 
 
 class EnvFactory:
-    def __init__(self, cfg: EnvConfig, record_stats=True):
+    def __init__(self, cfg: Config, record_stats=True, to_tensor=True):
         self.cfg = cfg
-        self.record_stats = record_stats
+        self._record_stats = record_stats
+        self._to_tensor = to_tensor
 
-    def _base_env(self):
+    def base_env(self):
         if self.cfg.type == "atari":
             atari = self.cfg.atari
             env = gym.make(self.cfg.name, frameskip=1)
 
-            if self.record_stats:
+            if self._record_stats:
                 env = gym.wrappers.RecordEpisodeStatistics(env)
 
             env = gym.wrappers.AtariPreprocessing(
@@ -46,30 +47,18 @@ class EnvFactory:
                 screen_size=atari.screen_size,
                 terminal_on_life_loss=atari.term_on_life_loss,
                 grayscale_obs=atari.grayscale,
-                grayscale_newaxis=(atari.frame_stack is None),
+                grayscale_newaxis=True,
                 scale_obs=False,
                 noop_max=atari.noop_max,
             )
-
-            if atari.episodic_life:
-                env = gym.wrappers.EpisodicLifeEnv(env)
 
             if atari.fire_reset:
                 if "FIRE" in env.unwrapped.get_action_meanings():
                     env = gym.wrappers.FireResetEnv(env)
 
-            channels_last = True
-            if atari.frame_stack is not None and atari.frame_stack > 1:
-                env = gym.wrappers.FrameStack(env, atari.frame_stack)
-                env = gym.wrappers.Apply(env, np.array)
-                channels_last = False
-
             env = gym.wrappers.Apply(
                 env,
-                T.BoxAsImage(
-                    env.observation_space,
-                    channels_last=channels_last,
-                ),
+                T.BoxAsImage(env.observation_space, channels_last=True),
             )
 
         else:
@@ -81,10 +70,24 @@ class EnvFactory:
         return env
 
     def val_env(self):
-        return self._base_env()
+        env = self.base_env()
+        env = self._final(env)
+        return env
+
+    def _final(self, env):
+        if self._to_tensor:
+            env = gym.wrappers.ToTensor(env)
+        if self.cfg.stack is not None and self.cfg.stack > 1:
+            env = gym.wrappers.FrameStack2(env, self.cfg.stack)
+        return env
 
     def train_env(self):
-        env = self.val_env()
+        env = self.base_env()
+
+        if self.cfg.type == "atari":
+            atari = self.cfg.atari
+            if atari.episodic_life:
+                env = gym.wrappers.EpisodicLifeEnv(env)
 
         if self.cfg.reward in ("keep", None):
             rew_f = lambda r: r
@@ -96,5 +99,7 @@ class EnvFactory:
             rew_f = lambda r: np.clip(r, r_min, r_max)
             env = gym.wrappers.TransformReward(env, rew_f)
             env.reward_range = (r_min, r_max)
+
+        env = self._final(env)
 
         return env

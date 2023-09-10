@@ -61,7 +61,7 @@ class VisEncoder(nn.Module, api.ObsEncoder):
 
         fc_in = int(np.prod(self.conv_shape))
         self.fc_net = fc.FullyConnected(
-            num_features=[fc_in, *fc_layers, enc_dim],
+            layer_sizes=[fc_in, *fc_layers, enc_dim],
             norm_layer=fc_norm,
             act_layer=act_layer,
             final_layer="fc",
@@ -108,7 +108,7 @@ class VisDecoder(nn.Module):
 
         fc_out = int(np.prod(conv_shape))
         self.fc_net = fc.FullyConnected(
-            num_features=[enc_dim, *fc_layers, fc_out],
+            layer_sizes=[enc_dim, *fc_layers, fc_out],
             norm_layer=fc_norm,
             act_layer=act_layer,
             final_layer="act",
@@ -317,7 +317,7 @@ class ProprioEncoder(fc.FullyConnected, api.ObsEncoder):
         self.enc_dim = fc_layers[-1]
 
         super().__init__(
-            num_features=[in_features, *fc_layers],
+            layer_sizes=[in_features, *fc_layers],
             norm_layer=norm_layer,
             act_layer=act_layer,
             final_layer="fc",
@@ -346,7 +346,7 @@ class ProprioDecoder(nn.Module, api.VarPred):
 
         self.main = nn.Sequential(
             fc.FullyConnected(
-                num_features=[h_dim + z_dim, *fc_layers],
+                layer_sizes=[h_dim + z_dim, *fc_layers],
                 norm_layer=norm_layer,
                 act_layer=act_layer,
                 final_layer="act",

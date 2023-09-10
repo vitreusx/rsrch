@@ -11,6 +11,7 @@ from dataclasses import is_dataclass
 import dacite
 import ruamel.yaml as yaml
 from mako.template import Template
+from rsrch.types import Namespace
 
 # Either $(...) or ${...} covering entire text
 EVAL_PATS = [r"^\$\((?P<expr>[^\)]*)\)$", r"^\${(?P<expr>[^\)]*)}$"]
@@ -27,18 +28,7 @@ COMMA_PAT = quote_preserving_split(":")
 EQ_PAT = quote_preserving_split("=")
 
 
-class Namespace(dict):
-    """A dict also accessible via attr access."""
-
-    def __setattr__(self, key, value):
-        self.__setitem__(key, value)
-
-    def __getattr__(self, key):
-        if key in self:
-            return self.__getitem__(key)
-
-
-class _Lazy:
+class LazyValue:
     """A "lazy value" in the dict in the form of its location in the tree and the expr to evaluate."""
 
     def __init__(self, value, path: list):
@@ -63,6 +53,7 @@ class _Lazy:
         if "buffer" in g:
             # Due to a limitation in Mako, we cannot pass "buffer" variable
             # directly, if it is defined
+            g["_root"] = g["buffer"]
             del g["buffer"]
         return self._eval_fn(g)
 
@@ -72,7 +63,7 @@ class _Lazy:
 
 
 def mark_lazy(value, path=[]):
-    """Convert $(...)'s and ${...} to _Lazy objects."""
+    """Convert $(...)'s and ${...} to LazyValue objects."""
 
     if isinstance(value, dict):
         new_value = Namespace()
@@ -83,12 +74,12 @@ def mark_lazy(value, path=[]):
         for i, v in enumerate(value):
             value[i] = mark_lazy(v, [*path, i])
     elif isinstance(value, str):
-        value = _Lazy(value, path)
+        value = LazyValue(value, path)
     return value
 
 
 def _resolve_once(data, g):
-    """Try to convert _Lazy objects to regular values, w/o recursion."""
+    """Try to convert LazyValue objects to regular values, w/o recursion."""
 
     lazy = 0
     if isinstance(data, dict):
@@ -101,12 +92,12 @@ def _resolve_once(data, g):
             new_v, v_lazy = _resolve_once(v, g)
             data[i] = new_v
             lazy += v_lazy
-    elif isinstance(data, _Lazy):
+    elif isinstance(data, LazyValue):
         try:
             data = data.eval(g)
         except:
             pass
-        lazy += isinstance(data, _Lazy)
+        lazy += isinstance(data, LazyValue)
     return data, lazy
 
 
@@ -131,7 +122,7 @@ def _cast(x, t):
     # get_args(Union[str, int]) == (str, int)
     orig = get_origin(t)
     if orig is None:
-        return x if isinstance(x, t) else t(x)
+        return x if isinstance(t, type) and isinstance(x, t) else t(x)
     elif orig in (Union, Optional, UnionType):
         # Note: get_args(Optional[t]) == (t, None)
         for ti in get_args(t):
@@ -151,6 +142,12 @@ def _cast(x, t):
         # Same story with dict
         kt, vt = get_args(t)
         return {k: _cast(xi, vt) for k, xi in x.items()}
+    elif orig in (Literal,):
+        if x not in get_args(t):
+            raise ValueError(x)
+        return x
+    else:
+        raise NotImplementedError()
 
 
 def _fix_types(x, t):

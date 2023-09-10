@@ -1,11 +1,14 @@
 env:
   name: ALE/Pong-v5
+  type: atari
   atari:
     screen_size: 84
     frame_skip: 4
-    term_on_life_loss: true
+    term_on_life_loss: false
     grayscale: true
     noop_max: 30
+    fire_reset: true
+    episodic_life: true
   reward: sign
   time_limit: 108e3
 sched:

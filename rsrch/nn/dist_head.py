@@ -9,49 +9,38 @@ import rsrch.distributions as D
 
 
 class Normal(nn.Module):
-    def __init__(self, in_features: int, out_shape: torch.Size | int, std=None):
+    def __init__(self, in_features: int, out_shape: torch.Size | int, std="softplus"):
         super().__init__()
         if isinstance(out_shape, int):
             out_shape = [out_shape]
         self.out_shape = torch.Size(out_shape)
         self.out_features = int(np.prod(out_shape))
         self.std = std
-        if self.std is not None:
-            self.fc = nn.Linear(in_features, self.out_features)
-        else:
+        if isinstance(self.std, str):
             self.fc = nn.Linear(in_features, 2 * self.out_features)
+        else:
+            self.fc = nn.Linear(in_features, self.out_features)
 
     def forward(self, x: Tensor) -> D.Distribution:
         params: Tensor = self.fc(x)
-        if self.std is not None:
-            mean = params
-            mean = mean.reshape(len(x), *self.out_shape)
-            std = self.std
-        else:
+        if isinstance(self.std, str):
             mean, std = params.chunk(2, dim=1)  # [B, N_out]
             mean = mean.reshape(len(x), *self.out_shape)
             std = std.reshape(len(x), *self.out_shape)
-            std = nn.functional.softplus(std)
+            if self.std == "softplus":
+                std = nn.functional.softplus(std)
+            elif self.std == "sigmoid":
+                std = std.sigmoid()
+            elif self.std == "exp":
+                std = std.exp()
+        else:
+            mean = params
+            mean = mean.reshape(len(x), *self.out_shape)
+            std = self.std
+
         # This gets us a batch of normal distributions N(mean[i], std[i]^2 I)
         res_dist = D.Normal(mean, std, event_dims=len(self.out_shape))
         return res_dist
-
-
-class SquashedNormal(Normal):
-    def __init__(self, in_features: int, min_values: Tensor, max_values: Tensor):
-        super().__init__(in_features, min_values.shape)
-        self.min_v = nn.Parameter(min_values)
-        self.max_v = nn.Parameter(max_values)
-
-    def forward(self, x: Tensor) -> D.Distribution:
-        normal: D.Normal = super().forward(x)
-        return D.SquashedNormal(
-            normal.loc,
-            normal.scale,
-            len(normal.event_shape),
-            self.min_v,
-            self.max_v,
-        )
 
 
 class Bernoulli(nn.Module):

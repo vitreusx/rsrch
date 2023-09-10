@@ -3,7 +3,7 @@ from torch import nn
 
 from rsrch.rl import gym
 from rsrch.rl.utils.polyak import Polyak
-from rsrch.types.edict import edict
+from rsrch.types import Namespace
 
 from .nets import FC
 
@@ -49,7 +49,7 @@ def lambda_return(rew, v, disc, bootstrap, lambda_):
 class Schedule:
     def __init__(self, name: str, **params):
         self._name = name
-        self._params = edict(params)
+        self._params = Namespace(params)
 
     def forward(self, step):
         p = self._params

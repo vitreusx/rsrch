@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from typing import Optional
-from rsrch.rl.utils.make_env import EnvConfig
+from rsrch.rl.utils.make_env import Config
 from rsrch.utils.sched import schedule
 
 
@@ -98,7 +98,7 @@ class Profile:
 
 @dataclass
 class Config:
-    env: EnvConfig
+    env: Config
     sched: Sched
     infra: Infra
     buffer: Buffer

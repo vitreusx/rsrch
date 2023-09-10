@@ -16,7 +16,7 @@ class DeterCell(nn.Module):
     def __init__(self, state_dim: int, input_dim: int, hidden_dim: int):
         super().__init__()
         self.fc = fc.FullyConnected(
-            num_features=[input_dim, hidden_dim, hidden_dim],
+            layer_sizes=[input_dim, hidden_dim, hidden_dim],
             norm_layer=None,
             final_layer="act",
         )
@@ -30,7 +30,7 @@ class DeterCell(nn.Module):
 class Actor(nn.Sequential):
     def __init__(self, act_space: gym.Space, state_dim: int, hidden_dim: int):
         stem = fc.FullyConnected(
-            num_features=[state_dim, hidden_dim, hidden_dim],
+            layer_sizes=[state_dim, hidden_dim, hidden_dim],
             norm_layer=None,
             final_layer="act",
         )
@@ -48,7 +48,7 @@ class Critic(nn.Sequential):
     def __init__(self, state_dim: int, hidden_dim: int):
         super().__init__(
             fc.FullyConnected(
-                num_features=[state_dim, hidden_dim, 1],
+                layer_sizes=[state_dim, hidden_dim, 1],
                 norm_layer=None,
                 final_layer="fc",
             ),
