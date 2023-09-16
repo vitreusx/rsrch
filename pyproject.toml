@@ -38,6 +38,8 @@ grpcio = "<=1.49.1"
 cloudpickle = "^2.2.1"
 mako = "^1.2.4"
 py-spy = "^0.3.14"
+gitpython = "^3.1.36"
+envpool = "^0.8.3"
 
 [tool.poetry.group.ext]
 optional = true
@@ -96,6 +98,10 @@ shell = """
   fi
 """
 args = [{ name = "port", default = "8081" }]
+
+[tool.poe.tasks.profile]
+cmd = "py-spy record -f speedscope -o ${trace_file} -i -n -s --"
+args = [{ name = "trace_file", default = "trace.json" }]
 
 [build-system]
 requires = ["poetry-core>=1.5"]

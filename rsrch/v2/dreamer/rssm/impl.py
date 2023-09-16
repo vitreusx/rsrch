@@ -292,7 +292,7 @@ class RSSM(core.RSSM, nn.Module):
     @property
     def device(self):
         return next(self.parameters()).device
-    
+
     @property
     def prior(self):
         return core.State(

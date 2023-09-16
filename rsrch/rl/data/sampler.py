@@ -47,12 +47,9 @@ class PrioritizedSampler:
 
     def append(self):
         idx = self._end % self.max_size
-        if self._beg >= self._end:
-            max_prio = 1.0
-            self._max[idx] = max_prio
-        else:
-            max_prio = self._max.total
+        max_prio = 1.0 if self._beg >= self._end else self._max.total
         self._priorities[idx] = max_prio
+        self._max[idx] = max_prio
         if not self.batch_max:
             self._min[idx] = max_prio
         self._end += 1

@@ -1,2 +1,2 @@
-from .tensorlike import Tensorlike
+from .core import Tensorlike
 from .tuple import TensorTuple

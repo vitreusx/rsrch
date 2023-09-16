@@ -33,4 +33,5 @@ env_workers: 8
 device: cuda
 val_every: 50e3
 total_steps: 10e6
-train_envs: 1
+exp_envs: 1
+prefill: 10e3

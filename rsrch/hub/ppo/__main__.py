@@ -1,106 +1,161 @@
-from . import *
+from rsrch.utils import cron
+from . import config, env
+from .nets import *
+from .utils import gae_adv_est
+from pathlib import Path
+import torch
+from rsrch.rl import gym, data
+from rsrch.rl.data import rollout
+from rsrch.exp import Experiment
+from tqdm.auto import tqdm
 
 
-class Data_v0(Data):
-    def __init__(self, name: str, seed=42):
-        self.name = name
-        self.seed = seed
-        self.spec = self.val_env()
+def main():
+    cfg = config.from_args(
+        cls=config.Config,
+        defaults=Path(__file__).parent / "config.yml",
+        presets=Path(__file__).parent / "presets.yml",
+    )
 
-    def val_env(self, device=None) -> gym.Env:
-        env = gym.make(self.name, render_mode="rgb_array")
-        env = wrappers.ToTensor(env, device)
-        env.reset(seed=self.seed)
-        return env
+    device = torch.device(cfg.device)
 
-    def train_env(self, device=None) -> gym.Env:
-        return self.val_env(device=device)
+    loader = env.Loader(cfg.env)
 
+    def make_venv(env_fns):
+        if len(env_fns) == 1:
+            return gym.vector.SyncVectorEnv(env_fns)
+        else:
+            return gym.vector.AsyncVectorEnv(env_fns)
 
-class Policy_v0(Policy):
-    def __init__(self, spec: EnvSpec):
-        super().__init__()
-        self.spec = spec
+    val_envs = make_venv([loader.val_env] * cfg.env_workers)
+    train_envs = make_venv([loader.exp_env] * cfg.train_envs)
 
-        assert isinstance(spec.action_space, gym.spaces.Discrete)
-        self.num_actions = int(spec.action_space.n)
+    ac = ActorCritic(
+        obs_space=loader.obs_space,
+        act_space=loader.act_space,
+        share_enc=cfg.share_encoder,
+        custom_init=cfg.custom_init,
+    ).to(device)
 
-        in_features = int(np.prod(spec.observation_space.shape))
-        self.net = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(in_features, 128),
-            nn.ReLU(inplace=True),
-            nn.Linear(128, 128),
-            nn.ReLU(inplace=True),
-            nn.Linear(128, self.num_actions),
-        )
+    opt = torch.optim.Adam(ac.parameters(), lr=cfg.lr, eps=cfg.opt_eps)
 
-    def forward(self, obs: Tensor) -> D.Categorical:
-        logits = self.net(obs)
-        return D.Categorical(logits=logits)
+    class ACAgent(gym.vector.Agent):
+        @torch.inference_mode()
+        def policy(self, obs):
+            obs = loader.conv_obs(obs).to(device)
+            act_rv = ac(obs, values=False)
+            return act_rv.sample().cpu().numpy()
 
-    def clone(self):
-        device = next(iter(self.parameters())).device
-        copy = Policy_v0(self.spec).to(device)
-        copy.load_state_dict(self.state_dict())
-        return copy
+    train_agent = ACAgent()
+    val_agent = ACAgent()
 
+    ep_ids = [None for _ in range(train_envs.num_envs)]
+    buf = data.OnlineBuffer()
+    env_iter = iter(rollout.steps(train_envs, train_agent))
 
-class ValueNet_v0(ValueNet):
-    def __init__(self, spec: EnvSpec):
-        super().__init__()
+    env_step = 0
+    exp = Experiment(project="ppo")
+    board = exp.board
+    board.add_step("env_step", lambda: env_step, default=True)
+    pbar = tqdm(total=cfg.total_steps)
 
-        assert isinstance(spec.action_space, gym.spaces.Discrete)
-        self.num_actions = int(spec.action_space.n)
+    should_val = cron.Every(lambda: env_step, cfg.log_every)
+    should_log = cron.Every(lambda: env_step, cfg.val_every)
+    should_end = cron.Once(lambda: env_step >= cfg.total_steps)
 
-        in_features = int(np.prod(spec.observation_space.shape))
-        self.net = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(in_features, 128),
-            nn.ReLU(inplace=True),
-            nn.Linear(128, 128),
-            nn.ReLU(inplace=True),
-            nn.Linear(128, 1),
-        )
+    def val_epoch():
+        val_returns = []
+        val_iter = rollout.episodes(val_envs, val_agent, max_episodes=cfg.val_episodes)
+        for _, ep in val_iter:
+            val_returns.append(sum(ep.reward))
+        board.add_scalar("val/returns", np.mean(val_returns))
 
-    def forward(self, obs: Tensor) -> Tensor:
-        return self.net(obs).squeeze(-1)
+    def train_step():
+        buf.reset()
+        nonlocal env_step
+        for _ in range(cfg.steps_per_epoch * cfg.train_envs):
+            env_idx, step = next(env_iter)
+            ep_ids[env_idx] = buf.push(ep_ids[env_idx], step)
+            if "episode" in step.info:
+                board.add_scalar("train/ep_ret", step.info["episode"]["r"])
+            env_step += 1
+            pbar.update()
 
+        train_eps = [*buf.values()]
+        obs, act, logp, adv, ret, value = [], [], [], [], [], []
 
-class Agent_v0(Agent):
-    def __init__(self, spec: EnvSpec):
-        super().__init__()
-        self.pi = Policy_v0(spec)
-        self.V = ValueNet_v0(spec)
+        with torch.no_grad():
+            for ep in train_eps:
+                ep_obs = loader.conv_obs(ep.obs).to(device)
+                obs.append(ep_obs[:-1])
+                ep_policy, ep_value = ac(ep_obs)
+                if ep.term:
+                    ep_value[-1] = 0.0
+                value.append(ep_value[:-1])
+                ep_reward = torch.tensor(ep.reward).type_as(ep_value)
+                ep_adv, ep_ret = gae_adv_est(
+                    ep_reward, ep_value, cfg.gamma, cfg.gae_lambda
+                )
+                adv.append(ep_adv)
+                ret.append(ep_ret)
+                ep_act = loader.conv_act(ep.act).to(device)
+                act.append(ep_act)
+                ep_logp = ep_policy[:-1].log_prob(ep_act)
+                logp.append(ep_logp)
 
+        cat_ = [torch.cat(x) for x in (obs, act, logp, adv, ret, value)]
+        obs, act, logp, adv, ret, value = cat_
 
-@dataclass
-class Config:
-    env_name: str
-    seed: int
+        for _ in range(cfg.update_epochs):
+            perm = torch.randperm(len(act))
+            for idxes in perm.split(cfg.update_batch):
+                new_policy, new_value = ac(obs[idxes])
+                new_logp = new_policy.log_prob(act[idxes])
+                log_ratio = new_logp - logp[idxes]
+                ratio = log_ratio.exp()
 
-    @staticmethod
-    def from_argv():
-        parser = argparse.ArgumentParser()
-        parser.add_argument("--env-name", type=str, default="LunarLander-v2")
-        parser.add_argument("-seed", type=int, default=42)
+                adv_ = adv[idxes]
+                if cfg.adv_norm:
+                    adv_ = (adv_ - adv_.mean()) / (adv_.std() + 1e-8)
 
-        args = parser.parse_args()
+                t1 = -adv_ * ratio
+                t2 = -adv_ * ratio.clamp(1 - cfg.clip_coeff, 1 + cfg.clip_coeff)
+                policy_loss = torch.max(t1, t2).mean()
 
-        return Config(
-            env_name=args.env_name,
-            seed=args.seed,
-        )
+                if cfg.clip_vloss:
+                    clipped_v = value[idxes] + (new_value - value[idxes]).clamp(
+                        -cfg.clip_coeff, cfg.clip_coeff
+                    )
+                    v_loss1 = (new_value - ret[idxes]).square()
+                    v_loss2 = (clipped_v - ret[idxes]).square()
+                    v_loss = 0.5 * torch.max(v_loss1, v_loss2).mean()
+                else:
+                    v_loss = 0.5 * (new_value - ret[idxes]).square().mean()
 
+                ent_loss = -new_policy.entropy().mean()
 
-def main(conf: Optional[Config] = None):
-    if conf is None:
-        conf = Config.from_argv()
+                loss = policy_loss + cfg.ent_coeff * ent_loss + cfg.vf_coeff * v_loss
+                opt.zero_grad(set_to_none=True)
+                loss.backward()
+                if cfg.clip_grad is not None:
+                    nn.utils.clip_grad.clip_grad_norm_(ac.parameters(), cfg.clip_grad)
+                opt.step()
 
-    ppo_data = Data_v0(name=conf.env_name, seed=conf.seed)
-    ppo = Agent_v0(ppo_data.spec)
-    trainer = PPOTrainer()
-    trainer.train(ppo, ppo_data)
+        if should_log:
+            board.add_scalar("train/loss", loss)
+            board.add_scalar("train/policy_loss", policy_loss)
+            board.add_scalar("train/v_loss", v_loss)
+            board.add_scalar("train/ent_loss", ent_loss)
+            board.add_scalar("train/mean_v", value.mean())
+
+    while True:
+        if should_val:
+            val_epoch()
+
+        if should_end:
+            break
+
+        train_step()
 
 
 if __name__ == "__main__":

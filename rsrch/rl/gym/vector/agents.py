@@ -1,12 +1,11 @@
 from abc import ABC, abstractmethod
 
 import numpy as np
-from ..env import EnvSpec, VectorEnv
-from .events import *
+from .base import VectorEnv
 
 
 class Agent(ABC):
-    def reset(self, data: VecReset):
+    def reset(self, idxes, obs, info):
         pass
 
     @abstractmethod
@@ -16,12 +15,12 @@ class Agent(ABC):
     def step(self, act):
         pass
 
-    def observe(self, data: VecStep):
+    def observe(self, idxes, next_obs, term, trunc, info):
         pass
 
 
 class RandomAgent(Agent):
-    def __init__(self, env: VectorEnv | EnvSpec):
+    def __init__(self, env: VectorEnv):
         super().__init__()
         self._action_space = env.action_space
 
@@ -37,19 +36,22 @@ class EpsAgent(Agent):
         self.eps = eps
         self.num_envs = num_envs
 
-    def reset(self, *args):
-        return self._opt.reset(*args), self._rand.reset(*args)
+    def reset(self, *args, **kwargs):
+        self._opt.reset(*args, **kwargs)
+        self._rand.reset(*args, **kwargs)
 
-    def observe(self, *args):
-        return self._opt.observe(*args), self._rand.observe(*args)
+    def observe(self, *args, **kwargs):
+        self._opt.observe(*args, **kwargs)
+        self._rand.observe(*args, **kwargs)
 
-    def policy(self, last_obs):
+    def policy(self, obs):
         use_rand = np.random.rand(self.num_envs) < self.eps
-        opt_p, rand_p = self._opt.policy(last_obs), self._rand.policy(last_obs)
-        return [rand_p[i] if use_rand[i] else opt_p[i] for i in range(self.num_envs)]
+        opt_p, rand_p = self._opt.policy(obs), self._rand.policy(obs)
+        return np.where(use_rand, rand_p, opt_p)
 
-    def step(self, *args):
-        return self._opt.step(*args), self._rand.step(*args)
+    def step(self, act):
+        self._opt.step(act)
+        self._rand.step(act)
 
 
 class AgentWrapper(Agent):
@@ -57,8 +59,8 @@ class AgentWrapper(Agent):
         super().__init__()
         self._agent = agent
 
-    def reset(self, data: VecReset):
-        return self._agent.reset(data)
+    def reset(self, *args, **kwargs):
+        return self._agent.reset(*args, **kwargs)
 
     def policy(self, obs):
         return self._agent.policy(obs)
@@ -66,5 +68,5 @@ class AgentWrapper(Agent):
     def step(self, act):
         return self._agent.step(act)
 
-    def observe(self, data: VecStep):
-        return self._agent.observe(data)
+    def observe(self, *args, **kwargs):
+        return self._agent.observe(*args, **kwargs)

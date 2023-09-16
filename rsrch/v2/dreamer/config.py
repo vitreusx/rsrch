@@ -17,4 +17,5 @@ class Config:
     device: str
     val_every: int
     total_steps: int
-    train_envs: int
+    exp_envs: int
+    prefill: int

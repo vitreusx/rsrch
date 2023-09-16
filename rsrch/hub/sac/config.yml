@@ -1,0 +1,53 @@
+buffer:
+  capacity: 500e3
+  prefill: 20e3
+env:
+  id: Alien-v4
+  type: atari
+  atari:
+    noop_max: 30
+    frame_skip: 4
+    episodic_life: true
+    grayscale: true
+    screen_size: 84
+    fire_reset: true
+  reward: sign
+  time_limit: null
+  stack: 4
+value:
+  target:
+    sync_every: 8_000
+    tau: 0.0
+  opt:
+    name: adam
+    lr: 3e-4
+    eps: 1e-4
+actor:
+  opt:
+    name: adam
+    lr: 3e-4
+    eps: 1e-4
+alpha:
+  autotune: true
+  ent_scale: 0.89
+  value: null
+sched:
+  total_steps: 5e6
+  env_batch: 1
+  opt_batch: 64
+  value:
+    opt_every: 4
+    opt_iters: 1
+  actor: ${value}
+infra:
+  device: cuda
+  env_workers: 8
+gamma: 0.99
+exp:
+  val_every: 10e3
+  val_episodes: 16
+  val_envs: ${val_episodes}
+  log_every: 128
+amp:
+  enabled: false
+  dtype: bfloat16

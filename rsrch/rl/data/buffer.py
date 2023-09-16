@@ -1,26 +1,33 @@
 from collections import deque
-from collections.abc import Mapping
-from typing import Iterable, Optional
+from collections.abc import Mapping, MutableMapping
+from typing import Iterable, Optional, Deque
 from copy import deepcopy
 
-from .data import Seq, Step
-from .sampler import Sampler
-from .store import Store, TwoLevelStore
+import numpy as np
 
-__all__ = ["StepBuffer", "ChunkBuffer"]
+from .core import ListSeq, Seq, Step
+from .sampler import Sampler
+from .store import RAMStepDeque, LayeredStore
+from rsrch.rl import gym
+from rsrch.rl.gym.vector.utils import concatenate, create_empty_array
+
+__all__ = ["StepBuffer", "ChunkBuffer", "OnlineBuffer"]
 
 
 class StepBuffer(Mapping[int, Step]):
-    def __init__(self, step_cap: int, sampler: Sampler = None):
+    def __init__(self, step_cap: int, sampler: Sampler = None, store: Deque = None):
         self.step_cap = step_cap
         self.sampler = sampler
 
-        self.steps = deque()
-        self._step_ptr = 0
+        if store is None:
+            store = RAMStepDeque()
+        self.steps = store
+        self._step_ids = range(0, 0)
 
     def push(self, obs, act, next_obs, reward, term):
-        while len(self.steps) >= self.step_cap:
+        while len(self._step_ids) >= self.step_cap:
             self.steps.popleft()
+            self._step_ids = range(self._step_ids.start + 1, self._step_ids.stop)
             if self.sampler is not None:
                 self.sampler.popleft()
 
@@ -29,23 +36,19 @@ class StepBuffer(Mapping[int, Step]):
 
         if self.sampler is not None:
             self.sampler.append()
-        step_id = self._step_ptr
-        self._step_ptr += 1
+        step_id = self._step_ids.stop
+        self._step_ids = range(self._step_ids.start, self._step_ids.stop + 1)
 
         return step_id
 
     def __iter__(self):
-        return iter(range(self._step_ptr - len(self.steps), self._step_ptr))
+        return iter(self._step_ids)
 
     def __len__(self):
-        return len(self.steps)
+        return len(self._step_ids)
 
     def __getitem__(self, id):
-        if isinstance(id, Iterable):
-            return [self[i] for i in id]
-
-        idx = len(self.steps) - (self._step_ptr - id)
-        return self.steps[idx]
+        return self.steps[id - self._step_ids.start]
 
 
 class ChunkBuffer(Mapping[int, Seq]):
@@ -53,34 +56,29 @@ class ChunkBuffer(Mapping[int, Seq]):
         self,
         nsteps: int,
         capacity: int,
-        stack_in: int = None,
-        stack_out: int = None,
+        obs_space: gym.Space,
+        act_space: gym.Space,
         sampler: Sampler = None,
-        persist: Store = None,
+        store: MutableMapping = None,
     ):
         self.nsteps = nsteps
         self.capacity = capacity
         self.sampler = sampler
-        self.stack_in = stack_in
-        if stack_out is None and stack_in is not None:
-            stack_out = stack_in
-        self.stack_out = stack_out
+        self._obs_space = obs_space
+        self._act_space = act_space
 
         self.chunks = deque()
         self._chunk_ids = range(0, 0)
 
-        if persist is None:
-            persist = {}
-        self.episodes = TwoLevelStore(cache={}, persist=persist)
+        if store is None:
+            store = {}
+        self.episodes = LayeredStore(cache={}, persist=store)
         self._ep_ptr = 0
 
     def on_reset(self, obs, info):
         ep_id = self._ep_ptr
         self._ep_ptr += 1
-        if self.stack_in is not None:
-            obs = obs[-1]
-        obs = [obs] * (self.stack_out or 1)
-        self.episodes[ep_id] = Seq(obs, [], [], False)
+        self.episodes[ep_id] = ListSeq.initial(obs)
         return ep_id
 
     def _popleft(self):
@@ -97,13 +95,8 @@ class ChunkBuffer(Mapping[int, Seq]):
         while len(self._chunk_ids) >= self.capacity:
             self._popleft()
 
-        ep = self.episodes[ep_id]
-        ep.act.append(act)
-        if self.stack_in is not None:
-            next_obs = next_obs[-1]
-        ep.obs.append(next_obs)
-        ep.reward.append(reward)
-        ep.term = ep.term or term
+        ep: ListSeq = self.episodes[ep_id]
+        ep.add(act, next_obs, reward, term, trunc)
 
         chunk_id = None
         if len(ep.act) >= self.nsteps:
@@ -146,22 +139,17 @@ class ChunkBuffer(Mapping[int, Seq]):
 
         idx = id - self._chunk_ids.start
         ep_id, off = self.chunks[idx]
-        ep = self.episodes[ep_id]
+        ep: Seq = self.episodes[ep_id]
 
         n = self.nsteps
-        if self.stack_out is not None:
-            obs = []
-            for k in range(n + 1):
-                obs.append(ep.obs[off + k : off + k + self.stack_out])
-        else:
-            obs = ep.obs[off : off + n + 1]
+        obs = create_empty_array(self._obs_space, n + 1)
+        concatenate(self._obs_space, ep.obs[off : off + n + 1], obs)
+        act = create_empty_array(self._act_space, n)
+        concatenate(self._act_space, ep.act[off : off + n], act)
+        reward = np.asarray(ep.reward[off : off + n])
+        term = ep.term and off + n == len(ep.act)
 
-        return Seq(
-            obs=obs,
-            act=ep.act[off : off + n],
-            reward=ep.reward[off : off + n],
-            term=ep.term and off + n == len(ep.act),
-        )
+        return Seq(obs, act, reward, term)
 
 
 class OnlineBuffer(Mapping[int, Seq]):

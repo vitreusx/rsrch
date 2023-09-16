@@ -11,7 +11,7 @@ from rsrch.exp.vcs import WandbVCS
 from rsrch.rl import gym
 import rsrch.nn.dist_head as dh
 from rsrch.rl.data.buffer import OnlineBuffer
-from rsrch.rl.data.data import StepBatch
+from rsrch.rl.data.core import StepBatch
 from rsrch.rl.data import rollout
 from rsrch.rl.utils.decorr import decorrelate
 from rsrch.rl.utils.make_env import EnvFactory

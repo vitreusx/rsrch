@@ -19,15 +19,18 @@ class TensorTuple(Tensorlike):
         self._post_init()
 
     def _post_init(self):
-        self.tuple = tuple(getattr(self, str(i)) for i in range(self._n))
+        self._tuple = tuple(getattr(self, str(i)) for i in range(self._n))
 
     def _new(self, shape: torch.Size, fields: dict):
         tt = super()._new(shape, fields)
         tt._post_init()
         return tt
 
+    def as_tuple(self):
+        return self._tuple
+
     def __repr__(self):
-        return repr(self.tuple)
+        return repr(self._tuple)
 
     def __str__(self):
-        return str(self.tuple)
+        return str(self._tuple)

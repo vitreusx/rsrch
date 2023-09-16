@@ -1,18 +1,17 @@
-from .base import Box, Tuple
-import typing
-from .tensor import TensorBox
-import torch
+from copy import deepcopy
+from .base import *
+from ..vector.utils import batch_space
 import numpy as np
-
-__all__ = ["Image", "TensorImage"]
 
 
 class Image(Box):
+    """Box space interpreted as an Image. Behaves exactly like a Box; mostly used
+    for observation type inference."""
+
     def __init__(
         self,
-        shape: typing.Tuple[int, ...],
+        shape: tuple[int, ...],
         normalized=False,
-        channels_last=True,
         seed=None,
     ):
         if normalized:
@@ -23,7 +22,6 @@ class Image(Box):
             dtype = np.uint8
 
         super().__init__(low, high, shape, dtype, seed)
-        self._channels_last = channels_last
         self._normalized = normalized
 
     @property
@@ -31,33 +29,16 @@ class Image(Box):
         if self._channels_last:
             return self.shape[-1]
         else:
-            return self.shape[0]
+            return self.shape[-3]
 
     def __repr__(self):
         return "Image" + super().__repr__()[len("Box") :]
 
 
-class TensorImage(TensorBox):
-    def __init__(
-        self,
-        shape: torch.Size,
-        normalized=True,
-        device=None,
-        seed=None,
-    ):
-        if normalized:
-            low, high = 0.0, 1.0
-            dtype = torch.float32
-        else:
-            low, high = 0, 255
-            dtype = torch.uint8
-
-        super().__init__(low, high, shape, device, dtype, seed)
-        self._normalized = normalized
-
-    @property
-    def num_channels(self):
-        return self.shape[0]
-
-    def __repr__(self):
-        return "TensorImage" + super().__repr__()[len("TensorBox") :]
+@batch_space.register(Image)
+def _(space: Image, n: int = 1):
+    return Image(
+        shape=[n, *space.shape],
+        normalized=space._normalized,
+        seed=deepcopy(space._np_random),
+    )

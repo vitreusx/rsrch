@@ -13,7 +13,7 @@ import ruamel.yaml as yaml
 from mako.template import Template
 from rsrch.types import Namespace
 
-# Either $(...) or ${...} covering entire text
+# Either $(...) or ${...}, covering entire text
 EVAL_PATS = [r"^\$\((?P<expr>[^\)]*)\)$", r"^\${(?P<expr>[^\)]*)}$"]
 
 
@@ -23,13 +23,13 @@ def quote_preserving_split(sep: str):
     return f"(?:[\"|'].*?[\"|']|[^({re.escape(sep)})])+"
 
 
-COMMA_PAT = quote_preserving_split(":")
+COLON_SEP = quote_preserving_split(":")
 
 EQ_PAT = quote_preserving_split("=")
 
 
-class LazyValue:
-    """A "lazy value" in the dict in the form of its location in the tree and the expr to evaluate."""
+class Expr:
+    """An expression object in the config."""
 
     def __init__(self, value, path: list):
         self._value = value
@@ -37,24 +37,33 @@ class LazyValue:
         self._eval_fn = self._make_eval_fn()
 
     def _make_eval_fn(self):
+        # If the field value is ${...} or $(...), we pass the inner text to
+        # Python's eval.
         for pat in EVAL_PATS:
             m = re.match(pat, self._value)
             if m is not None:
                 return lambda g: eval(m["expr"], g)
+        # Otherwise, we use Mako.
         return lambda g: Template(self._value).render(**g)
 
     def eval(self, g: dict):
+        """Evaluate the expression, under a given context."""
         cur, local = g, g
+
+        # Locate field's local scope, i.e. neighbors, and add it to context.
         for k in self._path[:-1]:
             cur = cur[k]
             if isinstance(cur, dict):
                 local = cur
         g = {**g, **local}
+
         if "buffer" in g:
             # Due to a limitation in Mako, we cannot pass "buffer" variable
-            # directly, if it is defined
-            g["_root"] = g["buffer"]
+            # directly, if it is defined.
+            assert "_buffer" not in g
+            g["_buffer"] = g["buffer"]
             del g["buffer"]
+
         return self._eval_fn(g)
 
     def __repr__(self):
@@ -62,48 +71,48 @@ class LazyValue:
         return f"Lazy({loc}: {self._value})"
 
 
-def mark_lazy(value, path=[]):
-    """Convert $(...)'s and ${...} to LazyValue objects."""
+def to_expr(value, path=[]):
+    """Convert string fields in the dict to Expr objects."""
 
     if isinstance(value, dict):
         new_value = Namespace()
         for k, v in [*value.items()]:
-            new_value[k] = mark_lazy(v, [*path, k])
+            new_value[k] = to_expr(v, [*path, k])
         value = new_value
     elif isinstance(value, list):
         for i, v in enumerate(value):
-            value[i] = mark_lazy(v, [*path, i])
+            value[i] = to_expr(v, [*path, i])
     elif isinstance(value, str):
-        value = LazyValue(value, path)
+        value = Expr(value, path)
     return value
 
 
 def _resolve_once(data, g):
-    """Try to convert LazyValue objects to regular values, w/o recursion."""
+    """Try to convert `Expr` objects to regular values, using current context."""
 
-    lazy = 0
+    num_exprs = 0
     if isinstance(data, dict):
         for k, v in [*data.items()]:
             new_v, v_lazy = _resolve_once(v, g)
             data[k] = new_v
-            lazy += v_lazy
+            num_exprs += v_lazy
     elif isinstance(data, list):
         for i, v in enumerate(data):
             new_v, v_lazy = _resolve_once(v, g)
             data[i] = new_v
-            lazy += v_lazy
-    elif isinstance(data, LazyValue):
+            num_exprs += v_lazy
+    elif isinstance(data, Expr):
         try:
             data = data.eval(g)
         except:
             pass
-        lazy += isinstance(data, LazyValue)
-    return data, lazy
+        num_exprs += isinstance(data, Expr)
+    return data, num_exprs
 
 
-def resolve(data):
+def resolve_exprs(data):
     """Convert $(...)'s and ${...}'s to regular values."""
-    data = mark_lazy(data)
+    data = to_expr(data)
     prev_lazy = None
     while prev_lazy != 0:
         g = {**data, **{"_root": data}}
@@ -115,7 +124,7 @@ def resolve(data):
 
 
 def _cast(x, t):
-    """Cast x to t, where t may be a generic (for example Union or Tuple)."""
+    """Cast `x` to `t`, where `t` may be a Generic (for example Union or Tuple)."""
 
     # get_origin gets the generic "type", get_args the arguments in square
     # brackets. For example, get_origin(Union[str, int]) == Union and
@@ -125,9 +134,12 @@ def _cast(x, t):
         return x if isinstance(t, type) and isinstance(x, t) else t(x)
     elif orig in (Union, Optional, UnionType):
         # Note: get_args(Optional[t]) == (t, None)
+        # Check if any of the variant types matches the value exactly
         for ti in get_args(t):
             if isinstance(x, ti):
                 return x
+        # Otherwise, try to interpret the value as each of the variant types
+        # and yield the first one to succeed.
         for ti in get_args(t):
             try:
                 return _cast(x, ti)
@@ -143,6 +155,7 @@ def _cast(x, t):
         kt, vt = get_args(t)
         return {k: _cast(xi, vt) for k, xi in x.items()}
     elif orig in (Literal,):
+        # For Literals, check if the value is one of the allowed values.
         if x not in get_args(t):
             raise ValueError(x)
         return x
@@ -151,7 +164,7 @@ def _cast(x, t):
 
 
 def _fix_types(x, t):
-    """Align x with type t. Like _cast, but recurses into dataclass fields."""
+    """Align x with type t. If x is a dataclass, recursively fix types of its fields."""
 
     if hasattr(x, "__dataclass_fields__"):
         for name, field in x.__dataclass_fields__.items():
@@ -172,7 +185,7 @@ def parse_data(data: dict, cls: Type[T]) -> T:
     # Normalize compound keys
     data = normalize_(copy(data))
     # Resolve all $(...)'s in the data
-    data = resolve(data)
+    data = resolve_exprs(data)
     # Use dacite for conversion to the config class. dacite converter
     # throws an error if types mismatch by default, but we fix it afterwards, so
     # we pass check_types=False
@@ -184,7 +197,7 @@ def parse_data(data: dict, cls: Type[T]) -> T:
 
 
 def update_(d1: dict, d2: dict):
-    """Update d1 with keys and values from d2 in a recursive fashion."""
+    """Update `d1` with keys and values from `d2` in a level-wise fashion."""
     for k, v in d2.items():
         if isinstance(v, dict) and k in d1:
             update_(d1[k], v)
@@ -192,7 +205,7 @@ def update_(d1: dict, d2: dict):
             d1[k] = v
 
 
-def merge(dicts: list[dict]):
+def merge(*dicts: dict):
     """Merge one or more dicts into a single one."""
     merged = {}
     for d in dicts:
@@ -228,24 +241,15 @@ def parse_var(spec: str):
         raise ValueError(spec)
 
 
-def read_yml(spec: str, cwd=None):
+def read_yml(path: str, sec=None, cwd=None):
     """Reads YAML file, either whole or a section. Useful for loading only a part of the file. The format is either <path> or <path>:<section>."""
 
     if cwd is None:
         cwd = Path.cwd()
     cwd = Path(cwd)
 
-    if (cwd / spec).exists():
-        path = cwd / spec
-        sec = None
-    else:
-        parts = re.findall(COMMA_PAT, spec)
-        if len(parts) == 1:
-            path = cwd / parts[0]
-            sec = None
-        else:
-            path, sec = parts[:-1], parts[-1]
-            path = cwd / ":".join(path)
+    if not (cwd / path).exists():
+        return
 
     with open(path, "r") as f:
         data = yaml.safe_load(f)
@@ -259,54 +263,51 @@ def read_yml(spec: str, cwd=None):
 
 
 def parse_spec(spec: str, cwd=None):
-    try:
-        data = read_yml(spec, cwd)
-    except:
-        k, v = parse_var(spec)
-        k = k.split(".")
-        data = {}
-        cur = data
-        for ki in k[:-1]:
-            cur[ki] = {}
-            cur = cur[ki]
-        cur[k[-1]] = v
-    return data
+    """Parse a config spec (either a path to YAML file or a key-value setter)."""
 
+    # First, try the file:section route.
+    parts = re.findall(COLON_SEP, spec)
+    if len(parts) == 1:
+        path = parts[0]
+        sec = None
+    else:
+        path, sec = parts[:-1], parts[-1]
+        path = ":".join(path)
 
-def specs_to_data(specs, cwd=None):
+    data = read_yml(path, sec, cwd)
+    if data is not None:
+        return data
+
+    # If unsuccessful, try the key=value route.
+    k, v = parse_var(spec)
+    path = k.split(".")
     data = {}
-    for spec in specs:
-        update_(data, parse_spec(spec, cwd))
+    cur = data
+    for ki in path[:-1]:
+        cur[ki] = {}
+        cur = cur[ki]
+    cur[path[-1]] = v
+
     return data
 
 
 def parse(specs: list[str], cls: Type[T] = None, cwd=None) -> dict | T:
-    data = specs_to_data(specs, cwd=cwd)
+    """Construct a config class or dict for a given list of config specs."""
+    data = {}
+    for spec in specs:
+        update_(data, parse_spec(spec, cwd))
     if cls is not None:
         data = parse_data(data, cls)
     return data
 
 
-def nested_fields(cls: Type[T]):
-    fields = {}
-    for name, field in cls.__dataclass_fields__.items():
-        if is_dataclass(field.type):
-            nested = nested_fields(field.type)
-            fields.update({f"{field.name}.{k}": t for k, t in nested.items()})
-        else:
-            fields[field.name] = field.type
-    return fields
-
-
 def from_args(cls: Type[T], defaults: Path = None, presets: Path = None) -> T:
+    """Read config from command line arguments."""
+
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--config", nargs="*")
     if presets is not None:
         parser.add_argument("-p", "--presets", nargs="*")
-
-    # nested_ = nested_fields(cls)
-    # for k, t in nested_.items():
-    #     parser.add_argument(f"--{k}")
 
     args, unknown = parser.parse_known_args()
     cfg_specs = []
@@ -318,18 +319,18 @@ def from_args(cls: Type[T], defaults: Path = None, presets: Path = None) -> T:
         preset_file = str(Path(presets).absolute())
         cfg_specs.extend(f"{preset_file}:{preset}" for preset in args.presets)
 
-    data = specs_to_data(cfg_specs)
+    data = parse(cfg_specs)
 
-    unk_dict = {}
-    for key, value in zip(unknown[::2], unknown[1::2]):
-        if key.startswith("+"):
-            unk_dict[key[1:]] = value
+    # unk_dict = {}
+    # for key, value in zip(unknown[::2], unknown[1::2]):
+    #     if key.startswith("+"):
+    #         unk_dict[key[1:]] = value
 
-    if len(unk_dict) > 0:
-        ss = io.StringIO()
-        yaml.safe_dump(unk_dict, ss)
-        ss.seek(0)
-        unk_dict = yaml.safe_load(ss)
-        update_(data, unk_dict)
+    # if len(unk_dict) > 0:
+    #     ss = io.StringIO()
+    #     yaml.safe_dump(unk_dict, ss)
+    #     ss.seek(0)
+    #     unk_dict = yaml.safe_load(ss)
+    #     update_(data, unk_dict)
 
     return parse_data(data, cls)

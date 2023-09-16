@@ -1,0 +1,5 @@
+debug:
+  # sched.num_frames: 5e6
+  # buffer.capacity: 10e3
+  # buffer.prefill: 40e3
+  infra.env_workers: 8

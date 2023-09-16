@@ -21,14 +21,20 @@ class Every:
 
 
 class Once:
-    def __init__(self, cond, hook):
+    def __init__(self, cond, hook=None):
         self.cond = cond
         self.hook = hook
         self._done = False
 
+    def __bool__(self):
+        if not self._done:
+            self._done = self.cond()
+        return self._done
+
     def __call__(self, *args, **kwargs):
-        if not self._done and self.cond():
-            self._done = True
+        if self.hook is None:
+            return
+        if self:
             return self.hook(*args, **kwargs)
 
 

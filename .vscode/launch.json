@@ -1,36 +1,16 @@
 {
     "configurations": [
         {
-            "name": "Dreamer",
-            "type": "python",
-            "request": "launch",
-            "module": "rsrch.v2.dreamer",
-            "pythonArgs": [
-                "-O",
-            ],
-            "justMyCode": false
-        },
-        {
             "name": "Rainbow",
             "type": "python",
             "request": "launch",
-            "module": "rsrch.v2.rainbow",
-            "pythonArgs": [
-                "-O",
-            ],
-            "justMyCode": false
-        },
-        {
-            "name": "PPO",
-            "type": "python",
-            "request": "launch",
-            "module": "rsrch.v2.ppo",
+            "module": "rsrch.hub.rainbow",
             "pythonArgs": [
                 "-O",
             ],
             "args": [
                 "-p",
-                "${input:preset}"
+                "${input:rainbow_preset}"
             ],
             "justMyCode": false
         },
@@ -38,23 +18,49 @@
             "name": "SAC",
             "type": "python",
             "request": "launch",
-            "module": "rsrch.v2.sac",
+            "module": "rsrch.hub.sac",
             "pythonArgs": [
-                "-O"
+                "-O",
             ],
             "args": [
                 "-p",
-                "${input:preset}"
+                "${input:sac_preset}"
             ],
             "justMyCode": false
         },
+        {
+            "name": "PPO",
+            "type": "python",
+            "request": "launch",
+            "module": "rsrch.hub.ppo",
+            "pythonArgs": [
+                "-O",
+            ],
+            "args": [
+                "-p",
+                "${input:ppo_preset}"
+            ],
+            "justMyCode": false
+        }
     ],
     "inputs": [
         {
-            "id": "preset",
-            "description": "Preset",
+            "id": "sac_preset",
+            "description": "SAC Preset",
             "type": "promptString",
-            "default": "Pong-v5",
+            "default": "Alien-v5",
+        },
+        {
+            "id": "rainbow_preset",
+            "description": "Rainbow Preset",
+            "type": "promptString",
+            "default": "Alien-v5",
+        },
+        {
+            "id": "ppo_preset",
+            "description": "PPO Preset",
+            "type": "promptString",
+            "default": "Alien-v5",
         }
     ]
 }

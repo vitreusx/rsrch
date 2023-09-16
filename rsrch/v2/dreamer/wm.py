@@ -118,27 +118,28 @@ class VecEnvAgent(gym.vector.AgentWrapper):
         assert isinstance(env.single_observation_space, gym.spaces.TensorSpace)
         assert isinstance(env.single_action_space, gym.spaces.TensorSpace)
         self.wm = wm
-        self.device = device
+        self._net_device = device
+        self._env_device = env.single_action_space.device
 
     def reset(self, data: gym.vector.VecReset):
         if not isinstance(data.obs, Tensor):
             data.obs = torch.stack([*data.obs])
-        data.obs = self.wm.obs_enc(data.obs.to(self.device))
+        data.obs = self.wm.obs_enc(data.obs.to(self._net_device))
         return super().reset(data)
 
     def policy(self, obs):
         act = super().policy(obs)
-        act = self.wm.act_dec(act)
+        act = self.wm.act_dec(act).to(self._env_device)
         return act
 
     def step(self, act):
         if not isinstance(act, Tensor):
             act = torch.stack(act)
-        act = self.wm.act_enc(act.to(self.device))
+        act = self.wm.act_enc(act.to(self._net_device))
         return super().step(act)
 
     def observe(self, data: gym.vector.VecStep):
         if not isinstance(data.next_obs, Tensor):
             data.next_obs = torch.stack([*data.next_obs])
-        data.next_obs = self.wm.obs_enc(data.next_obs.to(self.device))
+        data.next_obs = self.wm.obs_enc(data.next_obs.to(self._net_device))
         return super().observe(data)

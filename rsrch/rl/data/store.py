@@ -1,75 +1,11 @@
-import shutil
-import tempfile
-from pathlib import Path
+from collections import deque
+from copy import deepcopy
 from collections.abc import MutableMapping
-from typing import TypeAlias
+from typing import Iterable, TypeAlias, Deque
 import numpy as np
-import torch
-
-from .data import Seq, to_numpy_seq, to_tensor_seq
-
-__all__ = ["Store", "TensorStore", "MemoryMappedStore", "TwoLevelStore"]
-
-
-Store: TypeAlias = MutableMapping
-
-
-class MemoryMappedStore(dict):
-    def __init__(self):
-        super().__init__()
-        self._dir = tempfile.TemporaryDirectory()
-
-    def __setitem__(self, id, value):
-        if isinstance(value, Seq):
-            return self._set_seq(id, value)
-        else:
-            raise NotImplementedError()
-
-    def _set_seq(self, id, seq: Seq):
-        seq_d = Path(self._dir.name) / f"{id:08d}"
-        seq_d.mkdir(parents=True, exist_ok=True)
-
-        seq = to_numpy_seq(seq)
-
-        obs = np.memmap(
-            filename=seq_d / "obs.dat",
-            mode="w+",
-            dtype=seq.obs.dtype,
-            shape=seq.obs.shape,
-        )
-        obs[:] = seq.obs
-
-        act = np.memmap(
-            filename=seq_d / "act.dat",
-            mode="w+",
-            dtype=seq.act.dtype,
-            shape=seq.act.shape,
-        )
-        act[:] = seq.act
-
-        reward = np.memmap(
-            filename=seq_d / "reward.dat",
-            mode="w+",
-            dtype=seq.reward.dtype,
-            shape=seq.reward.shape,
-        )
-        reward[:] = seq.reward
-
-        term = np.memmap(
-            filename=seq_d / "term.dat",
-            mode="w+",
-            dtype=bool,
-            shape=(1,),
-        )
-        term[:] = seq.term
-
-        mmap_seq = Seq(obs, act, reward, term)
-        return super().__setitem__(id, mmap_seq)
-
-    def __delitem__(self, id):
-        seq_d = Path(self._dir.name) / f"{id:08d}"
-        shutil.rmtree(seq_d)
-        return super().__delitem__(id)
+from rsrch.rl import gym
+import rsrch.rl.gym.vector.utils as vec_utils
+from .core import Seq, Step, StepBatch
 
 
 class Allocator:
@@ -129,46 +65,29 @@ class Allocator:
         return map_
 
 
-class TensorStore(dict):
-    def __init__(self, capacity: int, safety_margin=0.1, device=None, pin_memory=True):
+class NumpySeqStore(dict):
+    def __init__(
+        self,
+        capacity: int,
+        obs_space: gym.Space,
+        act_space: gym.Space,
+        overhead=0.1,
+    ):
         super().__init__()
         self._capacity = capacity
-        self._device = device
-        self._pin_memory = pin_memory
-
-        self._mem_size = int((1.0 + safety_margin) * capacity)
+        self._mem_size = int((1.0 + overhead) * capacity)
         self._alloc = Allocator(mem_size=self._mem_size)
+        self._obs_space = obs_space
+        self._act_space = act_space
 
-        self.obs = None
-        self.act = None
-        self.reward = self._create([], torch.float32)
+        self.obs = vec_utils.Array.empty(obs_space, self._mem_size)
+        self.act = vec_utils.Array.empty(act_space, self._mem_size)
+        self.reward = np.empty([self._mem_size], dtype=np.float32)
         self.term = {}
 
-    def _create(self, shape, dtype):
-        return torch.empty(
-            [self._mem_size, *shape],
-            device=self._device,
-            dtype=dtype,
-            pin_memory=self._pin_memory,
-        )
-
-    def __setitem__(self, id, value):
-        if isinstance(value, Seq):
-            return self._set_seq(id, value)
-        else:
-            raise NotImplementedError()
-
-    def _set_seq(self, id, seq: Seq):
+    def __setitem__(self, id, seq: Seq):
         if self._alloc.free_space < len(seq.obs):
             raise ValueError()
-
-        seq = to_tensor_seq(seq)
-
-        if self.obs is None:
-            self.obs = self._create(seq.obs.shape[1:], seq.obs.dtype)
-
-        if self.act is None:
-            self.act = self._create(seq.act.shape[1:], seq.act.dtype)
 
         obs_len, act_len, rew_len = len(seq.obs), len(seq.act), len(seq.reward)
 
@@ -191,7 +110,7 @@ class TensorStore(dict):
             lengths = super().__getitem__(id)[1:]
             arrays = (self.obs, self.act, self.reward)
             for arr, len_ in zip(arrays, lengths):
-                x = arr[src : src + len_].clone()
+                x = deepcopy(arr[src : src + len_])
                 arr[dst : dst + len_] = x
 
             super().__getitem__(id)[0] = dst
@@ -211,7 +130,89 @@ class TensorStore(dict):
         super().__delitem__(id)
 
 
-class TwoLevelStore(MutableMapping):
+class RAMStepDeque(deque):
+    def __init__(self, obs_space: gym.Space, act_space: gym.Space):
+        super().__init__([])
+        self._obs_space = obs_space
+        self._act_space = act_space
+
+    def __getitem__(self, idx) -> Step | StepBatch:
+        if isinstance(idx, Iterable):
+            steps: list[Step] = [super().__getitem__(i) for i in idx]
+            obs = vec_utils.stack(self._obs_space, [step.obs for step in steps])
+            act = vec_utils.stack(self._act_space, [step.act for step in steps])
+            next_obs = vec_utils.stack(
+                self._obs_space, [step.next_obs for step in steps]
+            )
+            reward = np.array([step.reward for step in steps], dtype=np.float32)
+            term = np.array([step.term for step in steps])
+            trunc = np.array([step.trunc for step in steps])
+            return StepBatch(obs, act, next_obs, reward, term, trunc)
+        else:
+            return super().__getitem__(idx)
+
+
+class NumpyStepDeque(Deque):
+    def __init__(self, capacity: int, obs_space: gym.Space, act_space: gym.Space):
+        self._capacity = capacity
+        self._obs_space = obs_space
+        self._act_space = act_space
+
+        self.obs = vec_utils.Array.empty(obs_space, capacity)
+        self.act = vec_utils.Array.empty(act_space, capacity)
+        self.next_obs = vec_utils.Array.empty(obs_space, capacity)
+        self.reward = np.empty([capacity], dtype=np.float32)
+        self.term = np.empty([capacity], dtype=bool)
+
+        self._idxes = range(0, 0)
+
+    def append(self, value: Step):
+        idx = self._idxes.stop % self._capacity
+        self._idxes = range(self._idxes.start, idx + 1)
+        self.obs[idx] = value.obs
+        self.act[idx] = value.act
+        self.next_obs[idx] = value.next_obs
+        self.reward[idx] = value.reward
+        self.term[idx] = value.term
+
+    def popleft(self):
+        idx = self._idxes.start % self._capacity
+        self._idxes = range(idx + 1, self._idxes.stop)
+        return Step(
+            self.obs[idx],
+            self.act[idx],
+            self.next_obs[idx],
+            self.reward[idx],
+            self.term[idx],
+        )
+
+    def __len__(self):
+        return len(self._idxes)
+
+    def __iter__(self):
+        for idx in range(len(self)):
+            yield self[idx]
+
+    def __getitem__(self, idx):
+        t = StepBatch if isinstance(idx, Iterable) else Step
+        return t(
+            self.obs[idx],
+            self.act[idx],
+            self.next_obs[idx],
+            self.reward[idx],
+            self.term[idx],
+        )
+
+    def __setitem__(self, idx, value: Step | StepBatch):
+        self.obs[idx] = value.obs
+        self.act[idx] = value.act
+        self.next_obs[idx] = value.next_obs
+        self.term[idx] = value.term
+
+
+class LayeredStore(MutableMapping):
+    """This acts like a regular dict, but inserted items can be moved to a "deep storage"."""
+
     def __init__(self, cache: dict, persist: dict):
         self._cache = cache
         self._persist = persist

@@ -1,21 +1,16 @@
 from abc import ABC, abstractmethod
-from copy import copy
-
 
 import numpy as np
 import torch.distributions as D
 
-from .env import Env, EnvSpec
-from .spaces import Space
-from .spaces.transforms import SpaceTransform, default_cast
-from .events import *
+from .env import Env
 
 
 class Agent(ABC):
-    def reset(self, data: Reset):
+    def reset(self, obs, info):
         pass
 
-    def observe(self, data: Step):
+    def observe(self, next_obs, reward, term, trunc, info):
         pass
 
     @abstractmethod
@@ -27,7 +22,7 @@ class Agent(ABC):
 
 
 class RandomAgent(Agent):
-    def __init__(self, env: Env | EnvSpec):
+    def __init__(self, env: Env):
         super().__init__()
         self._action_space = env.action_space
 

@@ -28,13 +28,13 @@ class PrioritizedSampler:
         self.ds = ds
         if max_size is None:
             max_size = len(self.ds)
-        self.prio = RangeQueryTree(max_size)
+        self._priorities = RangeQueryTree(max_size)
 
     def update(self, idx, prio):
-        self.prio[idx] = prio
+        self._priorities[idx] = prio
 
     def __iter__(self):
         while True:
-            u = np.random.rand() * self.prio.total
-            idx = self.prio.searchsorted(u)
+            u = np.random.rand() * self._priorities.total
+            idx = self._priorities.searchsorted(u)
             yield idx

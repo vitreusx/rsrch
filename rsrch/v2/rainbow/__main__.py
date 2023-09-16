@@ -152,7 +152,7 @@ def main():
         capacity=cfg.buffer.capacity,
         stack_out=cfg.memory,
         sampler=sampler,
-        persist=TensorStore(capacity=cfg.buffer.capacity, pin_memory=True),
+        store=TensorStore(capacity=cfg.buffer.capacity, pin_memory=True),
     )
 
     class ProcessBatch:
