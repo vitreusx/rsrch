@@ -1,7 +1,9 @@
 from dataclasses import dataclass
 
 import torch
+
 from rsrch.utils.config import *
+
 from . import env
 
 
@@ -79,3 +81,4 @@ class Config:
     alpha: Alpha
     gamma: float
     exp: Exp
+    custom_init: bool

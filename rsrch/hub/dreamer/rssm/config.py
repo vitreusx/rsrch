@@ -1,6 +1,7 @@
 from dataclasses import dataclass
+from typing import Callable, Literal
+
 from torch import nn
-from typing import Literal, Callable
 
 
 def layer_ctor(cfg):
@@ -24,8 +25,8 @@ class Config:
     @dataclass
     class Dist:
         type: Literal["gaussian", "discrete"]
-        num_heads: int | None = None
-        std: str | None = None
+        num_heads: int | None
+        std: str | None
 
     deter: int
     stoch: int

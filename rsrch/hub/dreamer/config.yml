@@ -11,3 +11,19 @@ env:
   reward: sign
   time_limit: null
   stack: 4
+rssm:
+  deter: 128
+  stoch: 128
+  hidden: 128
+  fc_layers: [128, 128, 128]
+  conv_hidden: 32
+  norm_layer: null
+  act_layer: elu
+  dist:
+    type: discrete
+    num_heads: 8
+    std: null
+  ensemble: 4
+device: cuda
+val_every: 10e3
+env_workers: 8

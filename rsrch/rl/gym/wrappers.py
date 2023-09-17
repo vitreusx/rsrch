@@ -2,7 +2,7 @@ import numpy as np
 from gymnasium import Wrapper
 from gymnasium.wrappers import *
 
-from .env import Env
+from .envs import Env
 from .spaces import *
 
 

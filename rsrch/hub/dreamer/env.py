@@ -8,12 +8,12 @@ import torch
 from numpy.typing import NDArray
 from torch import Tensor
 
+import rsrch.rl.gym.vector.utils as vec_utils
 from rsrch.rl import data, gym
 from rsrch.rl.gym.spaces.tensor import *
-from rsrch.rl.gym.vector.utils import create_empty_array
 
 
-class MarkAsImage(gym.vector.VectorEnvWrapper):
+class MarkAsImageV(gym.vector.VectorEnvWrapper):
     """
     Converts the observation space to from Box to Image.
     """
@@ -92,6 +92,53 @@ class BoxTransform(gym.ObservationWrapper):
         return self._f(obs)
 
 
+class ObservationWrapper(gym.vector.VectorEnvWrapper):
+    def __init__(self, env: gym.VectorEnv):
+        super().__init__(env)
+        self._prev_space = env.single_observation_space
+
+    def observation(self, obs):
+        raise NotImplementedError()
+
+    def reset_wait(self, **kwargs):
+        obs, info = super().reset_wait(**kwargs)
+        obs = self.observation(obs)
+        return obs, info
+
+    def step_wait(self):
+        next_obs, reward, term, trunc, info = super().step_wait()
+        next_obs = self.observation(next_obs)
+        if "final_observation" in info:
+            mask, final_obs = info["_final_observation"], info["final_observation"]
+            idxes = np.where(mask)[0]
+            obs_space = self.single_observation_space
+            t = vec_utils.stack(self._prev_space, [*final_obs[idxes]])
+            t = vec_utils.split(obs_space, self.observation(t), len(idxes))
+            for i, env_i in enumerate(idxes):
+                info["final_observation"][env_i] = t[i]
+        return next_obs, reward, term, trunc, info
+
+
+class BoxTransformV(ObservationWrapper):
+    def __init__(self, env: gym.VectorEnv, f):
+        super().__init__(env)
+        self.observation = f
+
+        assert isinstance(env.single_observation_space, gym.spaces.Box)
+        obs_space = env.single_observation_space
+        dummy_x = self.observation(obs_space.sample()[None])[0]
+        new_shape = dummy_x.shape
+        new_dtype = dummy_x.dtype
+        new_low = self.observation(obs_space.low[None])[0]
+        new_high = self.observation(obs_space.high[None])[0]
+        new_seed = deepcopy(obs_space.np_random)
+        new_space = gym.spaces.Box(new_low, new_high, new_shape, new_dtype, new_seed)
+        self.single_observation_space = new_space
+        self.observation_space = vec_utils.batch_space(
+            self.single_observation_space, self.num_envs
+        )
+
+
 def np_flatten(x: np.ndarray, start_axis=0, end_axis=-1):
     shape = x.shape
     start_axis = range(len(shape))[start_axis]
@@ -117,7 +164,7 @@ class Config:
     atari: Atari
     reward: str | tuple[int, int]
     time_limit: int | None
-    stack: int
+    stack: int | None
 
 
 class Loader:
@@ -127,9 +174,11 @@ class Loader:
 
     def _infer_specs(self):
         exp_env = self.exp_env()
-
         self.visual = isinstance(exp_env.observation_space, gym.spaces.Image)
-        net_obs = self.conv_obs(create_empty_array(exp_env.observation_space, 1))[0]
+        self.discrete = isinstance(exp_env.action_space, gym.spaces.Discrete)
+
+        obs = vec_utils.create_empty_array(exp_env.observation_space, 1)
+        net_obs = self.conv_obs(obs)[0]
         if self.visual:
             self.obs_space = gym.spaces.TensorImage(net_obs.shape, net_obs.dtype)
         else:
@@ -139,11 +188,11 @@ class Loader:
                 net_obs.shape, low, high, dtype=net_obs.dtype
             )
 
-        self.discrete = isinstance(exp_env.action_space, gym.spaces.Discrete)
         if self.discrete:
             self.act_space = gym.spaces.TensorDiscrete(exp_env.action_space.n)
         else:
-            net_act = self.conv_act(create_empty_array(exp_env.action_space, 1))[0]
+            act = vec_utils.create_empty_array(exp_env.action_space, 1)
+            net_act = self.conv_act(act)[0]
             low = self.conv_act(exp_env.action_space.low[None])[0]
             high = self.conv_act(exp_env.action_space.high[None])[0]
             self.act_space = gym.spaces.TensorBox(
@@ -224,9 +273,13 @@ class Loader:
             use_fire_reset=atari.fire_reset,
             full_action_space=False,
         )
-
         env = VecEnvPool(env)
+
         env = gym.wrappers.RecordEpisodeStatistics(env)
+
+        # Envpool concatenates, instead of stacking. This fixes this behavior.
+        f = lambda x: x.reshape([len(x), self.cfg.stack, -1, *x.shape[2:]])
+        env = BoxTransformV(env, f)
 
         return env
 
@@ -234,9 +287,8 @@ class Loader:
         """Enviroment used during validation."""
         env = self._base_env()
 
-        if self.cfg.stack > 1:
+        if self.cfg.stack is not None:
             env = gym.wrappers.FrameStack(env, self.cfg.stack)
-            env = BoxTransform(env, lambda x: np_flatten(x, 0, 1))
 
         if self.cfg.type == "atari":
             env = gym.wrappers.MarkAsImage(env, channels_last=False)
@@ -244,10 +296,11 @@ class Loader:
         return env
 
     def val_envs(self, num_envs: int):
+        """Vectorized `val_env`."""
         if self.cfg.type == "atari":
             env = self._atari_envpool(num_envs, val=True)
             if env is not None:
-                env = MarkAsImage(env)
+                env = MarkAsImageV(env)
                 return env
 
         if num_envs == 1:
@@ -266,9 +319,8 @@ class Loader:
 
         env = self._reward_t(env)
 
-        if self.cfg.stack > 1:
+        if self.cfg.stack is not None:
             env = gym.wrappers.FrameStack(env, self.cfg.stack)
-            env = BoxTransform(env, lambda x: np_flatten(x, 0, 1))
 
         if self.cfg.type == "atari":
             env = gym.wrappers.MarkAsImage(env, channels_last=False)
@@ -293,11 +345,13 @@ class Loader:
         return env
 
     def exp_envs(self, num_envs: int):
+        """Vectorized `exp_env`."""
+
         if self.cfg.type == "atari":
             env = self._atari_envpool(num_envs, val=False)
             if env is not None:
                 env = self._reward_t(env)
-                env = MarkAsImage(env)
+                env = MarkAsImageV(env)
                 return env
 
         if num_envs == 1:
@@ -305,9 +359,122 @@ class Loader:
         else:
             return gym.vector.AsyncVectorEnv([self.exp_env] * num_envs)
 
+    def make_step_buffer(self, capacity: int, sampler=None):
+        """Create a step buffer."""
+
+        pre_stack_env = self._base_env()
+
+        return data.ChunkBuffer(
+            num_steps=1,
+            num_stack=self.cfg.stack,
+            capacity=capacity,
+            obs_space=pre_stack_env.observation_space,
+            act_space=pre_stack_env.action_space,
+            sampler=sampler,
+            store=data.NumpySeqStore(
+                capacity=capacity,
+                obs_space=pre_stack_env.observation_space,
+                act_space=pre_stack_env.action_space,
+            ),
+        )
+
+    def fetch_step_batch(self, buffer: data.ChunkBuffer, idxes: np.ndarray):
+        """Given a step buffer and a list of idxes, fetch a step batch and
+        transform it to tensor form. The observations are properly stacked."""
+
+        batch = buffer[idxes]
+
+        obs = np.stack([seq.obs[0] for seq in batch])
+        obs = self.conv_obs(obs)
+
+        next_obs = np.stack([seq.obs[1] for seq in batch])
+        next_obs = self.conv_obs(next_obs)
+
+        act = np.stack([seq.act[0] for seq in batch])
+        act = self.conv_act(act)
+
+        reward = np.stack([seq.reward[0] for seq in batch])
+        reward = torch.as_tensor(reward, dtype=obs.dtype)
+
+        term = torch.as_tensor([seq.term for seq in batch])
+        term = torch.as_tensor(term)
+
+        return data.TensorStepBatch(obs, act, next_obs, reward, term)
+
+    def make_chunk_buffer(self, capacity: int, num_steps: int, sampler=None):
+        """Create a chunk buffer."""
+
+        pre_stack_env = self._base_env()
+
+        return data.ChunkBuffer(
+            num_steps=num_steps,
+            num_stack=self.cfg.stack,
+            capacity=capacity,
+            obs_space=pre_stack_env.observation_space,
+            act_space=pre_stack_env.action_space,
+            sampler=sampler,
+            store=data.NumpySeqStore(
+                capacity=capacity,
+                obs_space=pre_stack_env.observation_space,
+                act_space=pre_stack_env.action_space,
+            ),
+        )
+
+    def fetch_chunk_batch(self, buffer: data.ChunkBuffer, idxes: np.ndarray):
+        """Given a chunk buffer and a list of idxes, fetch a step batch and
+        transform it to tensor form. The observations are stacked like
+        if using FrameStack."""
+
+        batch = buffer[idxes]
+        seq_len, batch_size = len(batch[0].act), len(batch)
+
+        obs = np.stack([seq.obs for seq in batch], axis=1)
+        if self.cfg.stack is not None:
+            obs = np_flatten(obs, 2, 3)
+        obs = self.conv_obs(obs.reshape(-1, *obs.shape[2:]))
+        obs = obs.reshape([seq_len + 1, batch_size, *obs.shape[1:]])
+
+        act = np.stack([seq.act for seq in batch], axis=1)
+        act = self.conv_act(act.reshape(-1, *act.shape[2:]))
+        act = act.reshape(seq_len, batch_size, *act.shape[1:])
+
+        reward = np.stack([seq.reward for seq in batch], axis=1)
+        reward = torch.as_tensor(reward, dtype=obs.dtype)
+
+        term = torch.as_tensor([seq.term for seq in batch])
+
+        return data.ChunkBatch(obs, act, reward, term)
+
+    def VecAgent(loader):
+        """Create a wrapper for vector agent that matches the input format."""
+
+        class _Agent(gym.vector.AgentWrapper):
+            def __init__(self, agent: gym.vector.Agent):
+                super().__init__(agent)
+
+            def reset(self, idxes, obs, info):
+                obs = loader.conv_obs(obs)
+                return super().reset(idxes, obs, info)
+
+            def observe(self, idxes, next_obs, term, trunc, info):
+                next_obs = loader.conv_obs(next_obs)
+                return super().observe(idxes, next_obs, term, trunc, info)
+
+            def policy(self, obs):
+                obs = loader.conv_obs(obs)
+                return super().policy(obs)
+
+            def step(self, act):
+                act = loader.conv_act(act)
+                return super().step(act)
+
+        return _Agent
+
     def conv_obs(self, obs: np.ndarray) -> Tensor:
         """Convert a batch of observations."""
         obs: Tensor = torch.as_tensor(obs)
+        if self.cfg.stack is not None:
+            obs = obs.flatten(1, 2)
         if self.visual:
             if obs.dtype == torch.uint8:
                 obs = obs / 255.0
@@ -321,30 +488,3 @@ class Loader:
         if torch.is_floating_point(act):
             act = act.to(torch.float32)
         return act
-
-    def collate_seq(self, batch: list[data.Seq]):
-        """Collate a batch of sequences from buffer to `data.ChunkBatch`."""
-        seq_len, batch_size = len(batch[0].act), len(batch)
-
-        obs = np.stack([seq.obs for seq in batch], axis=1)
-        obs = self.conv_obs(obs.reshape(-1, *obs.shape[2:]))
-        obs = obs.reshape(seq_len + 1, batch_size, *obs.shape[1:])
-
-        act = np.stack([seq.act for seq in batch], axis=1)
-        act = self.conv_act(act.reshape(-1, *act.shape[2:]))
-        act = act.reshape(seq_len, batch_size, *act.shape[1:])
-
-        reward = np.stack([seq.reward for seq in batch], axis=1)
-        reward = torch.as_tensor(reward, dtype=obs.dtype)
-
-        term = torch.as_tensor([seq.term for seq in batch])
-
-        return data.ChunkBatch(obs, act, reward, term)
-
-    def load_step_batch(self, batch: data.StepBatch):
-        obs = self.conv_obs(batch.obs)
-        act = self.conv_act(batch.act)
-        next_obs = self.conv_obs(batch.next_obs)
-        reward = torch.as_tensor(batch.reward, dtype=obs.dtype)
-        term = torch.as_tensor(batch.term)
-        return data.TensorStepBatch(obs, act, next_obs, reward, term)

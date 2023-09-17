@@ -51,3 +51,4 @@ exp:
 amp:
   enabled: false
   dtype: bfloat16
+custom_init: true

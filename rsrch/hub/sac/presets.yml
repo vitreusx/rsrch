@@ -43,6 +43,7 @@ atari: &atari
   exp:
     val_every: 25e3
   gamma: 0.99
+  custom_init: true
 cont: &cont
   buffer:
     capacity: 500e3
@@ -51,6 +52,7 @@ cont: &cont
     id: Hopper-v4
     type: dmc
     reward: sign
+    stack: null
   value:
     target:
       sync_every: 1
@@ -81,6 +83,7 @@ cont: &cont
   exp:
     val_every: 10e3
   gamma: 0.99
+  custom_init: false
 Alien-v4:
   <<: [*atari]
   env.id: AlienNoFrameskip-v4

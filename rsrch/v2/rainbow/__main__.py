@@ -1,6 +1,7 @@
-from concurrent.futures import ThreadPoolExecutor
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
 import numpy as np
 import torch
 from torch import Tensor, nn
@@ -15,15 +16,14 @@ from rsrch.nn.rewrite import rewrite_module_
 from rsrch.rl import gym
 from rsrch.rl.data import *
 from rsrch.rl.utils import polyak
+from rsrch.rl.utils.decorr import decorrelate
 from rsrch.rl.utils.make_env import EnvFactory
 from rsrch.utils import config, cron, sched
-from rsrch.rl.utils.decorr import decorrelate
 
 from .config import Config
 from .distq import ValueDist
 from .nets import *
 from .nets import ImpalaResidual
-
 
 T = gym.spaces.transforms
 
@@ -148,7 +148,7 @@ def main():
         sampler = UniformSampler()
 
     buffer = ChunkBuffer(
-        nsteps=cfg.multi_step.n,
+        num_steps=cfg.multi_step.n,
         capacity=cfg.buffer.capacity,
         stack_out=cfg.memory,
         sampler=sampler,

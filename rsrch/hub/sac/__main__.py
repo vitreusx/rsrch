@@ -17,6 +17,13 @@ from . import config, env
 from .nets import *
 
 
+def layer_init(layer, bias_const=0.0):
+    if isinstance(layer, (nn.Linear, nn.Conv2d)):
+        nn.init.kaiming_normal_(layer.weight)
+        torch.nn.init.constant_(layer.bias, bias_const)
+    return layer
+
+
 def main():
     cfg_dict = config.from_args(
         defaults=Path(__file__).parent / "config.yml",
@@ -31,24 +38,17 @@ def main():
     device = torch.device(device)
 
     loader = env.Loader(cfg.env)
-    val_env = loader.val_env()
-    exp_env = loader.exp_env()
 
     sampler = data.UniformSampler()
-
-    store = data.NumpyStepDeque(
+    buffer = loader.make_step_buffer(
         capacity=cfg.buffer.capacity,
-        obs_space=exp_env.observation_space,
-        act_space=exp_env.action_space,
-    )
-
-    buffer = data.StepBuffer(
-        step_cap=cfg.buffer.capacity,
         sampler=sampler,
-        store=store,
     )
 
     actor = Actor(loader.obs_space, loader.act_space).to(device)
+    if cfg.custom_init:
+        actor.apply(layer_init)
+
     actor_opt = torch.optim.Adam(
         actor.parameters(),
         lr=cfg.actor.opt.lr,
@@ -59,6 +59,9 @@ def main():
         return Q(loader.obs_space, loader.act_space).to(device)
 
     q1, q1_t = make_q(), make_q()
+    if cfg.custom_init:
+        q1.apply(layer_init)
+
     polyak.sync(q1, q1_t)
     q1_polyak = polyak.Polyak(
         source=q1,
@@ -68,6 +71,9 @@ def main():
     )
 
     q2, q2_t = make_q(), make_q()
+    if cfg.custom_init:
+        q2.apply(layer_init)
+
     polyak.sync(q2, q2_t)
     q2_polyak = polyak.Polyak(
         source=q2,
@@ -107,18 +113,19 @@ def main():
     class ActorAgent(gym.vector.Agent):
         @torch.inference_mode()
         def policy(self, obs):
-            obs = loader.conv_obs(obs).to(device)
-            act_rv: D.Categorical = actor(obs)
+            obs = loader.conv_obs(obs)
+            act_rv: D.Categorical = actor(obs.to(device))
             return act_rv.sample().cpu().numpy()
 
-    val_agent = ActorAgent()
     val_envs = loader.val_envs(cfg.infra.env_workers)
+    val_agent = ActorAgent()
 
-    exp_agent = ActorAgent()
     num_exp_envs = min(cfg.infra.env_workers, cfg.sched.env_batch)
     exp_envs = loader.exp_envs(num_exp_envs)
     exp_iters = cfg.sched.env_batch // num_exp_envs
+    exp_agent = ActorAgent()
 
+    ep_ids = [None for _ in range(exp_envs.num_envs)]
     exp_iter = iter(rollout.steps(exp_envs, exp_agent))
 
     env_step = 0
@@ -183,7 +190,8 @@ def main():
                 q2_pred = q2(batch.obs)
                 min_q = torch.minimum(q1_pred, q2_pred)
             policy: D.Categorical = actor(batch.obs)
-            actor_loss = -(policy.probs * (min_q - alpha * policy.log_probs)).sum()
+            actor_loss = -(policy.probs * (min_q - alpha * policy.log_probs))
+            actor_loss = actor_loss.sum(-1).mean()
         else:
             policy = actor(batch.obs)
             act = policy.rsample()
@@ -226,8 +234,9 @@ def main():
 
     def opt_step():
         if should_opt_actor or should_opt_value:
-            batch: data.StepBatch = buffer[sampler.sample(cfg.sched.opt_batch)]
-            batch = loader.load_step_batch(batch).to(device)
+            idxes = sampler.sample(cfg.sched.opt_batch)
+            batch = loader.fetch_step_batch(buffer, idxes)
+            batch = batch.to(device)
 
             if should_opt_value:
                 for _ in range(cfg.sched.value.opt_iters):
@@ -254,8 +263,8 @@ def main():
             break
 
         for _ in range(exp_iters):
-            _, step = next(exp_iter)
-            buffer.push(step.obs, step.act, step.next_obs, step.reward, step.term)
+            env_idx, step = next(exp_iter)
+            ep_ids[env_idx], _ = buffer.push(ep_ids[env_idx], step)
             env_step += 1
             pbar.update()
             q1_polyak.step()

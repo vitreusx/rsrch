@@ -1,17 +1,20 @@
+from pathlib import Path
+
 import numpy as np
+import torch
+from torch import nn
+from tqdm.auto import tqdm
+
 from rsrch.exp import Experiment
+from rsrch.nn.rewrite import rewrite_module_
 from rsrch.rl import data, gym
 from rsrch.rl.data import rollout
 from rsrch.rl.utils import polyak
 from rsrch.utils import cron, sched
-from pathlib import Path
-import torch
-from tqdm.auto import tqdm
-from rsrch.nn.rewrite import rewrite_module_
-from torch import nn
+
 from . import config, env
-from .nets import *
 from .agent import QAgent
+from .nets import *
 
 
 def main():
@@ -50,7 +53,7 @@ def main():
     )
 
     buffer = data.ChunkBuffer(
-        nsteps=cfg.multi_step.n,
+        num_steps=cfg.multi_step.n,
         capacity=cfg.buffer.capacity,
         obs_space=exp_env.observation_space,
         act_space=exp_env.action_space,

@@ -1,8 +1,9 @@
+from functools import singledispatch
+from typing import Any, Callable, Iterable, Optional, TypeVar, Union, overload
+
+import numpy as np
 from gymnasium.spaces import *
 from gymnasium.vector.utils import *
-from typing import Any, Callable, Optional, TypeVar, Union, Iterable, overload
-import numpy as np
-from functools import singledispatch
 
 Out = TypeVar("Out")
 
@@ -53,6 +54,7 @@ def getitem(
     n: int,
     out: np.ndarray = None,
 ) -> np.ndarray: ...
+def stack(space: Space, items: list, out=None) -> Any: ...
 
 class Array:
     def __init__(self, space: Space, arr: Any, n: int): ...

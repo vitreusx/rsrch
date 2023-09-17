@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 
 import numpy as np
+
 from .base import VectorEnv
 
 
@@ -59,8 +60,8 @@ class AgentWrapper(Agent):
         super().__init__()
         self._agent = agent
 
-    def reset(self, *args, **kwargs):
-        return self._agent.reset(*args, **kwargs)
+    def reset(self, idxes, obs, info):
+        return self._agent.reset(idxes, obs, info)
 
     def policy(self, obs):
         return self._agent.policy(obs)
@@ -68,5 +69,5 @@ class AgentWrapper(Agent):
     def step(self, act):
         return self._agent.step(act)
 
-    def observe(self, *args, **kwargs):
-        return self._agent.observe(*args, **kwargs)
+    def observe(self, idxes, next_obs, term, trunc, info):
+        return self._agent.observe(idxes, next_obs, term, trunc, info)

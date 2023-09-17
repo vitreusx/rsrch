@@ -30,14 +30,13 @@ class StepBuffer(Mapping[int, Step]):
         self.steps = store
         self._step_ids = range(0, 0)
 
-    def push(self, obs, act, next_obs, reward, term):
+    def push(self, step: Step):
         while len(self._step_ids) >= self.step_cap:
             self.steps.popleft()
             self._step_ids = range(self._step_ids.start + 1, self._step_ids.stop)
             if self.sampler is not None:
                 self.sampler.popleft()
 
-        step = Step(obs, act, next_obs, reward, term)
         self.steps.append(deepcopy(step))
 
         if self.sampler is not None:
@@ -60,18 +59,21 @@ class StepBuffer(Mapping[int, Step]):
 class ChunkBuffer(Mapping[int, Seq]):
     def __init__(
         self,
-        nsteps: int,
+        num_steps: int,
         capacity: int,
         obs_space: gym.Space,
         act_space: gym.Space,
         sampler: Sampler = None,
         store: MutableMapping = None,
+        num_stack=None,
     ):
-        self.nsteps = nsteps
+        self.num_steps = num_steps
         self.capacity = capacity
         self.sampler = sampler
         self._obs_space = obs_space
         self._act_space = act_space
+
+        self._num_stack = num_stack
 
         self.chunks = deque()
         self._chunk_ids = range(0, 0)
@@ -84,7 +86,8 @@ class ChunkBuffer(Mapping[int, Seq]):
     def on_reset(self, obs, info):
         ep_id = self._ep_ptr
         self._ep_ptr += 1
-        self.episodes[ep_id] = ListSeq.initial(obs)
+        obs = [*obs] if self._num_stack is not None else [obs]
+        self.episodes[ep_id] = ListSeq(obs=obs, act=[], reward=[], term=False)
         return ep_id
 
     def _popleft(self):
@@ -94,7 +97,7 @@ class ChunkBuffer(Mapping[int, Seq]):
             self.sampler.popleft()
 
         ep = self.episodes[ep_id]
-        if off + self.nsteps == len(ep.act):
+        if off + self.num_steps == len(ep.act):
             del self.episodes[ep_id]
 
     def on_step(self, ep_id: int, act, next_obs, reward, term, trunc):
@@ -102,19 +105,21 @@ class ChunkBuffer(Mapping[int, Seq]):
             self._popleft()
 
         ep: ListSeq = self.episodes[ep_id]
+        if self._num_stack is not None:
+            next_obs = next_obs[-1]
         ep.add(act, next_obs, reward, term, trunc)
 
         chunk_id = None
-        if len(ep.act) >= self.nsteps:
+        if len(ep.act) >= self.num_steps:
             chunk_id = self._chunk_ids.stop
             self._chunk_ids = range(self._chunk_ids.start, chunk_id + 1)
-            offset = len(ep.act) - self.nsteps
+            offset = len(ep.act) - self.num_steps
             self.chunks.append((ep_id, offset))
             if self.sampler is not None:
                 self.sampler.append()
 
         if term or trunc:
-            if len(ep.act) >= self.nsteps:
+            if len(ep.act) >= self.num_steps:
                 self.episodes.persist(ep_id)
             else:
                 del self.episodes[ep_id]
@@ -126,7 +131,12 @@ class ChunkBuffer(Mapping[int, Seq]):
             ep_id = self.on_reset(step.obs, {})
 
         chunk_id = self.on_step(
-            ep_id, step.act, step.next_obs, step.reward, step.term, step.trunc
+            ep_id,
+            step.act,
+            step.next_obs,
+            step.reward,
+            step.term,
+            step.trunc,
         )
 
         if step.done:
@@ -147,9 +157,13 @@ class ChunkBuffer(Mapping[int, Seq]):
         ep_id, off = self.chunks[idx]
         ep: Seq = self.episodes[ep_id]
 
-        n = self.nsteps
-        obs = create_empty_array(self._obs_space, n + 1)
-        concatenate(self._obs_space, ep.obs[off : off + n + 1], obs)
+        n = self.num_steps
+        if self._num_stack is not None:
+            k = self._num_stack
+            obs = np.stack([ep.obs[off + i : off + i + k] for i in range(n + 1)])
+        else:
+            obs = create_empty_array(self._obs_space, n + 1)
+            concatenate(self._obs_space, ep.obs[off : off + n + 1], obs)
         act = create_empty_array(self._act_space, n)
         concatenate(self._act_space, ep.act[off : off + n], act)
         reward = np.asarray(ep.reward[off : off + n])

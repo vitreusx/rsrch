@@ -1,7 +1,15 @@
-from .base import Env
 import torch.distributions as D
+from gymnasium.envs import *
 
+from .base import Env
 from .spaces import Space
+
+
+class SpecEnv(Env):
+    def __init__(self, obs_space: Space, act_space: Space):
+        super().__init__()
+        self.observation_space = obs_space
+        self.action_space = act_space
 
 
 class RandomEnv(Env):

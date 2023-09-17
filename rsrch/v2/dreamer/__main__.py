@@ -1,19 +1,20 @@
+from pathlib import Path
+
 import numpy as np
 import torch
 from torch import Tensor
-from rsrch.rl.data.core import ChunkBatch
 
-from rsrch.rl.gym.vector.events import VecReset, VecStep
-from . import config, rssm, wm
-from rsrch.rl.utils.make_env import EnvFactory
-from rsrch.rl import gym, data
-from rsrch.rl.data import rollout
-from pathlib import Path
 from rsrch.exp.board.wandb import Wandb
-from rsrch.exp.vcs import WandbVCS
-from rsrch.utils import cron
 from rsrch.exp.pbar import ProgressBar
+from rsrch.exp.vcs import WandbVCS
+from rsrch.rl import data, gym
+from rsrch.rl.data import rollout
+from rsrch.rl.data.core import ChunkBatch
+from rsrch.rl.gym.vector.events import VecReset, VecStep
+from rsrch.rl.utils.make_env import EnvFactory
+from rsrch.utils import cron
 
+from . import config, rssm, wm
 
 T = gym.wrappers.transforms
 
@@ -102,7 +103,7 @@ def main():
     sampler = data.UniformSampler()
 
     buffer = data.ChunkBuffer(
-        nsteps=cfg.seq_len,
+        num_steps=cfg.seq_len,
         capacity=cfg.buf_cap,
         stack_in=cfg.env.stack,
         store=data.TensorStore(cfg.buf_cap),

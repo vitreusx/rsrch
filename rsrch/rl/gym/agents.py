@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 import torch.distributions as D
 
-from .env import Env
+from .envs import Env
 
 
 class Agent(ABC):
