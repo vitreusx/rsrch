@@ -1,8 +1,10 @@
 import numpy as np
 import torch
 from torch import Tensor, nn
-from rsrch.rl import gym
+
 import rsrch.distributions as D
+import rsrch.distributions.transforms as T
+from rsrch.rl import gym
 
 
 class Encoder(nn.Sequential):
@@ -48,6 +50,7 @@ class QHead(nn.Sequential):
                 nn.Linear(256, 256),
                 nn.ReLU(),
                 nn.Linear(256, 1),
+                nn.Flatten(0),
             )
             self._discrete = False
         else:
@@ -88,6 +91,10 @@ class ActorHead(nn.Module):
             )
             self._discrete = False
             self._act_space = act_space
+            act_scale = 0.5 * (self._act_space.high - self._act_space.low)
+            self.register_buffer("act_scale", torch.as_tensor(act_scale))
+            act_loc = 0.5 * (self._act_space.high + self._act_space.low)
+            self.register_buffer("act_loc", torch.as_tensor(act_loc))
 
     def forward(self, enc_obs: Tensor) -> D.Distribution:
         if self._discrete:
@@ -95,19 +102,20 @@ class ActorHead(nn.Module):
             return D.Categorical(logits=logits)
         else:
             mean, log_std = self.net(enc_obs).chunk(2, -1)
-            mean = mean.reshape(-1, *self._act_shape)
-            log_std = log_std.reshape(-1, *self._act_shape)
+
+            mean = mean.reshape(-1, *self._act_space.shape)
+            mean = 5.0 * torch.tanh(mean / 5.0)
+
+            log_std = log_std.reshape(-1, *self._act_space.shape)
             if self._log_std_range is not None:
                 min_, max_ = self._log_std_range
-                log_std = torch.tanh(log_std)
-                log_std = min_ + 0.5 * (max_ - min_) * (log_std + 1)
+                t = 0.5 * (log_std.tanh() + 1)
+                log_std = min_ + (max_ - min_) * t
 
-            return D.TanhNormal(
-                loc=mean,
-                scale=log_std.exp(),
-                event_dims=len(self._act_space.shape),
-                min_v=self._act_space.low,
-                max_v=self._act_space.high,
+            return D.TransformedDistribution(
+                D.Normal(mean, log_std.exp(), len(self._act_space.shape)),
+                T.TanhTransform(eps=3e-8),
+                T.AffineTransform(self.act_loc, self.act_scale),
             )
 
 

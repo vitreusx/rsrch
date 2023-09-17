@@ -1,7 +1,9 @@
 from copy import deepcopy
-from .base import *
-from ..vector.utils import batch_space
+
 import numpy as np
+
+from ..vector.utils import batch_space
+from .base import *
 
 
 class Image(Box):
@@ -12,6 +14,7 @@ class Image(Box):
         self,
         shape: tuple[int, ...],
         normalized=False,
+        channels_last=True,
         seed=None,
     ):
         if normalized:
@@ -23,6 +26,7 @@ class Image(Box):
 
         super().__init__(low, high, shape, dtype, seed)
         self._normalized = normalized
+        self._channels_last = channels_last
 
     @property
     def num_channels(self):

@@ -86,3 +86,14 @@ class MultiheadOHST(nn.Module):
     def forward(self, x: Tensor) -> D.MultiheadOHST:
         logits: Tensor = self.net(x)
         return D.MultiheadOHST(self.num_heads, logits=logits)
+
+
+class Dirac(nn.Module):
+    def __init__(self, in_features: int, out_shape: torch.Size):
+        super().__init__()
+        self._out_shape = out_shape
+        self.fc = nn.Linear(in_features, int(np.prod(out_shape)))
+
+    def forward(self, x: Tensor) -> D.Dirac:
+        out = self.fc(x).reshape(-1, *self._out_shape)
+        return D.Dirac(out, len(self._out_shape))

@@ -8,6 +8,7 @@ from rsrch.types.tensorlike import Tensorlike
 
 from .distribution import Distribution
 from .transforms import Transform
+from .utils import sum_rightmost
 
 
 class TransformedDistribution(Distribution, Tensorlike):
@@ -43,14 +44,16 @@ class TransformedDistribution(Distribution, Tensorlike):
     def log_prob(self, value: Tensor) -> Tensor:
         logp = 0.0
         y = value
-        event_dims = len(self.event_shape)
+        batch_dim = len(value.shape) - len(self.event_shape)
 
         for t in reversed(self.transforms):
-            x = t.inv(value)
-            t_logp = t.log_abs_det_jac(x, y).flatten(-event_dims).sum(-1)
-            logp = logp + t_logp
+            x = t.inv(y)
+            t_logp = t.log_abs_det_jac(x, y)
+            t_logp = sum_rightmost(t_logp, len(t_logp.shape) - batch_dim)
+            logp = logp - t_logp
             y = x
 
-        base_logp = self.base.log_prob(y).flatten(-event_dims).sum(-1)
+        base_logp = self.base.log_prob(y)
+        base_logp = sum_rightmost(base_logp, len(base_logp.shape) - batch_dim)
         logp = logp + base_logp
         return logp

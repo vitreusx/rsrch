@@ -20,30 +20,19 @@ class Transform(Protocol):
         ...
 
 
-class ConvertTypeTransform(Transform):
-    def __init__(self, from_dt: torch.dtype, to_dt: torch.dtype):
-        self.from_dt = from_dt
-        self.to_dt = to_dt
-
-    def __call__(self, x):
-        return x.to(dtype=self.to_dt)
-
-    def inv(self, y):
-        return y.to(dtype=self.from_dt)
-
-    def log_abs_det_jac(self, x, y):
-        return 0.0
-
-
 class TanhTransform(Transform):
-    def __init__(self, eps=3e-8):
+    def __init__(self, eps=None):
         self.eps = eps
 
     def __call__(self, x):
-        return x.tanh()
+        y = x.tanh()
+        if self.eps is not None:
+            y = y.clamp(-1.0 + self.eps, 1.0 - self.eps)
+        return y
 
     def inv(self, y):
-        y = y.clamp(-1.0 + self.eps, 1.0 - self.eps)
+        if self.eps is not None:
+            y = y.clamp(-1.0 + self.eps, 1.0 - self.eps)
         return y.atanh()
 
     def log_abs_det_jac(self, x, y):

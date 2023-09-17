@@ -1,25 +1,29 @@
 from pathlib import Path
+
 import numpy as np
 import torch
+import torch.nn.functional as F
+from torch import Tensor, nn
+from tqdm.auto import tqdm
+
+import rsrch.distributions as D
 from rsrch.exp import Experiment
-from rsrch.rl import gym, data
+from rsrch.rl import data, gym
 from rsrch.rl.data import rollout
 from rsrch.rl.utils import polyak
 from rsrch.utils import config, cron
-from torch import Tensor, nn
-import rsrch.distributions as D
-import torch.nn.functional as F
+
 from . import config, env
 from .nets import *
-from tqdm.auto import tqdm
 
 
 def main():
-    cfg = config.from_args(
-        cls=config.Config,
+    cfg_dict = config.from_args(
         defaults=Path(__file__).parent / "config.yml",
         presets=Path(__file__).parent / "presets.yml",
     )
+
+    cfg = config.to_class(cfg_dict, config.Config)
 
     device = cfg.infra.device
     if device.startswith("cuda") and not torch.cuda.is_available():
@@ -82,7 +86,11 @@ def main():
         if loader.discrete:
             target_ent = np.log(loader.act_space.n)
         else:
-            target_ent = -np.prod(loader.act_space.shape)
+            act_shape = loader.act_space.shape
+            low = torch.as_tensor(loader.act_space.low).expand(act_shape)
+            high = torch.as_tensor(loader.act_space.high).expand(act_shape)
+            target_ent = np.log(high - low).sum()
+
         target_ent *= cfg.alpha.ent_scale
 
         log_alpha = nn.Parameter(torch.zeros([], device=device))
@@ -120,7 +128,7 @@ def main():
     should_opt_actor = cron.Every(lambda: env_step, cfg.sched.actor.opt_every)
     should_end = cron.Once(lambda: env_step >= cfg.sched.total_steps)
 
-    exp = Experiment(project="sac")
+    exp = Experiment(project="sac", config=cfg_dict)
     board = exp.board
     board.add_step("env_step", lambda: env_step, default=True)
     pbar = tqdm(total=cfg.sched.total_steps, dynamic_ncols=True)
@@ -138,7 +146,7 @@ def main():
                 q1_pred = q1_t(batch.next_obs, next_act)
                 q2_pred = q2_t(batch.next_obs, next_act)
                 min_q = torch.min(q1_pred, q2_pred)
-                next_q = min_q - alpha * next_pi.entropy()
+                next_q = min_q - alpha * next_pi.log_prob(next_act)
 
             cont = 1.0 - batch.term.type_as(batch.obs)
             target = batch.reward + cfg.gamma * cont * next_q
@@ -169,23 +177,21 @@ def main():
     def optimize_actor(batch: data.StepBatch):
         nonlocal alpha
 
-        with torch.no_grad():
-            if loader.discrete:
+        if loader.discrete:
+            with torch.no_grad():
                 q1_pred = q1(batch.obs)
                 q2_pred = q2(batch.obs)
                 min_q = torch.minimum(q1_pred, q2_pred)
-            else:
-                q1_pred = q1(batch.obs, batch.act)
-                q2_pred = q2(batch.obs, batch.act)
-                min_q = torch.minimum(q1_pred, q2_pred)
-
-        policy = actor(batch.obs)
-        if loader.discrete:
-            policy: D.Categorical
-            actor_loss = (policy.probs * (alpha * policy.log_probs - min_q)).mean()
+            policy: D.Categorical = actor(batch.obs)
+            actor_loss = -(policy.probs * (min_q - alpha * policy.log_probs)).sum()
         else:
-            logp = policy.log_prob(batch.act)
-            actor_loss = (-min_q - alpha * logp).mean()
+            policy = actor(batch.obs)
+            act = policy.rsample()
+            logp = policy.log_prob(act)
+            q1_pred = q1(batch.obs, act)
+            q2_pred = q2(batch.obs, act)
+            min_q = torch.minimum(q1_pred, q2_pred)
+            actor_loss = -(min_q - alpha * logp).mean()
 
         actor_opt.zero_grad(set_to_none=True)
         actor_loss.backward()
@@ -193,17 +199,22 @@ def main():
 
         if should_log:
             board.add_scalar("train/actor_loss", actor_loss)
-            board.add_scalar("train/actor_ent", policy.entropy().mean())
+            if loader.discrete:
+                board.add_scalar("train/actor_ent", policy.entropy().mean())
+            else:
+                board.add_scalar("train/actor_ent", -logp.mean())
 
         if cfg.alpha.autotune:
             with torch.no_grad():
+                policy = actor(batch.obs)
                 if loader.discrete:
                     policy: D.Categorical
                     ent_est = policy.entropy().mean()
                 else:
+                    logp = policy.log_prob(policy.rsample())
                     ent_est = -logp.mean()
 
-            alpha_loss = log_alpha * (ent_est.detach() - target_ent)
+            alpha_loss = log_alpha * (ent_est - target_ent)
             alpha_opt.zero_grad(set_to_none=True)
             alpha_loss.backward()
             alpha_opt.step()

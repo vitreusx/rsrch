@@ -1,20 +1,24 @@
 from __future__ import annotations
+
 import argparse
-from enum import Enum
 import io
+import math
 import re
 from copy import copy
+from dataclasses import is_dataclass
+from enum import Enum
 from pathlib import Path
 from types import UnionType
 from typing import *
-from dataclasses import is_dataclass
+
 import dacite
 import ruamel.yaml as yaml
 from mako.template import Template
+
 from rsrch.types import Namespace
 
 # Either $(...) or ${...}, covering entire text
-EVAL_PATS = [r"^\$\((?P<expr>[^\)]*)\)$", r"^\${(?P<expr>[^\)]*)}$"]
+EVAL_PATS = [r"^\$\((?P<expr>.*)\)$", r"^\${(?P<expr>.*)}$"]
 
 
 def quote_preserving_split(sep: str):
@@ -115,7 +119,7 @@ def resolve_exprs(data):
     data = to_expr(data)
     prev_lazy = None
     while prev_lazy != 0:
-        g = {**data, **{"_root": data}}
+        g = {**data, **{"_root": data, "math": math}}
         data, cur_lazy = _resolve_once(data, g)
         if prev_lazy == cur_lazy:
             break
@@ -179,18 +183,16 @@ def _fix_types(x, t):
 T = TypeVar("T")
 
 
-def parse_data(data: dict, cls: Type[T]) -> T:
+def fix_dict(data: dict):
+    data = normalize_(copy(data))
+    data = resolve_exprs(data)
+    return data
+
+
+def to_class(data: dict, cls: Type[T]) -> T:
     """Parse data into a class. The data may be obtained from e.g. YAML file, and cls must be a dataclass. One can use $(...) expressions for evaluation (like in Bash). Moreover, one can use non-builtin classes in the cls dataclass, which will get converted via the constructor from a base type."""
 
-    # Normalize compound keys
-    data = normalize_(copy(data))
-    # Resolve all $(...)'s in the data
-    data = resolve_exprs(data)
-    # Use dacite for conversion to the config class. dacite converter
-    # throws an error if types mismatch by default, but we fix it afterwards, so
-    # we pass check_types=False
     res = dacite.from_dict(cls, data, dacite.Config(check_types=False))
-    # Fix the mistyped values, if possible
     res = _fix_types(res, cls)
 
     return res
@@ -291,17 +293,28 @@ def parse_spec(spec: str, cwd=None):
     return data
 
 
-def parse(specs: list[str], cls: Type[T] = None, cwd=None) -> dict | T:
+def from_specs(specs: list[str], cls: Type[T] = None, cwd=None) -> dict | T:
     """Construct a config class or dict for a given list of config specs."""
     data = {}
     for spec in specs:
-        update_(data, parse_spec(spec, cwd))
+        spec_d = parse_spec(spec, cwd)
+        update_(data, spec_d)
+        data = fix_dict(data)
     if cls is not None:
-        data = parse_data(data, cls)
+        data = to_class(data, cls)
     return data
 
 
-def from_args(cls: Type[T], defaults: Path = None, presets: Path = None) -> T:
+def make_parser(defaults: Path = None, presets: Path = None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-c", "--config", nargs="*")
+    if presets is not None:
+        parser.add_argument("-p", "--presets", nargs="*")
+
+
+def from_args(
+    cls: Type[T] = None, defaults: Path = None, presets: Path = None
+) -> T | dict:
     """Read config from command line arguments."""
 
     parser = argparse.ArgumentParser()
@@ -309,28 +322,19 @@ def from_args(cls: Type[T], defaults: Path = None, presets: Path = None) -> T:
     if presets is not None:
         parser.add_argument("-p", "--presets", nargs="*")
 
-    args, unknown = parser.parse_known_args()
+    args = parser.parse_args()
     cfg_specs = []
     if defaults is not None:
         cfg_specs.append(str(defaults.absolute()))
     if args.config is not None:
         cfg_specs.extend(args.config)
-    if presets is not None and args.presets is not None:
-        preset_file = str(Path(presets).absolute())
-        cfg_specs.extend(f"{preset_file}:{preset}" for preset in args.presets)
+    if presets is not None:
+        if args.presets is not None:
+            preset_file = str(Path(presets).absolute())
+            cfg_specs.extend(f"{preset_file}:{preset}" for preset in args.presets)
 
-    data = parse(cfg_specs)
+    data = from_specs(cfg_specs)
+    if cls is not None:
+        data = to_class(data, cls)
 
-    # unk_dict = {}
-    # for key, value in zip(unknown[::2], unknown[1::2]):
-    #     if key.startswith("+"):
-    #         unk_dict[key[1:]] = value
-
-    # if len(unk_dict) > 0:
-    #     ss = io.StringIO()
-    #     yaml.safe_dump(unk_dict, ss)
-    #     ss.seek(0)
-    #     unk_dict = yaml.safe_load(ss)
-    #     update_(data, unk_dict)
-
-    return parse_data(data, cls)
+    return data

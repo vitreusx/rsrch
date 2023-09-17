@@ -1,8 +1,9 @@
+import numpy as np
 from gymnasium import Wrapper
 from gymnasium.wrappers import *
-import numpy as np
-from .spaces import *
+
 from .env import Env
+from .spaces import *
 
 
 class NoopResetEnv(Wrapper[np.ndarray, int, np.ndarray, int]):
@@ -178,9 +179,10 @@ class MarkAsImage(Wrapper):
     Converts the observation space to from Box to Image.
     """
 
-    def __init__(self, env: Env):
+    def __init__(self, env: Env, normalized=None, channels_last=True):
         super().__init__(env)
         obs_space = env.observation_space
         assert isinstance(obs_space, Box)
-        normalized = np.issubdtype(obs_space.dtype, np.floating)
-        self.observation_space = Image(obs_space.shape, normalized)
+        if normalized is None:
+            normalized = np.issubdtype(obs_space.dtype, np.floating)
+        self.observation_space = Image(obs_space.shape, normalized, channels_last)

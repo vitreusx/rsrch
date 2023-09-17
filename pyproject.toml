@@ -40,6 +40,7 @@ mako = "^1.2.4"
 py-spy = "^0.3.14"
 gitpython = "^3.1.36"
 envpool = "^0.8.3"
+cython = "<3"
 
 [tool.poetry.group.ext]
 optional = true
@@ -67,6 +68,7 @@ requests = "2.29.0"
 
 
 [tool.poe.tasks.gpu-setup]
+help = "Set up the environment for use with GPUs."
 shell = """
   export TORCH=$(\
     poetry export -f requirements.txt \
@@ -80,6 +82,7 @@ shell = """
 args = [{ name = "cuda", default = "cu117" }]
 
 [tool.poe.tasks.fix-opencv]
+help = "Replace opencv-python with headless version."
 shell = """
   export OPENCV=$(\
     poetry export -f requirements.txt \
@@ -90,6 +93,7 @@ shell = """
 """
 
 [tool.poe.tasks.wandb]
+help = "Start or stop a local Weights and Biases server."
 shell = """
   if [ "$(docker ps -a | grep wandb-local)" ]; then
     wandb server stop
@@ -100,7 +104,8 @@ shell = """
 args = [{ name = "port", default = "8081" }]
 
 [tool.poe.tasks.profile]
-cmd = "py-spy record -f speedscope -o ${trace_file} -i -n -s --"
+help = "Profile a script with py-spy."
+cmd = "py-spy record -f speedscope -o ${trace_file} -i -n -s"
 args = [{ name = "trace_file", default = "trace.json" }]
 
 [build-system]

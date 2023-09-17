@@ -1,12 +1,104 @@
+from copy import deepcopy
 from dataclasses import dataclass
+from typing import Any, List, Optional, Tuple, Union
 
+import envpool
 import numpy as np
 import torch
+from numpy.typing import NDArray
 from torch import Tensor
 
-from rsrch.rl import gym, data
+from rsrch.rl import data, gym
 from rsrch.rl.gym.spaces.tensor import *
 from rsrch.rl.gym.vector.utils import create_empty_array
+
+
+class MarkAsImage(gym.vector.VectorEnvWrapper):
+    """
+    Converts the observation space to from Box to Image.
+    """
+
+    def __init__(self, env: gym.VectorEnv, normalized=None, channels_last=True):
+        super().__init__(env)
+        obs_space = env.observation_space
+        assert isinstance(obs_space, gym.spaces.Box)
+        if normalized is None:
+            normalized = np.issubdtype(obs_space.dtype, np.floating)
+        self.observation_space = gym.spaces.Image(
+            obs_space.shape, normalized, channels_last
+        )
+
+
+class VecEnvPool(gym.VectorEnv):
+    """A proper adapter for envpool environments."""
+
+    def __init__(self, envp: gym.Env):
+        super().__init__(
+            len(envp.all_env_ids),
+            envp.observation_space,
+            envp.action_space,
+        )
+        self._envp = envp
+
+    def reset_async(self, seed=None, options=None):
+        pass
+
+    def reset_wait(self, seed=None, options=None):
+        obs, info = self._envp.reset()
+        return obs, {}
+
+    def step_async(self, actions):
+        if isinstance(self.single_action_space, gym.spaces.Discrete):
+            actions = actions.astype(np.int32)
+        self._actions = actions
+
+    def step_wait(self, **kwargs):
+        next_obs, reward, term, trunc, info = self._envp.step(self._actions)
+        info = {}
+        done: np.ndarray = term | trunc
+        if done.any():
+            info["_final_observation"] = done.copy()
+            info["_final_info"] = done.copy()
+            info["final_observation"] = np.array([None for _ in range(self.num_envs)])
+            info["final_info"] = np.array([None for _ in range(self.num_envs)])
+
+            for i in range(self.num_envs):
+                if done[i]:
+                    info["final_observation"][i] = next_obs[i].copy()
+                    info["final_info"][i] = {}
+
+            reset_ids = self._envp.all_env_ids[done]
+            reset_obs, reset_info = self._envp.reset(reset_ids)
+            next_obs[reset_ids] = reset_obs
+
+        return next_obs, reward, term, trunc, info
+
+
+class BoxTransform(gym.ObservationWrapper):
+    def __init__(self, env: gym.Env, f):
+        super().__init__(env)
+        self._f = f
+
+        assert isinstance(env.observation_space, gym.spaces.Box)
+        new_shape = self.observation(env.observation_space.sample()).shape
+        new_low = self.observation(env.observation_space.low)
+        new_high = self.observation(env.observation_space.high)
+        new_dtype = env.observation_space.dtype
+        new_seed = deepcopy(env.observation_space.np_random)
+        new_space = gym.spaces.Box(new_low, new_high, new_shape, new_dtype, new_seed)
+        self.observation_space = new_space
+
+    def observation(self, obs: np.ndarray) -> np.ndarray:
+        return self._f(obs)
+
+
+def np_flatten(x: np.ndarray, start_axis=0, end_axis=-1):
+    shape = x.shape
+    start_axis = range(len(shape))[start_axis]
+    end_axis = range(len(shape))[end_axis]
+    flat_n = int(np.prod(x.shape[start_axis : end_axis + 1]))
+    new_shape = [*x.shape[:start_axis], flat_n, *x.shape[end_axis + 1 :]]
+    return x.reshape(new_shape)
 
 
 @dataclass
@@ -15,7 +107,6 @@ class Config:
     class Atari:
         screen_size: int
         frame_skip: int
-        term_on_life_loss: bool
         grayscale: bool
         noop_max: int
         fire_reset: bool
@@ -42,14 +133,22 @@ class Loader:
         if self.visual:
             self.obs_space = gym.spaces.TensorImage(net_obs.shape, net_obs.dtype)
         else:
-            self.obs_space = gym.spaces.TensorBox(net_obs.shape, dtype=net_obs.dtype)
+            low = self.conv_obs(exp_env.observation_space.low[None])[0]
+            high = self.conv_obs(exp_env.observation_space.high[None])[0]
+            self.obs_space = gym.spaces.TensorBox(
+                net_obs.shape, low, high, dtype=net_obs.dtype
+            )
 
         self.discrete = isinstance(exp_env.action_space, gym.spaces.Discrete)
         if self.discrete:
             self.act_space = gym.spaces.TensorDiscrete(exp_env.action_space.n)
         else:
             net_act = self.conv_act(create_empty_array(exp_env.action_space, 1))[0]
-            self.act_space = gym.spaces.TensorBox(net_act.shape, dtype=net_act.dtype)
+            low = self.conv_act(exp_env.action_space.low[None])[0]
+            high = self.conv_act(exp_env.action_space.high[None])[0]
+            self.act_space = gym.spaces.TensorBox(
+                net_act.shape, low, high, dtype=net_act.dtype
+            )
 
     def _base_env(self):
         if self.cfg.type == "atari":
@@ -72,16 +171,62 @@ class Loader:
             env=env,
             frame_skip=atari.frame_skip,
             screen_size=atari.screen_size,
-            terminal_on_life_loss=atari.term_on_life_loss,
+            terminal_on_life_loss=False,
             grayscale_obs=atari.grayscale,
             grayscale_newaxis=True,
             scale_obs=False,
             noop_max=atari.noop_max,
         )
 
+        env = BoxTransform(env, lambda x: np.transpose(x, (2, 0, 1)))
+
         if atari.fire_reset:
             if "FIRE" in env.unwrapped.get_action_meanings():
                 env = gym.wrappers.FireResetEnv(env)
+
+        return env
+
+    def _atari_envpool(self, n: int, val=False):
+        task_id = self.cfg.id
+        if task_id.startswith("ALE/"):
+            task_id = task_id[len("ALE/") :]
+
+        task_id, task_version = task_id.split("-")
+        if task_version not in ("v4", "v5"):
+            return
+
+        if task_id.endswith("NoFrameskip"):
+            task_id = task_id[: -len("NoFrameskip")]
+
+        if f"{task_id}-v5" not in envpool.list_all_envs():
+            return
+
+        atari = self.cfg.atari
+
+        max_steps = (self.cfg.time_limit or int(1e6)) // atari.frame_skip
+
+        env = envpool.make(
+            task_id=f"{task_id}-v5",
+            env_type="gymnasium",
+            num_envs=n,
+            max_episode_steps=max_steps,
+            img_height=atari.screen_size,
+            img_width=atari.screen_size,
+            stack_num=self.cfg.stack,
+            gray_scale=atari.grayscale,
+            frame_skip=atari.frame_skip,
+            noop_max=atari.noop_max,
+            episodic_life=atari.episodic_life and not val,
+            zero_discount_on_life_loss=False,
+            reward_clip=False,
+            repeat_action_probability={"v5": 0.25, "v4": 0.0}[task_version],
+            use_inter_area_resize=True,
+            use_fire_reset=atari.fire_reset,
+            full_action_space=False,
+        )
+
+        env = VecEnvPool(env)
+        env = gym.wrappers.RecordEpisodeStatistics(env)
 
         return env
 
@@ -91,10 +236,24 @@ class Loader:
 
         if self.cfg.stack > 1:
             env = gym.wrappers.FrameStack(env, self.cfg.stack)
+            env = BoxTransform(env, lambda x: np_flatten(x, 0, 1))
+
         if self.cfg.type == "atari":
-            env = gym.wrappers.MarkAsImage(env)
+            env = gym.wrappers.MarkAsImage(env, channels_last=False)
 
         return env
+
+    def val_envs(self, num_envs: int):
+        if self.cfg.type == "atari":
+            env = self._atari_envpool(num_envs, val=True)
+            if env is not None:
+                env = MarkAsImage(env)
+                return env
+
+        if num_envs == 1:
+            return gym.vector.SyncVectorEnv([self.val_env])
+        else:
+            return gym.vector.AsyncVectorEnv([self.val_env] * num_envs)
 
     def exp_env(self):
         """Environment used for experience collection."""
@@ -105,45 +264,63 @@ class Loader:
             if atari.episodic_life:
                 env = gym.wrappers.EpisodicLifeEnv(env)
 
-        if self.cfg.reward in ("keep", None):
-            rew_f = lambda r: r
-        elif self.cfg.reward == "sign":
-            env = gym.wrappers.TransformReward(env, lambda r: np.sign(r))
-            env.reward_range = (-1, 1)
-        elif isinstance(self.cfg.reward, tuple):
-            r_min, r_max = self.cfg.reward
-            rew_f = lambda r: np.clip(r, r_min, r_max)
-            env = gym.wrappers.TransformReward(env, rew_f)
-            env.reward_range = (r_min, r_max)
+        env = self._reward_t(env)
 
         if self.cfg.stack > 1:
             env = gym.wrappers.FrameStack(env, self.cfg.stack)
+            env = BoxTransform(env, lambda x: np_flatten(x, 0, 1))
+
         if self.cfg.type == "atari":
-            env = gym.wrappers.MarkAsImage(env)
+            env = gym.wrappers.MarkAsImage(env, channels_last=False)
 
         return env
 
-    def conv_obs(self, obs: list | np.ndarray) -> Tensor:
+    def _reward_t(self, env: gym.Env | gym.VectorEnv):
+        if self.cfg.reward not in (None, "keep"):
+            if self.cfg.reward == "sign":
+                rew_f = np.sign
+                reward_range = (-1, 1)
+            elif isinstance(self.cfg.reward, tuple):
+                r_min, r_max = self.cfg.reward
+                rew_f = lambda r: np.clip(r, r_min, r_max)
+                reward_range = (r_min, r_max)
+
+            if gym.is_vector_env(env):
+                env = gym.vector.wrappers.TransformReward(env, rew_f)
+            else:
+                env = gym.wrappers.TransformReward(env, rew_f)
+            env.reward_range = reward_range
+        return env
+
+    def exp_envs(self, num_envs: int):
+        if self.cfg.type == "atari":
+            env = self._atari_envpool(num_envs, val=False)
+            if env is not None:
+                env = self._reward_t(env)
+                env = MarkAsImage(env)
+                return env
+
+        if num_envs == 1:
+            return gym.vector.SyncVectorEnv([self.exp_env])
+        else:
+            return gym.vector.AsyncVectorEnv([self.exp_env] * num_envs)
+
+    def conv_obs(self, obs: np.ndarray) -> Tensor:
         """Convert a batch of observations."""
-        if not isinstance(obs, np.ndarray):
-            obs = np.stack(obs)
         obs: Tensor = torch.as_tensor(obs)
         if self.visual:
-            # Numpy images are channel-last, Tensor images are channel-first.
-            obs = obs.movedim((-3, -2, -1), (-2, -1, -3))
             if obs.dtype == torch.uint8:
-                # Normalize the image
                 obs = obs / 255.0
-        if self.cfg.stack > 1:
-            # The "event shape" is [#S, D, ...] where D is feature dim. We want
-            # to remove the stack dimension.
-            obs = obs.flatten(1, 2)
-            # obs.shape = [L, B, #S * D, ...]
+        else:
+            obs = obs.to(torch.float32)
         return obs
 
     def conv_act(self, act: np.ndarray) -> Tensor:
         """Convert a batch of actions."""
-        return torch.as_tensor(act)
+        act = torch.as_tensor(act)
+        if torch.is_floating_point(act):
+            act = act.to(torch.float32)
+        return act
 
     def collate_seq(self, batch: list[data.Seq]):
         """Collate a batch of sequences from buffer to `data.ChunkBatch`."""

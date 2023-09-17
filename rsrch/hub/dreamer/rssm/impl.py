@@ -1,12 +1,13 @@
 import numpy as np
-from torch import nn, Tensor
 import torch
+import torch.nn.functional as F
+from torch import Tensor, nn
+
+import rsrch.distributions as D
 import rsrch.nn.dist_head as dh
 from rsrch.nn import fc
-import rsrch.distributions as D
 from rsrch.rl import gym
-from torch import Tensor
-import torch.nn.functional as F
+
 from . import core
 from .config import Config
 
@@ -80,7 +81,7 @@ class VisDecoder(nn.Module):
         x = self.fc(x)
         x = x.reshape([x.shape[0], 1, 1, x.shape[1]])
         x = self.convt(x)
-        return D.Normal(x, D.Normal.MSE_SIGMA, event_dims=3)
+        return D.Dirac(x, event_dims=3)
 
 
 class ProprioEncoder(nn.Sequential):
@@ -121,7 +122,7 @@ class ProprioDecoder(nn.Sequential):
                 act_layer=act_layer,
                 final_layer="act",
             ),
-            dh.Normal(fc_layers[-1], D.Normal.MSE_SIGMA, space.shape),
+            dh.Dirac(fc_layers[-1], space.shape),
         )
 
 
@@ -140,7 +141,7 @@ class RewardPred(nn.Sequential):
                 act_layer=act_layer,
                 final_layer="act",
             ),
-            dh.Normal(fc_layers[-1], []),
+            dh.Dirac(fc_layers[-1], []),
         )
 
 

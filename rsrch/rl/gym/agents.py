@@ -10,7 +10,7 @@ class Agent(ABC):
     def reset(self, obs, info):
         pass
 
-    def observe(self, next_obs, reward, term, trunc, info):
+    def observe(self, act, next_obs, reward, term, trunc, info):
         pass
 
     @abstractmethod

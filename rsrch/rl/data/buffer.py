@@ -1,21 +1,27 @@
 from collections import deque
 from collections.abc import Mapping, MutableMapping
-from typing import Iterable, Optional, Deque
 from copy import deepcopy
+from typing import Deque, Iterable, Optional
 
 import numpy as np
 
-from .core import ListSeq, Seq, Step
-from .sampler import Sampler
-from .store import RAMStepDeque, LayeredStore
 from rsrch.rl import gym
 from rsrch.rl.gym.vector.utils import concatenate, create_empty_array
+
+from .core import ListSeq, Seq, Step
+from .sampler import Sampler
+from .store import LayeredStore, RAMStepDeque
 
 __all__ = ["StepBuffer", "ChunkBuffer", "OnlineBuffer"]
 
 
 class StepBuffer(Mapping[int, Step]):
-    def __init__(self, step_cap: int, sampler: Sampler = None, store: Deque = None):
+    def __init__(
+        self,
+        step_cap: int,
+        sampler: Sampler = None,
+        store: Deque = None,
+    ):
         self.step_cap = step_cap
         self.sampler = sampler
 

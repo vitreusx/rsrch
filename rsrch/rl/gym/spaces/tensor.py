@@ -1,7 +1,9 @@
-from .base import *
+from numbers import Number
+
 import torch
 from torch import Tensor
-from numbers import Number
+
+from .base import *
 
 
 class TensorSpace:
@@ -41,7 +43,7 @@ class TensorDiscrete(TensorSpace):
 class TensorImage(TensorSpace):
     def __init__(self, shape: torch.Size, dtype: torch.dtype = None):
         self.shape = shape
-        self.num_channels, self.height, self.width = shape
+        self.num_channels, self.height, self.width = shape[-3:]
         self.dtype = dtype
         assert self.dtype in (torch.uint8, torch.float32)
 

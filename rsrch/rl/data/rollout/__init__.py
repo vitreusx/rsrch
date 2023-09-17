@@ -1,16 +1,19 @@
-import numpy as np
-from .events import *
 from functools import singledispatch
 from typing import Iterable
+
+import numpy as np
+
 from rsrch.rl import gym
-from .. import core
 from rsrch.rl.gym.vector.utils import (
-    split,
     concatenate,
-    getitem,
-    split_vec_info,
     create_empty_array,
+    getitem,
+    split,
+    split_vec_info,
 )
+
+from .. import core
+from .events import *
 
 
 @singledispatch
@@ -34,14 +37,15 @@ def _(
 
     ep_idx, step_idx = 0, 0
 
+    obs, info = None, None
     if init:
         obs, info = init
-    elif reset:
-        ev = Reset(*env.reset())
+
+    if reset:
+        obs, info = env.reset()
+        ev = Reset(obs, info)
         agent.reset(ev.obs, ev.info)
         yield ev
-    else:
-        obs, info = None, None
 
     while True:
         act = agent.policy(obs)
@@ -84,17 +88,17 @@ def _(
     all_true = np.ones(env.num_envs, dtype=bool)
     act_space, obs_space = env.single_action_space, env.single_observation_space
 
-    if init is not None:
+    obs, info = None, None
+    if init:
         obs, info = init
-    elif reset:
+
+    if reset:
         obs, info = env.reset()
         idxes = np.arange(env.num_envs)
         info = split_vec_info(info, env.num_envs)
         ev = VecReset(idxes, obs, info)
         agent.reset(idxes, ev.obs, ev.info)
         yield ev
-    else:
-        obs, info = None, None
 
     while True:
         act = agent.policy(obs)

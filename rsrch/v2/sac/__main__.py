@@ -1,20 +1,23 @@
 import argparse
 from collections import deque
 from pathlib import Path
+
 import numpy as np
 import torch
+import torch.nn.functional as F
+from torch import Tensor, nn
+
+import rsrch.distributions as D
 from rsrch.exp.board.wandb import Wandb
 from rsrch.exp.dir import ExpDir
 from rsrch.exp.pbar import ProgressBar
-from rsrch.exp.prof import TorchProfiler, NullProfiler
+from rsrch.exp.prof import NullProfiler, TorchProfiler
 from rsrch.rl import gym
+from rsrch.rl.data.v2 import *
 from rsrch.rl.utils import polyak
 from rsrch.utils import config, cron
+
 from .config import Config
-from rsrch.rl.data.v2 import *
-from torch import Tensor, nn
-import rsrch.distributions as D
-import torch.nn.functional as F
 
 T = gym.spaces.transforms
 
@@ -172,7 +175,7 @@ def main():
     if args.config is not None:
         cfg_spec.extend(args.config)
 
-    cfg = config.parse(cfg_spec, Config)
+    cfg = config.from_specs(cfg_spec, Config)
 
     exp_dir = ExpDir("runs/sac")
     board = Wandb(project="sac", step_fn=lambda: env_step)

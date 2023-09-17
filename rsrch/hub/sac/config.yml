@@ -13,7 +13,7 @@ env:
     fire_reset: true
   reward: sign
   time_limit: null
-  stack: 4
+  stack: 1
 value:
   target:
     sync_every: 8_000

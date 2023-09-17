@@ -1,8 +1,11 @@
+import inspect
+from dataclasses import asdict
+from pathlib import Path
+
+from wandb.sdk.wandb_run import Run
+
 import rsrch
 import wandb
-from wandb.sdk.wandb_run import Run
-from pathlib import Path
-import inspect
 
 
 class Board:
@@ -42,8 +45,11 @@ class Board:
 
 
 class Experiment:
-    def __init__(self, project: str, name=None):
+    def __init__(self, project: str, name=None, config: dict = None):
+        # config = {"config": config} if config is not None else {}
         self._run = wandb.init(project=project, name=name)
+        if config is not None:
+            self._run.config.update(config)
         self.exp_dir = Path(f"runs/{self._run.project}/{self._run.name}")
         self.exp_dir.mkdir(parents=True, exist_ok=True)
         self.board = Board(self._run)

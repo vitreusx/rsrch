@@ -1,4 +1,3 @@
-from .base import *
-
-from . import agents, utils
+from . import agents, utils, wrappers
 from .agents import Agent, AgentWrapper
+from .base import *

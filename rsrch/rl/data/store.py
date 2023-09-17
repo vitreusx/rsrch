@@ -1,14 +1,19 @@
 from collections import deque
-from copy import deepcopy
 from collections.abc import MutableMapping
-from typing import Iterable, TypeAlias, Deque
+from copy import deepcopy
+from typing import Deque, Iterable, Protocol, TypeAlias
+
 import numpy as np
-from rsrch.rl import gym
+
 import rsrch.rl.gym.vector.utils as vec_utils
+from rsrch.rl import gym
+
 from .core import Seq, Step, StepBatch
 
 
 class Allocator:
+    """A helper class for managing (virtual) allocations."""
+
     def __init__(self, mem_size: int):
         self.slots = {}
         self.mem_size = mem_size
