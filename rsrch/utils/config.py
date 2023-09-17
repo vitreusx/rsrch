@@ -157,7 +157,7 @@ def _cast(x, t):
     elif orig in (Dict, dict):
         # Same story with dict
         kt, vt = get_args(t)
-        return {k: _cast(xi, vt) for k, xi in x.items()}
+        return Namespace({k: _cast(xi, vt) for k, xi in x.items()})
     elif orig in (Literal,):
         # For Literals, check if the value is one of the allowed values.
         if x not in get_args(t):

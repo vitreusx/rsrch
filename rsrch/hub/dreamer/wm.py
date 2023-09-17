@@ -113,7 +113,7 @@ class VecEnvAgent(gym.vector.AgentWrapper):
         self,
         wm: WorldModel,
         actor: Actor,
-        env: gym.vector.EnvSpec,
+        env: gym.VectorEnv,
         device=None,
     ):
         super().__init__(LatentAgent(wm, actor, env.num_envs))

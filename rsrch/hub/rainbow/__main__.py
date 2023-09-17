@@ -1,3 +1,4 @@
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +16,34 @@ from rsrch.utils import cron, sched
 from . import config, env
 from .agent import QAgent
 from .nets import *
+
+
+class Trigger:
+    def __init__(self, cfg: dict, step_fn, ref_step=None, ref_t=None):
+        self._cfg = cfg
+        self._step_fn = step_fn
+        self._fired = False
+        if ref_step is None:
+            ref_step = step_fn()
+        self._ref_step = ref_step
+        if ref_t is None:
+            ref_t = datetime.now()
+        self._ref_t = ref_t
+
+    def fire(self):
+        self._fired = True
+
+    def __bool__(self):
+        if self._fired:
+            return False
+        if "env_step" in self._cfg:
+            if self._step_fn() - self._ref_step >= self._cfg["env_step"]:
+                return True
+        if "real_time" in self._cfg:
+            elapsed = (datetime.now() - self._ref_t).total_seconds()
+            if elapsed >= self._cfg["real_time"]:
+                return True
+        return False
 
 
 def main():
@@ -46,30 +75,17 @@ def main():
     else:
         sampler = data.UniformSampler()
 
-    store = data.NumpySeqStore(
+    buffer = loader.chunk_buffer(
         capacity=cfg.buffer.capacity,
-        obs_space=exp_env.observation_space,
-        act_space=exp_env.action_space,
-    )
-
-    buffer = data.ChunkBuffer(
         num_steps=cfg.multi_step.n,
-        capacity=cfg.buffer.capacity,
-        obs_space=exp_env.observation_space,
-        act_space=exp_env.action_space,
         sampler=sampler,
-        store=store,
     )
 
-    exp_envs = gym.vector.AsyncVectorEnv(
-        env_fns=[loader.exp_env] * cfg.infra.env_workers,
-    )
+    exp_envs = loader.exp_envs(cfg.sched.env_batch)
+    num_val_envs = min(cfg.infra.env_workers, cfg.exp.val_episodes)
+    val_envs = loader.val_envs(num_val_envs)
 
-    val_envs = gym.vector.AsyncVectorEnv(
-        env_fns=[loader.val_env] * cfg.infra.env_workers,
-    )
-
-    dummy_obs: Tensor = loader.conv_obs(exp_envs.observation_space.sample())[0]
+    dummy_obs: Tensor = loader.obs_space.sample()
 
     def make_enc():
         if loader.visual:
@@ -161,7 +177,7 @@ def main():
     should_end = cron.Once(lambda: env_step >= cfg.sched.num_frames)
     should_log = cron.Every(lambda: env_step, cfg.exp.log_every)
 
-    exp_steps = cfg.sched.env_batch // cfg.infra.env_workers
+    exp_steps = cfg.sched.env_batch // exp_envs.num_envs
     opt_batch_ = int(cfg.sched.replay_ratio * cfg.sched.env_batch)
     assert opt_batch_ % cfg.sched.env_batch == 0
     opt_steps = opt_batch_ // cfg.sched.opt_batch
@@ -170,6 +186,17 @@ def main():
     board = exp.board
     board.add_step("env_step", lambda: env_step, default=True)
     pbar = tqdm(total=cfg.sched.num_frames, dynamic_ncols=True)
+
+    start_prof = None
+    if cfg.profile.enabled:
+        prof = torch.profiler.profile(
+            activities=[
+                torch.profiler.ProfilerActivity.CPU,
+                torch.profiler.ProfilerActivity.CUDA,
+            ],
+        )
+        start_prof = Trigger(cfg.profile.start, lambda: env_step)
+        end_prof = None
 
     def val_epoch():
         val_returns = []
@@ -215,12 +242,10 @@ def main():
             if isinstance(sampler, data.PrioritizedSampler):
                 idxes, weights = batch
                 weights = torch.as_tensor(weights, device=device)
-                batch = buffer[idxes]
             else:
                 idxes = batch
-                batch = buffer[idxes]
 
-            batch = loader.collate_seq(batch)
+            batch = loader.fetch_chunk_batch(buffer, idxes)
             batch = batch.to(device)
 
             with torch.no_grad():
@@ -274,6 +299,18 @@ def main():
 
         if should_end:
             break
+
+        if start_prof:
+            start_prof.fire()
+            prof.start()
+            end_prof = Trigger(cfg.profile.stop, lambda: env_step)
+
+        if end_prof is not None and end_prof:
+            end_prof.fire()
+            prof.stop()
+            trace_path = exp.dir / "trace.json"
+            trace_path.parent.mkdir(parents=True, exist_ok=True)
+            prof.export_chrome_trace(str(trace_path.absolute()))
 
         collect_exp()
         if len(buffer) >= cfg.buffer.prefill:

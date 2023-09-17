@@ -1,6 +1,20 @@
 {
     "configurations": [
         {
+            "name": "Dreamer",
+            "type": "python",
+            "request": "launch",
+            "module": "rsrch.hub.dreamer",
+            "pythonArgs": [
+                "-O",
+            ],
+            "args": [
+                "-p",
+                "${input:dreamer_preset}"
+            ],
+            "justMyCode": false
+        },
+        {
             "name": "Rainbow",
             "type": "python",
             "request": "launch",
@@ -59,6 +73,12 @@
         {
             "id": "ppo_preset",
             "description": "PPO Preset",
+            "type": "promptString",
+            "default": "Alien-v5",
+        },
+        {
+            "id": "dreamer_preset",
+            "description": "Dreamer Preset",
             "type": "promptString",
             "default": "Alien-v5",
         }

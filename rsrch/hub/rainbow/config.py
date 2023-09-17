@@ -1,8 +1,10 @@
 from dataclasses import dataclass
 from typing import Optional
-from . import env
+
 from rsrch.utils.config import *
 from rsrch.utils.sched import schedule
+
+from . import env
 
 
 @dataclass
@@ -77,6 +79,12 @@ class Config:
         val_episodes: int
         log_every: int
 
+    @dataclass
+    class Profile:
+        enabled: bool
+        start: dict
+        stop: dict
+
     env: env.Config
     sched: Sched
     infra: Infra
@@ -91,3 +99,4 @@ class Config:
     expl_eps: float | schedule
     decorr: Decorr
     exp: Exp
+    profile: Profile

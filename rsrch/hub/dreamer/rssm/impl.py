@@ -325,28 +325,33 @@ class RSSM(core.RSSM, nn.Module):
 
 
 class Dreamer(nn.Module):
-    def __init__(self, env: gym.EnvSpec, cfg: Config):
+    def __init__(
+        self,
+        cfg: Config,
+        obs_space: gym.TensorSpace,
+        act_space: gym.TensorSpace,
+    ):
         super().__init__()
-        self.wm = RSSM(env, cfg)
+        self.wm = RSSM(cfg, obs_space, act_space)
 
         state_dim = cfg.deter + cfg.stoch
 
-        if isinstance(env.observation_space, gym.spaces.TensorImage):
+        if isinstance(obs_space, gym.spaces.TensorImage):
             self.obs_pred = VisDecoder(
-                env.observation_space,
+                obs_space,
                 state_dim,
                 cfg.conv_hidden,
                 cfg.norm_layer,
                 cfg.act_layer,
             )
-        elif isinstance(env.observation_space, gym.spaces.TensorBox):
+        elif isinstance(obs_space, gym.spaces.TensorBox):
             self.obs_pred = ProprioDecoder(
-                env.observation_space,
+                obs_space,
                 state_dim,
                 cfg.fc_layers,
                 cfg.norm_layer,
                 cfg.act_layer,
             )
 
-        self.actor = Actor(env, cfg)
+        self.actor = Actor(cfg, act_space)
         self.critic = Critic(cfg)

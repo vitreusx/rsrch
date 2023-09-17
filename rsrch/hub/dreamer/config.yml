@@ -12,11 +12,11 @@ env:
   time_limit: null
   stack: 4
 rssm:
-  deter: 128
-  stoch: 128
-  hidden: 128
+  deter: 256
+  stoch: 256
+  hidden: 256
   fc_layers: [128, 128, 128]
-  conv_hidden: 32
+  conv_hidden: 48
   norm_layer: null
   act_layer: elu
   dist:
@@ -24,6 +24,19 @@ rssm:
     num_heads: 8
     std: null
   ensemble: 4
+opt:
+  wm:
+    type: adam
+    lr: 3e-4
+    eps: 1e-5
+  ac:
+    type: adam
+    lr: 1e-5
+    eps: 1e-5
+coef:
+  actor: 0.1
 device: cuda
 val_every: 10e3
 env_workers: 8
+val_episodes: int
+exp_envs: 1

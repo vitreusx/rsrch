@@ -1,5 +1,20 @@
-debug:
-  # sched.num_frames: 5e6
-  # buffer.capacity: 10e3
-  # buffer.prefill: 40e3
+atari: &atari
+  env:
+    id: Alien-v4
+    type: atari
+    atari:
+      noop_max: 30
+      frame_skip: 4
+      episodic_life: true
+      grayscale: true
+      screen_size: 84
+      fire_reset: true
+    reward: sign
+    time_limit: null
+    stack: 4
+debug: &debug
   infra.env_workers: 8
+  buffer.capacity: 500e3
+  profile.enabled: true
+Alien-v5:
+  <<: [*atari, *debug]
