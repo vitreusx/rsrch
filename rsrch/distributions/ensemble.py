@@ -17,7 +17,7 @@ class Ensemble(Distribution, Tensorlike):
         num_samples = int(np.prod(sample_size))
         if num_samples == 1:
             idx = np.random.randint(self._n)
-            return self.rvs.tuple[idx].rsample(sample_size)
+            return self.rvs.as_tuple()[idx].rsample(sample_size)
 
         idxes = torch.randint(0, self._n, [num_samples])
         counts = torch.zeros(self._n, dtype=torch.long)
@@ -26,7 +26,7 @@ class Ensemble(Distribution, Tensorlike):
         samples = []
         for idx, c in enumerate(counts):
             if c > 0:
-                samples.append(self.rvs.tuple[idx].rsample([c]))
+                samples.append(self.rvs.as_tuple()[idx].rsample([c]))
 
         samples = torch.cat(samples, 0)
         samples = samples[torch.randperm(num_samples)]
@@ -37,7 +37,7 @@ class Ensemble(Distribution, Tensorlike):
         num_samples = int(np.prod(sample_size))
         if num_samples == 1:
             idx = np.random.randint(self._n)
-            return self.rvs.tuple[idx].sample(sample_size)
+            return self.rvs.as_tuple()[idx].sample(sample_size)
 
         idxes = torch.randint(0, self._n, [num_samples])
         counts = torch.zeros(self._n, dtype=torch.long)
@@ -46,7 +46,7 @@ class Ensemble(Distribution, Tensorlike):
         samples = []
         for idx, c in enumerate(counts):
             if c > 0:
-                samples.append(self.rvs.tuple[idx].sample([c]))
+                samples.append(self.rvs.as_tuple()[idx].sample([c]))
 
         samples = torch.cat(samples, 0)
         samples = samples[torch.randperm(num_samples)]

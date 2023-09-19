@@ -22,21 +22,44 @@ rssm:
   dist:
     type: discrete
     num_heads: 8
-    std: null
+    std: softplus
   ensemble: 4
-opt:
-  wm:
+wm:
+  opt:
     type: adam
-    lr: 3e-4
+    lr: 1e-3
     eps: 1e-5
-  ac:
+  kl_mix: 0.8
+  dist_coef: 1.0
+  obs_coef: 1.0
+  rew_coef: 1.0
+  term_coef: 1.0
+ac:
+  opt:
     type: adam
     lr: 1e-5
     eps: 1e-5
-coef:
-  actor: 0.1
+  actor_coef: 0.1
+  critic_coef: 1.0
 device: cuda
 val_every: 10e3
 env_workers: 8
-val_episodes: int
+val_episodes: 16
 exp_envs: 1
+buffer:
+  prefill: 25e3
+  capacity: 500e3
+total_steps: 10e6
+exp_steps: 4
+amp:
+  enabled: true
+  dtype: bfloat16
+seq_len: 50
+batch_size: 50
+log_every: 64
+profiler:
+  enabled: false
+  start:
+    step: 30_000
+  duration:
+    step: 10

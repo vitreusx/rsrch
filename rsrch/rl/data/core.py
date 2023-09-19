@@ -64,20 +64,6 @@ class StepBatch(Generic[ObsType, ActType]):
         )
 
 
-def _stack(xs, dim=0, device=None):
-    if isinstance(xs, Tensor) and dim == 0:
-        return xs.to(device=device)
-    elif isinstance(xs[0], Tensor):
-        return torch.stack(xs, dim=dim).to(device=device)
-    else:
-        return torch.as_tensor(np.stack(xs, axis=dim), device=device)
-
-
-def _stack2d(xs: list, device=None):
-    xs = [_stack(x) for x in xs]
-    return torch.stack(xs, 1).to(device=device)
-
-
 @dataclass
 class TensorStepBatch:
     obs: Tensor
@@ -94,19 +80,6 @@ class TensorStepBatch:
             reward=self.reward.to(device=device),
             term=self.term.to(device=device),
         )
-
-    @staticmethod
-    def collate_fn(batch: List[Step]) -> TensorStepBatch:
-        if not isinstance(batch, list):
-            batch = [*batch]
-
-        obs = _stack([x.obs for x in batch])
-        act = _stack([x.act for x in batch], obs.device)
-        next_obs = _stack([x.next_obs for x in batch], obs.device)
-        reward = _stack([x.reward for x in batch], obs.device)
-        term = _stack([x.term for x in batch], obs.device)
-
-        return TensorStepBatch(obs, act, next_obs, reward, term)
 
 
 @dataclass
@@ -191,15 +164,6 @@ class TensorSeq(Seq):
         )
 
 
-def to_tensor_seq(seq: Seq, device=None):
-    return TensorSeq(
-        obs=_stack(seq.obs, device=device),
-        act=_stack(seq.act, device=device),
-        reward=_stack(seq.reward, device=device),
-        term=seq.term,
-    )
-
-
 class ChunkBatch:
     """A batch of equal-length Tensor sequences. Time dimension is first."""
 
@@ -227,6 +191,14 @@ class ChunkBatch:
     def __len__(self):
         return self.batch_size
 
+    def __getitem__(self, idx):
+        return TensorSeq(
+            obs=self.obs[:, idx],
+            act=self.act[:, idx],
+            reward=self.reward[:, idx],
+            term=self.term[idx],
+        )
+
     @property
     def num_steps(self):
         return len(self.act)
@@ -252,21 +224,3 @@ class ChunkBatch:
             reward=self.reward.to(device=device),
             term=self.term.to(device=device),
         )
-
-    @staticmethod
-    def collate_fn(batch: List[Seq]):
-        bs, seq_len = len(batch), len(batch[0].obs)
-        obs, act, reward = [], [], []
-        for j in range(seq_len):
-            for i in range(bs):
-                obs.append(batch[i].obs[j])
-                if j > 0:
-                    act.append(batch[i].act[j - 1])
-                    reward.append(batch[i].reward[j - 1])
-        obs = _stack(obs)
-        obs = obs.reshape(seq_len, bs, *obs.shape[1:])
-        act = _stack(act)
-        act = act.reshape(seq_len - 1, bs, *act.shape[1:])
-        reward = torch.tensor(reward).reshape(seq_len - 1, bs)
-        term = torch.tensor([x.term for x in batch], device=obs.device)
-        return ChunkBatch(obs, act, reward, term)

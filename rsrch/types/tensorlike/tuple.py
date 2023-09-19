@@ -14,12 +14,12 @@ class TensorTuple(Tensorlike):
 
         self._n = len(__iterable)
         for idx, value in enumerate(__iterable):
-            self.register(str(idx), value)
+            self.register("_" + str(idx), value)
 
         self._post_init()
 
     def _post_init(self):
-        self._tuple = tuple(getattr(self, str(i)) for i in range(self._n))
+        self._tuple = tuple(getattr(self, "_" + str(i)) for i in range(self._n))
 
     def _new(self, shape: torch.Size, fields: dict):
         tt = super()._new(shape, fields)

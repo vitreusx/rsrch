@@ -52,7 +52,7 @@ class VisDecoder(nn.Module):
     def __init__(
         self,
         space: gym.spaces.TensorImage,
-        in_features: int,
+        state_dim: int,
         conv_hidden=32,
         norm_layer=None,
         act_layer=nn.ELU,
@@ -62,7 +62,7 @@ class VisDecoder(nn.Module):
         if norm_layer is None:
             norm_layer = lambda _: nn.Identity()
 
-        self.fc = nn.Linear(in_features, 32 * conv_hidden)
+        self.fc = nn.Linear(state_dim, 32 * conv_hidden)
 
         self.convt = nn.Sequential(
             nn.ConvTranspose2d(32 * conv_hidden, 4 * conv_hidden, 5, 2),
@@ -77,7 +77,8 @@ class VisDecoder(nn.Module):
             nn.ConvTranspose2d(conv_hidden, space.shape[0], 6, 2),
         )
 
-    def forward(self, x: Tensor):
+    def forward(self, x: core.State):
+        x = x.as_tensor()
         x = self.fc(x)
         x = x.reshape([x.shape[0], 1, 1, x.shape[1]])
         x = self.convt(x)
@@ -106,18 +107,24 @@ class ProprioEncoder(nn.Sequential):
         )
 
 
+class StateToTensor(nn.Module):
+    def forward(self, s: core.State) -> Tensor:
+        return s.as_tensor()
+
+
 class ProprioDecoder(nn.Sequential):
     def __init__(
         self,
         space: gym.spaces.TensorBox,
-        in_features: int,
+        state_dim: int,
         fc_layers=[128, 128, 128],
         norm_layer=None,
         act_layer=nn.ELU,
     ):
         super().__init__(
+            StateToTensor(),
             fc.FullyConnected(
-                layer_sizes=[in_features, *fc_layers],
+                layer_sizes=[state_dim, *fc_layers],
                 norm_layer=norm_layer,
                 act_layer=act_layer,
                 final_layer="act",
@@ -129,14 +136,15 @@ class ProprioDecoder(nn.Sequential):
 class RewardPred(nn.Sequential):
     def __init__(
         self,
-        in_features: int,
+        state_dim: int,
         fc_layers=[128, 128, 128],
         norm_layer=None,
         act_layer=nn.ELU,
     ):
         super().__init__(
+            StateToTensor(),
             fc.FullyConnected(
-                [in_features, *fc_layers],
+                [state_dim, *fc_layers],
                 norm_layer=norm_layer,
                 act_layer=act_layer,
                 final_layer="act",
@@ -148,25 +156,21 @@ class RewardPred(nn.Sequential):
 class TermPred(nn.Sequential):
     def __init__(
         self,
-        in_features: int,
+        state_dim: int,
         fc_layers=[128, 128, 128],
         norm_layer=None,
         act_layer=nn.ELU,
     ):
         super().__init__(
+            StateToTensor(),
             fc.FullyConnected(
-                [in_features, *fc_layers],
+                [state_dim, *fc_layers],
                 norm_layer=norm_layer,
                 act_layer=act_layer,
                 final_layer="act",
             ),
             dh.Bernoulli(fc_layers[-1]),
         )
-
-
-class StateToTensor(nn.Module):
-    def forward(self, s: core.State) -> Tensor:
-        return s.as_tensor()
 
 
 class Actor(nn.Sequential):
@@ -305,10 +309,12 @@ class RSSM(core.RSSM, nn.Module):
         )
 
     def prior_stoch(self, x):
-        if len(self.prior_nets) > 1:
-            return D.Ensemble([net(x) for net in self.prior_nets])
-        else:
-            return self.prior_nets[0](x)
+        net_idx = np.random.choice(len(self.prior_nets))
+        return self.prior_nets[net_idx](x)
+        # if len(self.prior_nets) > 1:
+        #     return D.Ensemble([net(x) for net in self.prior_nets])
+        # else:
+        #     return self.prior_nets[0](x)
 
     def _dist_layer(self, in_features):
         cfg = self.cfg.dist

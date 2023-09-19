@@ -80,7 +80,7 @@
             "id": "dreamer_preset",
             "description": "Dreamer Preset",
             "type": "promptString",
-            "default": "Alien-v5",
+            "default": "CartPole-v1",
         }
     ]
 }

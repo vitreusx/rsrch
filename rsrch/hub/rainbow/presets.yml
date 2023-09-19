@@ -15,6 +15,11 @@ atari: &atari
 debug: &debug
   infra.env_workers: 8
   buffer.capacity: 500e3
-  profile.enabled: true
+  profile:
+    enabled: false
+    start:
+      step: 100e3
+    duration:
+      step: 16
 Alien-v5:
   <<: [*atari, *debug]

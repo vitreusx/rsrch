@@ -150,10 +150,13 @@ def _cast(x, t):
             except:
                 pass
         raise ValueError()
-    elif orig in (Tuple, List, Set, tuple, list, set):
+    elif orig in (Tuple, tuple):
         # In this case, since python 3.8, generics are the same as builtins
         # (i.e. Tuple == tuple), so we can use orig for construction
         return orig([_cast(xi, ti) for xi, ti in zip(x, get_args(t))])
+    elif orig in (List, Set, list, set):
+        ti = get_args(t)[0]
+        return orig([_cast(xi, ti) for xi in x])
     elif orig in (Dict, dict):
         # Same story with dict
         kt, vt = get_args(t)

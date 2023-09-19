@@ -1,2 +1,45 @@
+atari: &atari
+  env:
+    type: atari
+    atari:
+      noop_max: 30
+      frame_skip: 4
+      episodic_life: true
+      grayscale: true
+      screen_size: 84
+      fire_reset: true
+    reward: sign
+    time_limit: 108e3
+    stack: 4
+debug: &debug
+  buffer.prefill: 1e3
+  profiler:
+    enabled: true
+    start:
+      step: 15e3
+    duration:
+      step: 16
 Alien-v5:
+  <<: [*atari]
+  env.id: Alien-v5
   buffer.capacity: 500e3
+CartPole-v1:
+  <<: [*debug]
+  env:
+    id: CartPole-v1
+    type: classic
+    stack: null
+  rssm:
+    deter: 32
+    stoch: 32
+    hidden: 32
+    fc_layers: [32, 32]
+    norm_layer: null
+    act_layer: relu
+    dist:
+      type: gaussian
+      std: softplus
+    ensemble: 1
+  buffer:
+    capacity: 500e3
+  seq_len: 4

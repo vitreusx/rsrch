@@ -17,7 +17,11 @@ class FullyConnected(nn.Sequential):
 
         layer_types = []
         for idx, (in_features, out_features) in in_out:
-            if norm_layer == None or isinstance(norm_layer, nn.Identity):
+            norm = None
+            if norm_layer is not None:
+                norm = norm_layer(out_features)
+
+            if norm is None or isinstance(norm, nn.Identity):
                 fc = nn.Linear(in_features, out_features, bias=True)
                 act = act_layer()
                 layers.extend((fc, act))
@@ -25,7 +29,6 @@ class FullyConnected(nn.Sequential):
             else:
                 fc_bias = (idx == final_idx) and (final_layer == "fc")
                 fc = nn.Linear(in_features, out_features, bias=fc_bias)
-                norm = norm_layer(out_features)
                 act = act_layer()
                 layers.extend((fc, norm, act))
                 layer_types.extend(("fc", "norm", "act"))

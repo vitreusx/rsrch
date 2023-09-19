@@ -21,14 +21,8 @@ def main():
 
     loader = env.Loader(cfg.env)
 
-    def make_venv(env_fns):
-        if len(env_fns) == 1:
-            return gym.vector.SyncVectorEnv(env_fns)
-        else:
-            return gym.vector.AsyncVectorEnv(env_fns)
-
-    val_envs = make_venv([loader.val_env] * cfg.env_workers)
-    train_envs = make_venv([loader.exp_env] * cfg.train_envs)
+    val_envs = loader.val_envs(cfg.env_workers)
+    train_envs = loader.val_envs(cfg.train_envs)
 
     ac = ActorCritic(
         obs_space=loader.obs_space,

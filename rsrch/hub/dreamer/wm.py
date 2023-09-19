@@ -117,29 +117,26 @@ class VecEnvAgent(gym.vector.AgentWrapper):
         device=None,
     ):
         super().__init__(LatentAgent(wm, actor, env.num_envs))
-        assert isinstance(env.single_observation_space, gym.spaces.TensorSpace)
-        assert isinstance(env.single_action_space, gym.spaces.TensorSpace)
         self.wm = wm
-        self._net_device = device
-        self._env_device = env.single_action_space.device
+        self._device = device
 
     @torch.inference_mode()
     def reset(self, idxes, obs, info):
-        obs = self.wm.obs_enc(obs.to(self._net_device))
+        obs = self.wm.obs_enc(obs.to(self._device))
         return super().reset(idxes, obs, info)
 
     @torch.inference_mode()
     def policy(self, obs):
         act = super().policy(obs)
-        act = self.wm.act_dec(act).to(self._env_device)
+        act = self.wm.act_dec(act)
         return act
 
     @torch.inference_mode()
     def step(self, act):
-        act = self.wm.act_enc(act.to(self._net_device))
+        act = self.wm.act_enc(act)
         return super().step(act)
 
     @torch.inference_mode()
     def observe(self, idxes, next_obs, term, trunc, info):
-        next_obs = self.wm.obs_enc(next_obs.to(self._net_device))
+        next_obs = self.wm.obs_enc(next_obs)
         return super().observe(idxes, next_obs, term, trunc, info)

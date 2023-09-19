@@ -161,6 +161,8 @@ class Tensorlike:
         if out is not None:
             for name in repr.__tensors:
                 _tensors = [getattr(tensor, name) for tensor in tensors]
+                if any(x is None for x in _tensors):
+                    continue
                 out_field = getattr(out, name)
                 torch.cat(_tensors, dim, out=out_field)
                 setattr(out, name, out_field)
@@ -170,6 +172,8 @@ class Tensorlike:
             fields = {}
             for name in repr.__tensors:
                 _tensors = [getattr(tensor, name) for tensor in tensors]
+                if any(x is None for x in _tensors):
+                    continue
                 _tensors = torch.cat(_tensors, dim)
                 fields[name] = _tensors
             return repr._new(new_shape, fields)
@@ -188,6 +192,8 @@ class Tensorlike:
         if out is not None:
             for name in repr.__tensors:
                 _tensors = [getattr(tensor, name) for tensor in tensors]
+                if any(x is None for x in _tensors):
+                    continue
                 out_field = getattr(out, name)
                 torch.stack(_tensors, dim, out=out_field)
             out._shape = new_shape
@@ -196,6 +202,8 @@ class Tensorlike:
             fields = {}
             for name in repr.__tensors:
                 _tensors = [getattr(tensor, name) for tensor in tensors]
+                if any(x is None for x in _tensors):
+                    continue
                 _tensors = torch.stack(_tensors, dim)
                 fields[name] = _tensors
             return repr._new(new_shape, fields)
@@ -209,7 +217,7 @@ class Tensorlike:
             if isinstance(tensor, torch.Tensor):
                 event_dims = len(tensor.shape) - len(self.shape)
                 t_idx = idx
-                if ... in idx:
+                if any(isinstance(x, type(Ellipsis)) for x in idx):
                     t_idx = (*t_idx, ..., *(slice(None) for _ in range(event_dims)))
                 tensor = tensor[t_idx]
             else:
@@ -231,7 +239,7 @@ class Tensorlike:
             if isinstance(tensor, torch.Tensor):
                 event_dims = len(tensor.shape) - len(self.shape)
                 t_idx = idx
-                if ... in idx:
+                if any(isinstance(x, type(Ellipsis)) for x in idx):
                     t_idx = (*t_idx, ..., *(slice(None) for _ in range(event_dims)))
                 tensor[t_idx] = getattr(value, name)
             else:

@@ -7,6 +7,7 @@ from torch import nn
 from tqdm.auto import tqdm
 
 from rsrch.exp import Experiment
+from rsrch.exp.profiler import Profiler
 from rsrch.nn.rewrite import rewrite_module_
 from rsrch.rl import data, gym
 from rsrch.rl.data import rollout
@@ -16,34 +17,6 @@ from rsrch.utils import cron, sched
 from . import config, env
 from .agent import QAgent
 from .nets import *
-
-
-class Trigger:
-    def __init__(self, cfg: dict, step_fn, ref_step=None, ref_t=None):
-        self._cfg = cfg
-        self._step_fn = step_fn
-        self._fired = False
-        if ref_step is None:
-            ref_step = step_fn()
-        self._ref_step = ref_step
-        if ref_t is None:
-            ref_t = datetime.now()
-        self._ref_t = ref_t
-
-    def fire(self):
-        self._fired = True
-
-    def __bool__(self):
-        if self._fired:
-            return False
-        if "env_step" in self._cfg:
-            if self._step_fn() - self._ref_step >= self._cfg["env_step"]:
-                return True
-        if "real_time" in self._cfg:
-            elapsed = (datetime.now() - self._ref_t).total_seconds()
-            if elapsed >= self._cfg["real_time"]:
-                return True
-        return False
 
 
 def main():
@@ -187,16 +160,12 @@ def main():
     board.add_step("env_step", lambda: env_step, default=True)
     pbar = tqdm(total=cfg.sched.num_frames, dynamic_ncols=True)
 
-    start_prof = None
-    if cfg.profile.enabled:
-        prof = torch.profiler.profile(
-            activities=[
-                torch.profiler.ProfilerActivity.CPU,
-                torch.profiler.ProfilerActivity.CUDA,
-            ],
-        )
-        start_prof = Trigger(cfg.profile.start, lambda: env_step)
-        end_prof = None
+    prof = Profiler(
+        cfg=cfg.profile,
+        device=device,
+        step_fn=lambda: env_step,
+        trace_path=exp.dir / "trace.json",
+    )
 
     def val_epoch():
         val_returns = []
@@ -300,21 +269,11 @@ def main():
         if should_end:
             break
 
-        if start_prof:
-            start_prof.fire()
-            prof.start()
-            end_prof = Trigger(cfg.profile.stop, lambda: env_step)
-
-        if end_prof is not None and end_prof:
-            end_prof.fire()
-            prof.stop()
-            trace_path = exp.dir / "trace.json"
-            trace_path.parent.mkdir(parents=True, exist_ok=True)
-            prof.export_chrome_trace(str(trace_path.absolute()))
-
         collect_exp()
         if len(buffer) >= cfg.buffer.prefill:
             opt_step()
+
+        prof.update()
 
 
 if __name__ == "__main__":
