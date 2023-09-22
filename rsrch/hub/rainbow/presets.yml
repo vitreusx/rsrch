@@ -15,7 +15,7 @@ atari: &atari
 debug: &debug
   infra.env_workers: 8
   buffer.capacity: 500e3
-  profile:
+  profiler:
     enabled: false
     start:
       step: 100e3

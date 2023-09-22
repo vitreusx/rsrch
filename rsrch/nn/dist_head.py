@@ -54,38 +54,58 @@ class Bernoulli(nn.Module):
 
 
 class Categorical(nn.Module):
-    def __init__(self, in_features: int, num_classes: int):
+    def __init__(self, in_features: int, num_classes: int, min_pr=None):
         super().__init__()
         self.in_features = in_features
         self.num_classes = num_classes
         self.fc = nn.Linear(in_features, num_classes)
+        self._min_pr = min_pr
 
     def forward(self, x: Tensor) -> D.Categorical:
-        logits: Tensor = self.fc(x)
-        return D.Categorical(logits=logits)
+        if self._min_pr is None:
+            logits: Tensor = self.fc(x)
+            return D.Categorical(logits=logits)
+        else:
+            probs = nn.functional.softmax(self.fc(x), -1)
+            probs = self._min_pr + (1.0 - self._min_pr) * probs
+            return D.Categorical(probs=probs)
 
 
 class OneHotCategoricalST(nn.Module):
-    def __init__(self, in_features: int, num_classes: int):
+    def __init__(self, in_features: int, num_classes: int, min_pr=None):
         super().__init__()
         self.fc = nn.Linear(in_features, num_classes)
+        self._min_pr = min_pr
 
     def forward(self, x: Tensor) -> D.Categorical:
-        logits: Tensor = self.fc(x)
-        return D.OneHotCategoricalST(logits=logits)
+        if self._min_pr is None:
+            logits: Tensor = self.fc(x)
+            return D.OneHotCategoricalST(logits=logits)
+        else:
+            probs = nn.functional.softmax(self.fc(x), -1)
+            probs = self._min_pr + (1.0 - self._min_pr) * probs
+            return D.OneHotCategoricalST(probs=probs)
 
 
 class MultiheadOHST(nn.Module):
-    def __init__(self, in_features: int, out_features: int, num_heads: int):
+    def __init__(
+        self, in_features: int, out_features: int, num_heads: int, min_pr=None
+    ):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
         self.num_heads = num_heads
-        self.net = nn.Linear(in_features, out_features)
+        self.fc = nn.Linear(in_features, out_features)
+        self._min_pr = min_pr
 
     def forward(self, x: Tensor) -> D.MultiheadOHST:
-        logits: Tensor = self.net(x)
-        return D.MultiheadOHST(self.num_heads, logits=logits)
+        if self._min_pr is None:
+            logits: Tensor = self.fc(x)
+            return D.MultiheadOHST(self.num_heads, logits=logits)
+        else:
+            probs = nn.functional.softmax(self.fc(x), -1)
+            probs = self._min_pr + (1.0 - self._min_pr) * probs
+            return D.MultiheadOHST(self.num_heads, probs=probs)
 
 
 class Dirac(nn.Module):

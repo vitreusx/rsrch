@@ -62,9 +62,9 @@ exp:
   val_every: 100e3
   val_episodes: 16
   log_every: 128
-profile:
+profiler:
   enabled: false
   start:
-    env_step: 100e3
-  stop:
-    real_time: 15.0
+    step: 100e3
+  duration:
+    step: 16

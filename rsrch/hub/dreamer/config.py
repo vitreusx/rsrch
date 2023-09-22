@@ -27,21 +27,27 @@ class Config:
     class WM:
         opt: optim_ctor
         kl_mix: float
-        dist_coef: float
-        obs_coef: float
-        rew_coef: float
-        term_coef: float
+        coef: dict[str, float]
 
     @dataclass
     class AC:
-        opt: optim_ctor
-        actor_coef: float
-        critic_coef: float
+        actor_opt: optim_ctor
+        critic_opt: optim_ctor
+        horizon: int
+        adv_norm: bool
+        rho: float
 
     @dataclass
     class Amp:
         enabled: bool
         dtype: lambda x: getattr(torch, x)
+
+    @dataclass
+    class Alpha:
+        autotune: bool
+        ent_scale: float
+        value: float | None
+        opt: optim_ctor
 
     env: env.Config
     rssm: rssm.Config
@@ -59,4 +65,7 @@ class Config:
     wm: WM
     ac: AC
     log_every: int
-    profile: profiler.Config
+    profiler: profiler.Config
+    gamma: float
+    gae_lambda: float
+    alpha: Alpha

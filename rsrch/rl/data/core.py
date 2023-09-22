@@ -150,12 +150,13 @@ def to_numpy_seq(seq: Seq):
 
 
 class TensorSeq(Seq):
-    obs: Tensor
-    act: Tensor
-    reward: Tensor
-    term: bool
+    def __init__(self, obs: Tensor, act: Tensor, reward: Tensor, term: bool):
+        self.obs = obs
+        self.act = act
+        self.reward = reward
+        self.term = term
 
-    def to(self, device):
+    def to(self, device: torch.device):
         return TensorSeq(
             obs=self.obs.to(device=device),
             act=self.act.to(device=device),
@@ -166,11 +167,6 @@ class TensorSeq(Seq):
 
 class ChunkBatch:
     """A batch of equal-length Tensor sequences. Time dimension is first."""
-
-    obs: Tensor
-    act: Tensor
-    reward: Tensor
-    term: Tensor
 
     def __init__(self, obs: Tensor, act: Tensor, reward: Tensor, term: Tensor):
         self.obs = obs
@@ -204,6 +200,7 @@ class ChunkBatch:
         return len(self.act)
 
     @property
+    @torch.jit.unused
     def step_batches(self):
         term = torch.zeros(self.batch_size, dtype=bool, device=self.obs.device)
         for step in range(self.num_steps):

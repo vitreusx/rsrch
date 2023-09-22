@@ -62,7 +62,7 @@ class OneHotCategorical(Distribution, Tensorlike):
 
 
 @register_kl(OneHotCategorical, OneHotCategorical)
-def _kl_onehotcategorical(p: OneHotCategorical, q: OneHotCategorical):
+def _(p: OneHotCategorical, q: OneHotCategorical):
     t = p.probs * (p.log_probs - q.log_probs)
     t[(q.probs == 0).expand_as(t)] = torch.inf
     t[(p.probs == 0).expand_as(t)] = 0

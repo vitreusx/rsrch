@@ -176,9 +176,16 @@ class TermPred(nn.Sequential):
 class Actor(nn.Sequential):
     def __init__(self, cfg: Config, act_space: gym.TensorSpace):
         if isinstance(act_space, gym.spaces.TensorDiscrete):
-            head = dh.OneHotCategoricalST(cfg.fc_layers[-1], act_space.n)
+            head = dh.OneHotCategoricalST(
+                in_features=cfg.fc_layers[-1],
+                num_classes=act_space.n,
+                min_pr=1e-8,
+            )
         elif isinstance(act_space, gym.spaces.TensorBox):
-            head = dh.Normal(cfg.fc_layers[-1], act_space.shape)
+            head = dh.Normal(
+                in_features=cfg.fc_layers[-1],
+                out_shape=act_space.shape,
+            )
         else:
             raise ValueError()
 
@@ -193,6 +200,13 @@ class Actor(nn.Sequential):
             head,
         )
 
+        def layer_init(layer):
+            if isinstance(layer, (nn.Conv2d, nn.Linear)):
+                nn.init.kaiming_normal_(layer.weight)
+                torch.nn.init.constant_(layer.bias, 0)
+
+        self.apply(layer_init)
+
 
 class Critic(nn.Sequential):
     def __init__(self, cfg: Config):
@@ -205,6 +219,13 @@ class Critic(nn.Sequential):
             ),
             nn.Flatten(0),
         )
+
+        def layer_init(layer):
+            if isinstance(layer, (nn.Conv2d, nn.Linear)):
+                nn.init.kaiming_normal_(layer.weight)
+                torch.nn.init.constant_(layer.bias, 0)
+
+        self.apply(layer_init)
 
 
 class Reshape(nn.Module):

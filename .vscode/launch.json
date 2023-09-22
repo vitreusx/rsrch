@@ -55,6 +55,20 @@
                 "${input:ppo_preset}"
             ],
             "justMyCode": false
+        },
+        {
+            "name": "PPO (Alpha)",
+            "type": "python",
+            "request": "launch",
+            "module": "rsrch.hub.ppo_alpha",
+            "pythonArgs": [
+                "-O",
+            ],
+            "args": [
+                "-p",
+                "${input:ppo_preset}"
+            ],
+            "justMyCode": false
         }
     ],
     "inputs": [

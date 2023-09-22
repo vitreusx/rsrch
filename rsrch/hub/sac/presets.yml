@@ -91,3 +91,9 @@ Walker2d-v4:
   <<: [*cont]
   env.id: Walker2d-v4
   env.type: dmc
+CartPole-v1:
+  <<: [*atari]
+  env.id: CartPole-v1
+  env.type: classic
+  env.stack: null
+  alpha.ent_scale: 0.5

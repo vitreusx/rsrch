@@ -43,3 +43,7 @@ CartPole-v1:
   buffer:
     capacity: 500e3
   seq_len: 4
+  alpha:
+    autotune: true
+    opt: ${ac.critic_opt}
+    ent_scale: 0.5

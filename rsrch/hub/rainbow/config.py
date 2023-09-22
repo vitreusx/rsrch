@@ -93,4 +93,4 @@ class Config:
     expl_eps: float | schedule
     decorr: Decorr
     exp: Exp
-    profile: profiler.Config
+    profiler: profiler.Config

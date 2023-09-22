@@ -30,17 +30,23 @@ wm:
     lr: 1e-3
     eps: 1e-5
   kl_mix: 0.8
-  dist_coef: 1.0
-  obs_coef: 1.0
-  rew_coef: 1.0
-  term_coef: 1.0
+  coef:
+    dist: 1.0
+    obs: 1.0
+    rew: 1.0
+    term: 1.0
 ac:
-  opt:
+  actor_opt:
     type: adam
-    lr: 1e-5
+    lr: 3e-5
     eps: 1e-5
-  actor_coef: 0.1
-  critic_coef: 1.0
+  critic_opt:
+    type: adam
+    lr: 1e-3
+    eps: 1e-5
+  horizon: 3
+  adv_norm: true
+  rho: 0.5
 device: cuda
 val_every: 10e3
 env_workers: 8
@@ -63,3 +69,10 @@ profiler:
     step: 30_000
   duration:
     step: 10
+gamma: 0.99
+gae_lambda: 0.95
+alpha:
+  autotune: true
+  ent_scale: 0.5
+  value: null
+  opt: ${ac.actor_opt}

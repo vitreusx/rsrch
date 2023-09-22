@@ -9,15 +9,26 @@ from .kl import register_kl
 
 
 class Categorical(Distribution, Tensorlike):
-    def __init__(self, probs: Tensor | None = None, logits: Tensor | None = None):
-        if probs is not None and logits is not None:
-            raise ValueError("probs and logits cannot be both not-None")
+    def __init__(
+        self,
+        probs: Tensor | None = None,
+        logits: Tensor | None = None,
+        log_probs: Tensor | None = None,
+    ):
+        if sum(x is not None for x in (probs, logits, log_probs)) != 1:
+            raise ValueError("cannot supply more than 1 param")
 
         if probs is not None:
             probs = torch.as_tensor(probs)
             _param = probs
-        else:
+            norm = False
+        elif logits is not None:
             logits = torch.as_tensor(logits)
+            norm = False
+            _param = logits
+        elif log_probs is not None:
+            logits = torch.as_tensor(log_probs)
+            norm = True
             _param = logits
 
         shape = _param.shape[:-1]
@@ -29,7 +40,7 @@ class Categorical(Distribution, Tensorlike):
         self._logits: Tensor | None
         self.register("_logits", logits)
 
-        self._normalized = False
+        self._normalized = norm
         self._num_events = _param.shape[-1]
         self.event_shape = torch.Size([])
 
