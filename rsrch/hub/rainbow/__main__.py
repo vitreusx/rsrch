@@ -33,7 +33,6 @@ def main():
 
     loader = env.Loader(cfg.env)
     val_env = loader.val_env()
-    exp_env = loader.exp_env()
 
     if cfg.pr.enabled:
         if isinstance(cfg.pr.beta, float):
@@ -54,11 +53,11 @@ def main():
         sampler=sampler,
     )
 
-    exp_envs = loader.exp_envs(cfg.sched.env_batch)
+    train_envs = loader.train_envs(cfg.sched.env_batch)
     num_val_envs = min(cfg.infra.env_workers, cfg.exp.val_episodes)
     val_envs = loader.val_envs(num_val_envs)
 
-    dummy_obs: Tensor = loader.obs_space.sample()
+    dummy_obs: Tensor = loader.tensor_obs_space.sample()
 
     def make_enc():
         if loader.visual:
@@ -138,19 +137,19 @@ def main():
 
     exp_agent = gym.vector.agents.EpsAgent(
         opt=QAgent(q, loader),
-        rand=gym.vector.agents.RandomAgent(exp_envs),
+        rand=gym.vector.agents.RandomAgent(train_envs),
         eps=expl_eps(0),
-        num_envs=exp_envs.num_envs,
+        num_envs=train_envs.num_envs,
     )
 
-    ep_ids = [None for _ in range(exp_envs.num_envs)]
-    exp_iter = iter(rollout.events(exp_envs, exp_agent))
+    ep_ids = [None for _ in range(train_envs.num_envs)]
+    exp_iter = iter(rollout.events(train_envs, exp_agent))
 
     env_step = 0
     should_end = cron.Once(lambda: env_step >= cfg.sched.num_frames)
     should_log = cron.Every(lambda: env_step, cfg.exp.log_every)
 
-    exp_steps = cfg.sched.env_batch // exp_envs.num_envs
+    exp_steps = cfg.sched.env_batch // train_envs.num_envs
     opt_batch_ = int(cfg.sched.replay_ratio * cfg.sched.env_batch)
     assert opt_batch_ % cfg.sched.env_batch == 0
     opt_steps = opt_batch_ // cfg.sched.opt_batch
@@ -161,7 +160,7 @@ def main():
     pbar = tqdm(total=cfg.sched.num_frames, dynamic_ncols=True)
 
     prof = Profiler(
-        cfg=cfg.profile,
+        cfg=cfg.profiler,
         device=device,
         step_fn=lambda: env_step,
         trace_path=exp.dir / "trace.json",
@@ -186,10 +185,10 @@ def main():
             vec_ev = next(exp_iter)
             if isinstance(vec_ev, rollout.Async):
                 nonlocal env_step
-                env_step += exp_envs.num_envs
+                env_step += train_envs.num_envs
                 ctr += 1
-                pbar.update(exp_envs.num_envs)
-                q_polyak.step(exp_envs.num_envs)
+                pbar.update(train_envs.num_envs)
+                q_polyak.step(train_envs.num_envs)
                 exp_agent.eps = expl_eps(env_step)
             elif isinstance(vec_ev, rollout.VecReset):
                 for env_idx, ev in vec_ev:
@@ -214,7 +213,7 @@ def main():
             else:
                 idxes = batch
 
-            batch = loader.fetch_chunk_batch(buffer, idxes)
+            batch = loader.load_chunk_batch(buffer, idxes)
             batch = batch.to(device)
 
             with torch.no_grad():

@@ -5,9 +5,16 @@ atari: &atari
   update_batch: 256
   total_steps: 10e6
   val_every: 50e3
+  alpha:
+    autotune: false
+    value: 1e-2
+  # alpha.ent_scale: 0.9
 Pong-v5:
   <<: *atari
   env.id: ALE/Pong-v5
+Alien-v5:
+  <<: *atari
+  env.id: ALE/Alien-v5
 Alien-v4:
   <<: *atari
   env.id: AlienNoFrameskip-v4

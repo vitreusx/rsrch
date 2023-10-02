@@ -11,6 +11,8 @@ env:
   reward: sign
   time_limit: null
   stack: 1
+  aug:
+    enabled: true
 sched:
   num_frames: 10e6
   opt_batch: 256

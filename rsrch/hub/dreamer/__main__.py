@@ -2,17 +2,17 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from torch import Tensor, nn
-import rsrch.distributions as D
 import torch.nn.functional as F
+from torch import Tensor, nn
+from tqdm.auto import tqdm
 
+import rsrch.distributions as D
 from rsrch.exp import Experiment
+from rsrch.exp.profiler import Profiler
 from rsrch.rl import data, gym
 from rsrch.rl.data import rollout
-from rsrch.utils import cron
-from tqdm.auto import tqdm
-from rsrch.exp.profiler import Profiler
 from rsrch.types import Namespace
+from rsrch.utils import cron
 
 from . import config, env, rssm, wm
 
@@ -43,6 +43,7 @@ def main():
 
     dreamer = rssm.Dreamer(cfg.rssm, loader.obs_space, loader.act_space)
     dreamer = dreamer.to(device)
+    # dreamer = test.cartpole.Dreamer().to(device)
     wm_ = dreamer.wm
 
     autocast = lambda: torch.autocast(
@@ -58,7 +59,7 @@ def main():
 
     class Agent(gym.vector.AgentWrapper):
         def __init__(self, num_envs: int):
-            super().__init__(wm.LatentAgent(dreamer.wm, dreamer.actor, num_envs))
+            super().__init__(wm.LatentAgent(wm_, dreamer.actor, num_envs))
 
         @torch.inference_mode()
         def reset(self, idxes, obs, info):
@@ -237,6 +238,12 @@ def main():
 
         del losses
 
+        # bs, seq_len = batch.batch_size, batch.num_steps
+
+        # enc_obs = wm_.obs_enc(flat(batch.obs))
+        # states = wm_.obs_cell(None, enc_obs).rsample()
+        # states = states.reshape(seq_len + 1, bs, *states.shape[1:])
+
         # AC learning
 
         states = [flat(states[1:-1]).detach()]
@@ -266,13 +273,14 @@ def main():
         # "Fuzzy" GAE
         weights = torch.cumprod(1.0 - term, dim=0)
         gamma = cfg.gamma * weights
-        delta = (rew + gamma[-1] * values[1:]) - values[:-1]
-        adv = [delta[-1]]
-        for t in reversed(range(1, len(rew))):
-            adv.append(delta[t - 1] + cfg.gae_lambda * gamma[t] * adv[-1])
-        adv.reverse()
-        adv = torch.stack(adv)
-        ret = values[:-1] + adv
+        with torch.no_grad():
+            delta = (rew + gamma[1:] * values[1:]) - values[:-1]
+            adv = [delta[-1]]
+            for t in reversed(range(1, len(rew))):
+                adv.append(delta[t - 1] + cfg.gae_lambda * gamma[t] * adv[-1])
+            adv.reverse()
+            adv = torch.stack(adv)
+            ret = values[:-1] + adv
 
         if cfg.ac.adv_norm:
             adv = (adv - adv.mean()) / (adv.std() + 1e-8)
@@ -285,10 +293,14 @@ def main():
         (loss_w * critic_loss).mean().backward(retain_graph=True)
         critic_opt.step()
 
+        val = values[:-1]
+        # if cfg.ac.val_norm:
+        #     val = (val - val.mean()) / (val.std() + 1e-8)
+
         pg_loss = cfg.ac.rho * (-adv * logp)
         # pg_loss = cfg.ac.rho * adv
         # pg_loss = cfg.ac.rho * -adv * (logp - logp.detach()).exp()
-        v_loss = (1.0 - cfg.ac.rho) * -values[:-1]
+        v_loss = (1.0 - cfg.ac.rho) * -val
         ent_loss = alpha * -ent
 
         actor_loss = pg_loss + v_loss + ent_loss

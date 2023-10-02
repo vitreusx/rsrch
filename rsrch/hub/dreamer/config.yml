@@ -27,7 +27,7 @@ rssm:
 wm:
   opt:
     type: adam
-    lr: 1e-3
+    lr: 1e-4
     eps: 1e-5
   kl_mix: 0.8
   coef:
@@ -42,10 +42,11 @@ ac:
     eps: 1e-5
   critic_opt:
     type: adam
-    lr: 1e-3
+    lr: 2e-4
     eps: 1e-5
   horizon: 3
   adv_norm: true
+  val_norm: true
   rho: 0.5
 device: cuda
 val_every: 10e3

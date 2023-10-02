@@ -1,9 +1,10 @@
 from dataclasses import dataclass
 from typing import Optional
 
+from rsrch.exp import profiler
 from rsrch.utils.config import *
 from rsrch.utils.sched import schedule
-from rsrch.exp import profiler
+
 from . import env
 
 

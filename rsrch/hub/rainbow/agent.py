@@ -1,8 +1,9 @@
 import numpy as np
 import torch
-from torch import Tensor
+from torch import Tensor, nn
+
 from rsrch.rl import gym
-from torch import nn
+
 from .distr_q import ValueDist
 from .env import Loader
 
@@ -15,7 +16,7 @@ class QAgent(gym.vector.Agent):
 
     @torch.inference_mode()
     def policy(self, obs: np.ndarray):
-        obs = self._loader.conv_obs(obs).to(self._device)
+        obs = self._loader.load_obs(obs).to(self._device)
         q_values: ValueDist | Tensor = self.q(obs)
 
         if isinstance(q_values, ValueDist):

@@ -1,8 +1,9 @@
 from dataclasses import dataclass
 from functools import partial
-from rsrch.exp import profiler
+
 import torch
 
+from rsrch.exp import profiler
 from rsrch.utils.config import *
 
 from . import env, rssm
@@ -35,6 +36,7 @@ class Config:
         critic_opt: optim_ctor
         horizon: int
         adv_norm: bool
+        val_norm: bool
         rho: float
 
     @dataclass

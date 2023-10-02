@@ -41,6 +41,7 @@ py-spy = "^0.3.14"
 gitpython = "^3.1.36"
 envpool = "^0.8.3"
 cython = "<3"
+kornia = "^0.7.0"
 
 [tool.poetry.group.ext]
 optional = true
@@ -58,7 +59,7 @@ nbconvert = "^7.3.1"
 pylint = "^2.17.4"
 isort = ">=5"
 sphinx = "^7.2.2"
-furo = "^2023.8.19"
+furo = "*"
 
 [tool.poetry.group.conda]
 optional = true
