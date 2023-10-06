@@ -186,12 +186,6 @@ def _fix_types(x, t):
 T = TypeVar("T")
 
 
-def fix_dict(data: dict):
-    data = normalize_(copy(data))
-    data = resolve_exprs(data)
-    return data
-
-
 def to_class(data: dict, cls: Type[T]) -> T:
     """Parse data into a class. The data may be obtained from e.g. YAML file, and cls must be a dataclass. One can use $(...) expressions for evaluation (like in Bash). Moreover, one can use non-builtin classes in the cls dataclass, which will get converted via the constructor from a base type."""
 
@@ -218,21 +212,23 @@ def merge(*dicts: dict):
     return merged
 
 
-def normalize_(d: dict):
+def normalize(d: dict):
     """Normalize a dict, turning any key of form <k1>.<k2>...<kn>: v into k1: {k2: ... kn: v}."""
-    for k, v in [*d.items()]:
+    res = {}
+    for k, v in d.items():
+        if isinstance(v, dict):
+            v = normalize(v)
         if "." in k:
-            cur = d
+            cur = res
             parts = [*k.split(".")]
             for ki in parts[:-1]:
                 if ki not in cur:
                     cur[ki] = {}
                 cur = cur[ki]
             cur[parts[-1]] = v
-    for k, v in d.items():
-        if isinstance(v, dict):
-            normalize_(v)
-    return d
+        else:
+            res[k] = v
+    return res
 
 
 def parse_var(spec: str):
@@ -300,9 +296,9 @@ def from_specs(specs: list[str], cls: Type[T] = None, cwd=None) -> dict | T:
     """Construct a config class or dict for a given list of config specs."""
     data = {}
     for spec in specs:
-        spec_d = parse_spec(spec, cwd)
+        spec_d = normalize(parse_spec(spec, cwd))
         update_(data, spec_d)
-        data = fix_dict(data)
+        data = resolve_exprs(data)
     if cls is not None:
         data = to_class(data, cls)
     return data

@@ -4,11 +4,12 @@ from torch import Tensor, nn
 
 import rsrch.distributions as D
 import rsrch.nn.dist_head as dh
+from rsrch.rl import gym
 
-from .. import core
+from . import core
 
 
-class WM(nn.Module, core.WorldModel):
+class WorldModel(core.WorldModel):
     g = 9.8
     M, m = 1.0, 0.1
     l = 1.0
@@ -17,38 +18,17 @@ class WM(nn.Module, core.WorldModel):
     max_th = np.deg2rad(12.0)
     max_x = 2.4
 
-    def __init__(self):
-        nn.Module.__init__(self)
-        self._dummy = nn.Parameter(torch.zeros([]))
+    obs_space = gym.spaces.Box(-np.inf, np.inf, (4,))
+    act_space = gym.spaces.Discrete(2)
 
-    @property
-    def device(self):
-        return self._dummy.device
+    def reset(self, batch_size: int):
+        s = 5e-2 * (2.0 * torch.rand(batch_size, 4) - 1.0)
+        s = s.to(self.device)
+        return s
 
-    def reward_pred(self, s: Tensor):
-        return D.Dirac(torch.ones(s.shape[:1], device=self.device), 0)
-
-    def term_pred(self, s: Tensor):
-        x, _, th, _ = s.T
-        term = (x.abs() > self.max_x) | (th.abs() > self.max_th)
-        return D.Dirac(term.float(), 0)
-
-    def obs_enc(self, obs):
-        return obs
-
-    def act_enc(self, act: Tensor):
-        return nn.functional.one_hot(act, 2)
-
-    def act_dec(self, act: Tensor):
-        return act.argmax(-1)
-
-    @property
-    def prior(self):
-        return torch.zeros([4], device=self.device)
-
-    def act_cell(self, state: Tensor, act: Tensor):
-        x, v, th, om = state.T
-        f = self.F * (act[:, 1] - act[:, 0])
+    def step(self, s: Tensor, a: Tensor):
+        x, v, th, om = s.T
+        f = self.F * (a[:, 1] - a[:, 0])
         ct, st = torch.cos(th), torch.sin(th)
         temp = (f + self.m * self.l * 0.5 * om**2 * st) / (self.m + self.M)
         alpha = (self.g * st - ct * temp) / (
@@ -62,10 +42,20 @@ class WM(nn.Module, core.WorldModel):
         om = om + self.dt * alpha
 
         next_s = torch.stack([x, v, th, om], -1)
-        return D.Dirac(next_s, 1)
+        return D.Dirac(next_s)
 
-    def obs_cell(self, state: Tensor, obs: Tensor):
-        return D.Dirac(obs, 1)
+    def rew(self, next_s: Tensor):
+        return torch.ones(next_s.shape[:1]).to(next_s.device)
+
+    def term(self, s: Tensor) -> Tensor:
+        x, _, th, _ = s.T
+        return (x.abs() > self.max_x) | (th.abs() > self.max_th)
+
+    def act_enc(self, a):
+        return nn.functional.one_hot(a, num_classes=2)
+
+    def act_dec(self, enc_a: Tensor):
+        return enc_a.argmax(-1)
 
 
 class Actor(nn.Sequential, core.Actor):
@@ -89,11 +79,3 @@ class Critic(nn.Sequential):
             nn.Linear(32, 1),
             nn.Flatten(0),
         )
-
-
-class Dreamer(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.wm = WM()
-        self.actor = Actor()
-        self.critic = Critic()

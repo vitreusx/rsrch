@@ -29,7 +29,7 @@ CartPole-v1:
     id: CartPole-v1
     type: classic
     stack: null
-  rssm:
+  wm.rssm:
     deter: 32
     stoch: 32
     hidden: 32
@@ -43,7 +43,8 @@ CartPole-v1:
   buffer:
     capacity: 500e3
   seq_len: 4
-  alpha:
-    autotune: true
-    opt: ${ac.critic_opt}
-    ent_scale: 0.5
+  ac:
+    rho: 1.0
+    alpha:
+      autotune: true
+      ent_scale: 0.5

@@ -1,23 +1,11 @@
 from dataclasses import dataclass
+from functools import partial
 from typing import Callable, Literal
 
+import torch
 from torch import nn
 
-
-def layer_ctor(cfg):
-    if isinstance(cfg, str):
-        return {
-            "elu": nn.ELU,
-            "relu": nn.ReLU,
-            "bn": nn.BatchNorm1d,
-            "ln": nn.LayerNorm,
-        }[cfg]
-    elif isinstance(cfg, Callable):
-        return cfg
-    elif cfg is None:
-        return lambda *args, **kwargs: nn.Identity()
-    else:
-        raise ValueError()
+from rsrch.nn.builder import *
 
 
 @dataclass
@@ -37,3 +25,6 @@ class Config:
     act_layer: layer_ctor
     dist: Dist
     ensemble: int
+    opt: optim_ctor
+    kl_mix: float
+    coef: dict[str, float]

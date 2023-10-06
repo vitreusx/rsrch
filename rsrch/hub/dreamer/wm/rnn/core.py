@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Any, Callable
 
 import torch
 from torch import Tensor, nn
@@ -14,10 +15,10 @@ class Config:
 
 
 class WorldModel:
-    obs_enc: nn.Module
-    act_enc: nn.Module
-    act_dec: nn.Module
-    init: nn.Module
+    obs_enc: Callable[..., Tensor]
+    act_enc: Callable[..., Tensor]
+    act_dec: Callable[[Tensor], Any]
+    init: Callable[..., Tensor]
     trans: nn.RNNBase
     pred: nn.RNNCell
 
@@ -41,6 +42,9 @@ class WorldModel:
 
 
 class Actor:
+    def __call__(self, state: Tensor) -> D.Distribution:
+        ...
+
     def imagine(self, wm: WorldModel, horizon: int, prior):
         h = prior
         states, act_rvs, acts = [h], [], []

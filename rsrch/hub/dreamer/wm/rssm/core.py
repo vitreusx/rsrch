@@ -1,3 +1,5 @@
+from typing import Any, Callable
+
 import torch
 from torch import Tensor, nn
 
@@ -5,6 +7,8 @@ import rsrch.distributions as D
 from rsrch.rl import gym
 from rsrch.rl.data.core import ChunkBatch
 from rsrch.types import Tensorlike
+
+from .. import api
 
 
 class State(Tensorlike):
@@ -31,12 +35,12 @@ class StateDist(Tensorlike, D.Distribution):
     def mode(self):
         return State(self.deter, self.stoch_rv.mode)
 
-    def sample(self, sample_shape) -> State:
+    def sample(self, sample_shape: torch.Size = torch.Size()) -> State:
         deter = self.deter.expand([*sample_shape, *self.deter.shape])
         stoch = self.stoch_rv.sample(sample_shape)
         return State(deter, stoch)
 
-    def rsample(self, sample_shape) -> State:
+    def rsample(self, sample_shape: torch.Size = torch.Size()) -> State:
         deter = self.deter.expand([*sample_shape, *self.deter.shape])
         stoch = self.stoch_rv.rsample(sample_shape)
         return State(deter, stoch)
@@ -47,13 +51,15 @@ def _(p: StateDist, q: StateDist):
     return D.kl_divergence(p.stoch_rv, q.stoch_rv)
 
 
-class WorldModel:
-    obs_enc: nn.Module
-    act_enc: nn.Module
-    deter_in: nn.Module
-    deter_cell: nn.Module
-    prior_stoch: nn.Module
-    post_stoch: nn.Module
+class WorldModel(api.WorldModel):
+    obs_enc: Callable[..., Tensor]
+    act_enc: Callable[..., Tensor]
+    deter_in: Callable[[Tensor], Tensor]
+    deter_cell: nn.RNNCell
+    prior_stoch: Callable[[Tensor], D.Distribution]
+    post_stoch: Callable[[Tensor], D.Distribution]
+    term_pred: Callable[[State], D.Distribution]
+    rew_pred: Callable[[State], D.Distribution]
 
     def act_cell(self, prev_h: State, act):
         deter_x = torch.cat([prev_h.stoch, act], 1)
@@ -62,6 +68,8 @@ class WorldModel:
         stoch_rv = self.prior_stoch(deter)
         state_rv = StateDist(deter, stoch_rv)
         return state_rv
+
+    next_pred = act_cell
 
     def obs_cell(self, prior: State, obs) -> StateDist:
         stoch_x = torch.cat([prior.deter, obs], 1)

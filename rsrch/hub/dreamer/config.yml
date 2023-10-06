@@ -11,43 +11,57 @@ env:
   reward: sign
   time_limit: null
   stack: 4
-rssm:
-  deter: 256
-  stoch: 256
-  hidden: 256
-  fc_layers: [128, 128, 128]
-  conv_hidden: 48
-  norm_layer: null
-  act_layer: elu
-  dist:
-    type: discrete
-    num_heads: 8
-    std: softplus
-  ensemble: 4
 wm:
-  opt:
-    type: adam
-    lr: 1e-4
-    eps: 1e-5
-  kl_mix: 0.8
-  coef:
-    dist: 1.0
-    obs: 1.0
-    rew: 1.0
-    term: 1.0
+  type: rssm
+  rssm:
+    deter: 256
+    stoch: 256
+    hidden: 256
+    fc_layers: [128, 128, 128]
+    conv_hidden: 48
+    norm_layer: null
+    act_layer: elu
+    dist:
+      type: discrete
+      num_heads: 8
+      std: softplus
+    ensemble: 4
+    opt:
+      type: adam
+      lr: 1e-4
+      eps: 1e-5
+    kl_mix: 0.8
+    coef:
+      dist: 1.0
+      obs: 1.0
+      rew: 1.0
+      term: 1.0
 ac:
-  actor_opt:
-    type: adam
-    lr: 3e-5
-    eps: 1e-5
-  critic_opt:
-    type: adam
-    lr: 2e-4
-    eps: 1e-5
-  horizon: 3
-  adv_norm: true
-  val_norm: true
-  rho: 0.5
+  type: sac
+  sac:
+    horizon: 3
+    adv_norm: true
+    val_norm: true
+    rho: 0.5
+    gamma: 0.99
+    gae_lambda: 0.95
+    actor_opt:
+      type: adam
+      lr: 3e-5
+      eps: 1e-5
+    critic_opt:
+      type: adam
+      lr: 2e-4
+      eps: 1e-5
+    alpha:
+      autotune: true
+      ent_scale: 0.5
+      value: null
+      opt: ${ac.actor_opt}
+    target_v:
+      enabled: false
+      period: 2_000
+      tau: 0.0
 device: cuda
 val_every: 10e3
 env_workers: 8
@@ -70,10 +84,3 @@ profiler:
     step: 30_000
   duration:
     step: 10
-gamma: 0.99
-gae_lambda: 0.95
-alpha:
-  autotune: true
-  ent_scale: 0.5
-  value: null
-  opt: ${ac.actor_opt}

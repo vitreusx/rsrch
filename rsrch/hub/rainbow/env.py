@@ -4,10 +4,9 @@ from functools import cached_property
 from typing import Any, List, Optional, Tuple, Union
 
 import envpool
+import kornia.geometry.transform as T
 import numpy as np
 import torch
-import torchvision.transforms as T
-from numpy.typing import NDArray
 from torch import Tensor
 
 import rsrch.rl.gym.vector.utils as vec_utils
@@ -166,18 +165,6 @@ class Loader:
     def __init__(self, cfg: Config):
         self.cfg = cfg
 
-        self.aug = None
-        if self.visual:
-            self.aug = T.Compose(
-                [
-                    T.ToPILImage(),
-                    T.RandomAffine(degrees=0, translate=[0.1, 0.1]),
-                    T.ColorJitter(brightness=0.1),
-                    np.asarray,
-                    lambda x: x[..., None] if len(x.shape) < 3 else x,
-                ]
-            )
-
     @cached_property
     def visual(self) -> bool:
         """Whether the observations are images."""
@@ -238,8 +225,6 @@ class Loader:
                     env = gym.wrappers.EpisodicLifeEnv(env)
 
             env = self._reward_t(env)
-            if self.aug is not None:
-                env = BoxTransform(env, self.aug)
 
         if self.cfg.stack is not None and mode != "nostack":
             env = gym.wrappers.FrameStack(env, self.cfg.stack)
@@ -364,20 +349,6 @@ class Loader:
         if mode == "train":
             env = self._reward_t(env)
 
-            if self.aug is not None:
-
-                def aug_v(xs: np.ndarray):
-                    aug_xs = []
-                    # [N, {#S}, H, W, #C] -> [-1, H, W, #C]
-                    for x in np_flatten(xs, 0, -4):
-                        aug_xs.append(self.aug(x))
-                    aug_xs = np.stack(aug_xs)
-                    new_shape = [*xs.shape[:-3], *aug_xs.shape[-3:]]
-                    aug_xs = aug_xs.reshape(new_shape)
-                    return aug_xs
-
-                env = BoxTransformV(env, aug_v)
-
         return env
 
     def train_env(self) -> gym.Env:
@@ -417,6 +388,12 @@ class Loader:
             ),
         )
 
+    def augment(self, x: Tensor) -> Tensor:
+        if self.cfg.aug.enabled and self.visual:
+            shift = torch.randint(-4, 5, (x.shape[0], 2)).type_as(x)
+            x = T.translate(x, shift, mode="nearest")
+        return x
+
     def load_step_batch(self, buffer: data.ChunkBuffer, idxes: np.ndarray):
         """Given a step buffer and a list of idxes, fetch a step batch and
         transform it to tensor form. The observations are properly stacked."""
@@ -425,9 +402,11 @@ class Loader:
 
         obs = np.stack([seq.obs[0] for seq in batch])
         obs = self.load_obs(obs)
+        obs = self.augment(obs)
 
         next_obs = np.stack([seq.obs[1] for seq in batch])
         next_obs = self.load_obs(next_obs)
+        next_obs = self.augment(next_obs)
 
         act = np.stack([seq.act[0] for seq in batch])
         act = self.load_act(act)
@@ -469,6 +448,7 @@ class Loader:
 
         obs = np.stack([seq.obs for seq in batch], axis=1)
         obs = self.load_obs(obs.reshape(-1, *obs.shape[2:]))
+        obs = self.augment(obs)
         obs = obs.reshape([seq_len + 1, batch_size, *obs.shape[1:]])
 
         act = np.stack([seq.act for seq in batch], axis=1)

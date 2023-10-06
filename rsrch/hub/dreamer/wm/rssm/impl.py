@@ -7,6 +7,7 @@ import rsrch.distributions as D
 import rsrch.nn.dist_head as dh
 from rsrch.nn import fc
 from rsrch.rl import gym
+from rsrch.rl.data.core import ChunkBatch
 
 from .. import nets
 from . import core
@@ -18,7 +19,7 @@ class StateToTensor(nn.Module):
         return s.as_tensor()
 
 
-class Actor(nn.Sequential):
+class Actor(nn.Sequential, core.Actor):
     def __init__(self, cfg: Config, act_space: gym.TensorSpace):
         if isinstance(act_space, gym.spaces.TensorDiscrete):
             head = dh.OneHotCategoricalST(
@@ -72,10 +73,7 @@ class Critic(nn.Sequential):
         self.apply(layer_init)
 
 
-
-
-
-class RSSM(core.RSSM, nn.Module):
+class WorldModel(nn.Module, core.WorldModel):
     def __init__(
         self,
         cfg: Config,
@@ -182,7 +180,7 @@ class RSSM(core.RSSM, nn.Module):
             raise ValueError(cfg.type)
 
 
-class Dreamer(nn.Module):
+class Trainer(nn.Module):
     def __init__(
         self,
         cfg: Config,
@@ -190,7 +188,9 @@ class Dreamer(nn.Module):
         act_space: gym.TensorSpace,
     ):
         super().__init__()
-        self.wm = RSSM(cfg, obs_space, act_space)
+        self.cfg = cfg
+
+        self.wm = WorldModel(cfg, obs_space, act_space)
 
         state_dim = cfg.deter + cfg.stoch
         if isinstance(obs_space, gym.spaces.TensorImage):
@@ -211,5 +211,82 @@ class Dreamer(nn.Module):
             )
         self.obs_pred = nn.Sequential(StateToTensor(), obs_pred)
 
-        self.actor = Actor(cfg, act_space)
-        self.critic = Critic(cfg)
+        self.opt = cfg.opt([*self.wm.parameters(), *self.obs_pred.parameters()])
+        self.scaler = torch.cuda.amp.GradScaler()
+
+    def kl_loss(self, post, prior):
+        to_post = D.kl_divergence(post.detach(), prior).mean()
+        to_prior = D.kl_divergence(post, prior.detach()).mean()
+        return self.cfg.kl_mix * to_post + (1.0 - self.cfg.kl_mix) * to_prior
+
+    def data_loss(self, dist, value):
+        if isinstance(dist, D.Dirac):
+            return F.mse_loss(dist.value, value)
+        else:
+            return -dist.log_prob(value).mean()
+
+    def opt_step(self, batch: ChunkBatch, ctx):
+        bs, seq_len = batch.batch_size, batch.num_steps
+
+        flat = lambda x: x.flatten(0, 1)
+
+        prior = self.wm.prior
+        prior = prior.expand([bs, *prior.shape])
+
+        enc_obs = self.wm.obs_enc(flat(batch.obs))
+        enc_obs = enc_obs.reshape(seq_len + 1, bs, *enc_obs.shape[1:])
+
+        enc_act = self.wm.act_enc(flat(batch.act))
+        enc_act = enc_act.reshape(seq_len, bs, *enc_act.shape[1:])
+
+        pred_rvs, full_rvs, states = [], [], []
+        for step in range(seq_len + 1):
+            if step == 0:
+                full_rv = self.wm.obs_cell(prior, enc_obs[step])
+                full_rvs.append(full_rv)
+                states.append(full_rv.rsample())
+            else:
+                # pred_rv = wm_.act_cell(states[-1], enc_act[step - 1])
+                # pred_s = pred_rv.rsample()
+                pred_rv = self.wm.act_cell(states[-1].detach(), enc_act[step - 1])
+                pred_s = pred_rv.sample()
+                full_rv = self.wm.obs_cell(pred_s, enc_obs[step])
+                pred_rvs.append(pred_rv)
+                full_rvs.append(full_rv)
+                states.append(full_rv.rsample())
+
+        pred_rvs = torch.stack(pred_rvs)
+        full_rvs = torch.stack(full_rvs)
+        states = torch.stack(states)
+
+        loss = {}
+        loss["dist"] = self.kl_loss(
+            post=flat(full_rvs[1:]),
+            prior=flat(pred_rvs),
+        )
+        loss["obs"] = self.data_loss(
+            dist=self.obs_pred(flat(states)),
+            value=flat(batch.obs),
+        )
+        loss["rew"] = self.data_loss(
+            dist=self.wm.reward_pred(flat(states[1:])),
+            value=flat(batch.reward),
+        )
+        loss["term"] = self.data_loss(
+            dist=self.wm.term_pred(states[-1]),
+            value=batch.term,
+        )
+
+        wm_loss = sum(coef_ * loss[name] for name, coef_ in self.cfg.coef.items())
+
+        self.opt.zero_grad(set_to_none=True)
+        self.scaler.scale(wm_loss).backward()
+        self.scaler.step(self.opt)
+        self.scaler.update()
+
+        if ctx.should_log:
+            for name, value in loss.items():
+                ctx.board.add_scalar(f"train/{name}_loss", value)
+            ctx.board.add_scalar(f"train/wm_loss", wm_loss)
+
+        return states[1:-1]

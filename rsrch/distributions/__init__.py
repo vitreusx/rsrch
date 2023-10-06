@@ -9,5 +9,5 @@ from .normal import Normal
 from .one_hot_categorical import OneHotCategorical, OneHotCategoricalST
 from .transformed import TransformedDistribution
 from .transforms import *
-from .tuple import TupleDist
+from .tuple import Tuple
 from .uniform import Uniform

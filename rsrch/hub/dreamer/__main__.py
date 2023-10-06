@@ -14,7 +14,7 @@ from rsrch.rl.data import rollout
 from rsrch.types import Namespace
 from rsrch.utils import cron
 
-from . import config, env, rssm, wm
+from . import config, env, rssm, test
 
 
 def main():
@@ -41,9 +41,10 @@ def main():
         sampler=sampler,
     )
 
-    dreamer = rssm.Dreamer(cfg.rssm, loader.obs_space, loader.act_space)
+    if cfg.wm.type == "rssm":
+        dreamer = rssm.Dreamer(cfg.wm.rssm, loader.obs_space, loader.act_space)
+    # dreamer = test.cartpole.Dreamer()
     dreamer = dreamer.to(device)
-    # dreamer = test.cartpole.Dreamer().to(device)
     wm_ = dreamer.wm
 
     autocast = lambda: torch.autocast(
@@ -59,7 +60,7 @@ def main():
 
     class Agent(gym.vector.AgentWrapper):
         def __init__(self, num_envs: int):
-            super().__init__(wm.LatentAgent(wm_, dreamer.actor, num_envs))
+            super().__init__(rssm.LatentAgent(wm_, dreamer.actor, num_envs))
 
         @torch.inference_mode()
         def reset(self, idxes, obs, info):
@@ -93,7 +94,7 @@ def main():
             next_obs = uncast(next_obs)
             return super().observe(idxes, next_obs, term, trunc, info)
 
-    wm_opt = cfg.wm.opt(dreamer.wm.parameters())
+    wm_opt = cfg.wm.rssm.opt(dreamer.wm.parameters())
     wm_scaler = torch.cuda.amp.GradScaler(enabled=cfg.amp.enabled)
 
     actor_opt = cfg.ac.actor_opt(dreamer.actor.parameters())
@@ -102,20 +103,20 @@ def main():
     critic_opt = cfg.ac.critic_opt(dreamer.critic.parameters())
     critic_scaler = torch.cuda.amp.GradScaler(enabled=cfg.amp.enabled)
 
-    if cfg.alpha.autotune:
+    if cfg.ac.alpha.autotune:
         if loader.discrete:
             assert isinstance(loader.act_space, gym.spaces.TensorDiscrete)
             max_ent = np.log(loader.act_space.n)
         else:
             assert isinstance(loader.act_space, gym.spaces.TensorBox)
             max_ent = torch.log(loader.act_space.high - loader.act_space.low).sum()
-        target_ent = cfg.alpha.ent_scale * max_ent
+        target_ent = cfg.ac.alpha.ent_scale * max_ent
 
         log_alpha = nn.Parameter(torch.zeros([]), requires_grad=True)
-        alpha_opt = cfg.alpha.opt([log_alpha])
+        alpha_opt = cfg.ac.alpha.opt([log_alpha])
         alpha = log_alpha.exp().item()
     else:
-        alpha = cfg.alpha.value
+        alpha = cfg.ac.alpha.value
 
     num_val_envs = min(cfg.env_workers, cfg.val_episodes)
     val_envs = loader.val_envs(num_val_envs)
@@ -162,7 +163,7 @@ def main():
     def mixed_kl(post, prior):
         to_post = D.kl_divergence(post.detach(), prior).mean()
         to_prior = D.kl_divergence(post, prior.detach()).mean()
-        return cfg.wm.kl_mix * to_post + (1.0 - cfg.wm.kl_mix) * to_prior
+        return cfg.wm.rssm.kl_mix * to_post + (1.0 - cfg.wm.rssm.kl_mix) * to_prior
 
     def data_loss(rv: D.Distribution, value: Tensor):
         if isinstance(rv, D.Dirac):
@@ -179,70 +180,72 @@ def main():
         batch = loader.fetch_chunk_batch(buffer, idxes)
         batch = batch.to(device)
 
-        # World Model learning
         bs, seq_len = batch.batch_size, batch.num_steps
-        prior = wm_.prior
-        prior = prior.expand([bs, *prior.shape])
 
-        enc_obs = wm_.obs_enc(flat(batch.obs))
-        enc_obs = enc_obs.reshape(seq_len + 1, bs, *enc_obs.shape[1:])
+        # World Model learning
+        if isinstance(wm_, rssm.WorldModel):
+            prior = wm_.prior
+            prior = prior.expand([bs, *prior.shape])
 
-        enc_act = wm_.act_enc(flat(batch.act))
-        enc_act = enc_act.reshape(seq_len, bs, *enc_act.shape[1:])
+            enc_obs = wm_.obs_enc(flat(batch.obs))
+            enc_obs = enc_obs.reshape(seq_len + 1, bs, *enc_obs.shape[1:])
 
-        pred_rvs, full_rvs, states = [], [], []
-        for step in range(seq_len + 1):
-            if step == 0:
-                full_rv = wm_.obs_cell(prior, enc_obs[step])
-                full_rvs.append(full_rv)
-                states.append(full_rv.rsample())
-            else:
-                # pred_rv = wm_.act_cell(states[-1], enc_act[step - 1])
-                # pred_s = pred_rv.rsample()
-                pred_rv = wm_.act_cell(states[-1].detach(), enc_act[step - 1])
-                pred_s = pred_rv.sample()
-                full_rv = wm_.obs_cell(pred_s, enc_obs[step])
-                pred_rvs.append(pred_rv)
-                full_rvs.append(full_rv)
-                states.append(full_rv.rsample())
+            enc_act = wm_.act_enc(flat(batch.act))
+            enc_act = enc_act.reshape(seq_len, bs, *enc_act.shape[1:])
 
-        pred_rvs = torch.stack(pred_rvs)
-        full_rvs = torch.stack(full_rvs)
-        states = torch.stack(states)
+            pred_rvs, full_rvs, states = [], [], []
+            for step in range(seq_len + 1):
+                if step == 0:
+                    full_rv = wm_.obs_cell(prior, enc_obs[step])
+                    full_rvs.append(full_rv)
+                    states.append(full_rv.rsample())
+                else:
+                    # pred_rv = wm_.act_cell(states[-1], enc_act[step - 1])
+                    # pred_s = pred_rv.rsample()
+                    pred_rv = wm_.act_cell(states[-1].detach(), enc_act[step - 1])
+                    pred_s = pred_rv.sample()
+                    full_rv = wm_.obs_cell(pred_s, enc_obs[step])
+                    pred_rvs.append(pred_rv)
+                    full_rvs.append(full_rv)
+                    states.append(full_rv.rsample())
 
-        losses = Namespace()
-        losses.dist = mixed_kl(flat(full_rvs[1:]), flat(pred_rvs))
-        losses.obs = data_loss(
-            dreamer.obs_pred(flat(states)),
-            flat(batch.obs),
-        )
-        losses.rew = data_loss(
-            wm_.reward_pred(flat(states[1:])),
-            flat(batch.reward),
-        )
-        losses.term = data_loss(
-            wm_.term_pred(states[-1]),
-            batch.term,
-        )
+            pred_rvs = torch.stack(pred_rvs)
+            full_rvs = torch.stack(full_rvs)
+            states = torch.stack(states)
 
-        losses.wm = sum(cfg.wm.coef[k] * losses[k] for k in cfg.wm.coef)
+            losses = Namespace()
+            losses.dist = mixed_kl(flat(full_rvs[1:]), flat(pred_rvs))
+            losses.obs = data_loss(
+                dreamer.obs_pred(flat(states)),
+                flat(batch.obs),
+            )
+            losses.rew = data_loss(
+                wm_.reward_pred(flat(states[1:])),
+                flat(batch.reward),
+            )
+            losses.term = data_loss(
+                wm_.term_pred(states[-1]),
+                batch.term,
+            )
 
-        wm_opt.zero_grad(set_to_none=True)
-        wm_scaler.scale(losses.wm).backward()
-        wm_scaler.step(wm_opt)
-        wm_scaler.update()
+            losses.wm = sum(cfg.wm.rssm.coef[k] * losses[k] for k in cfg.wm.rssm.coef)
 
-        if should_log:
-            for name, value in losses.items():
-                board.add_scalar(f"train/{name}_loss", value)
+            wm_opt.zero_grad(set_to_none=True)
+            wm_scaler.scale(losses.wm).backward()
+            wm_scaler.step(wm_opt)
+            wm_scaler.update()
 
-        del losses
+            if should_log:
+                for name, value in losses.items():
+                    board.add_scalar(f"train/{name}_loss", value)
 
-        # bs, seq_len = batch.batch_size, batch.num_steps
-
-        # enc_obs = wm_.obs_enc(flat(batch.obs))
-        # states = wm_.obs_cell(None, enc_obs).rsample()
-        # states = states.reshape(seq_len + 1, bs, *states.shape[1:])
+            del losses
+        elif isinstance(wm_, test.cartpole.WorldModel):
+            enc_obs = wm_.obs_enc(flat(batch.obs))
+            states = wm_.obs_cell(None, enc_obs).rsample()
+            states = states.reshape(seq_len + 1, bs, *states.shape[1:])
+        else:
+            raise NotImplementedError()
 
         # AC learning
 
@@ -316,7 +319,7 @@ def main():
                 weighted_loss = (loss_w * loss_v).mean() / avg_w
                 board.add_scalar(f"train/{k}_loss", weighted_loss)
 
-        if cfg.alpha.autotune:
+        if cfg.ac.alpha.autotune:
             alpha_loss = log_alpha * (ent - target_ent).detach()
             alpha_opt.zero_grad(set_to_none=True)
             (loss_w * alpha_loss).mean().backward()

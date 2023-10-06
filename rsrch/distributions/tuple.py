@@ -8,7 +8,7 @@ from rsrch.types.tensorlike import Tensorlike, TensorTuple
 from .distribution import Distribution
 
 
-class TupleDist(Distribution, Tensorlike):
+class Tuple(Distribution, Tensorlike):
     def __init__(self, *dists: Distribution):
         dists = tuple(dists)
         Tensorlike.__init__(self, dists[0].batch_shape)
