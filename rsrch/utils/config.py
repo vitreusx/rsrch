@@ -225,9 +225,16 @@ def normalize(d: dict):
                 if ki not in cur:
                     cur[ki] = {}
                 cur = cur[ki]
-            cur[parts[-1]] = v
+            k = parts[-1]
         else:
-            res[k] = v
+            cur = res
+
+        if isinstance(v, dict):
+            if k not in cur:
+                cur[k] = {}
+            update_(cur[k], v)
+        else:
+            cur[k] = v
     return res
 
 

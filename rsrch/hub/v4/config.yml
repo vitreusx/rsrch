@@ -1,0 +1,87 @@
+env:
+  id: Alien-v4
+  type: atari
+  atari:
+    noop_max: 30
+    frame_skip: 4
+    episodic_life: true
+    grayscale: true
+    screen_size: 84
+    fire_reset: true
+  reward: sign
+  time_limit: null
+  stack: 4
+wm:
+  type: rssm
+  rssm:
+    deter: 256
+    stoch: 256
+    hidden: 256
+    fc_layers: [128, 128, 128]
+    conv_hidden: 48
+    norm_layer: null
+    act_layer: elu
+    dist:
+      type: discrete
+      num_heads: 8
+      std: softplus
+    ensemble: 2
+    opt:
+      type: adam
+      lr: 1e-4
+      eps: 1e-5
+    kl_mix: 0.8
+    coef:
+      dist: 1.0
+      obs: 1.0
+      rew: 1.0
+      term: 1.0
+    identity_enc: false
+actor:
+  type: sac
+  sac:
+    horizon: 15
+    adv_norm: true
+    rho: 0.5
+    gamma: 0.99
+    gae_lambda: 0.95
+    actor_opt:
+      type: adam
+      lr: 3e-5
+      eps: 1e-5
+    critic_opt:
+      type: adam
+      lr: 2e-4
+      eps: 1e-5
+    alpha:
+      autotune: true
+      ent_scale: 0.5
+      value: null
+      opt: ${actor.sac.critic_opt}
+    target_v:
+      enabled: false
+      period: 2_000
+      tau: 0.0
+    min_v: false
+device: cuda
+val_every: 10e3
+env_workers: 8
+val_episodes: 16
+exp_envs: 1
+buffer:
+  prefill: 25e3
+  capacity: 500e3
+total_steps: 10e6
+exp_steps: 4
+amp:
+  enabled: true
+  dtype: bfloat16
+seq_len: 50
+batch_size: 50
+log_every: 64
+profiler:
+  enabled: false
+  start:
+    step: 30_000
+  duration:
+    step: 10

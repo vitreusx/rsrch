@@ -1,0 +1,27 @@
+device: cuda
+pred_layers: [500, 500, 500]
+term_layers: [128]
+rew_layers: [128]
+act_layer: swish
+num_particles: 20
+num_models: 5
+max_logvar: 1.0
+min_logvar: -1.0
+cem:
+  pop: 400
+  elites: 40
+  horizon: 25
+  niters: 5
+env:
+  id: CartPole-v1
+  type: classic
+  atari:
+    noop_max: 30
+    frame_skip: 4
+    episodic_life: true
+    grayscale: true
+    screen_size: 84
+    fire_reset: true
+  reward: sign
+  time_limit: null
+  stack: 4

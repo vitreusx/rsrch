@@ -51,8 +51,5 @@ class Experiment:
         if config is not None:
             self._run.config.update(config)
         self.dir = Path(f"runs/{self._run.project}/{self._run.name}")
-        self.dir.parent.mkdir(parents=True, exist_ok=True)
-        num_runs = sum(1 for _ in self.dir.parent.iterdir())
-        self.dir = self.dir.with_name(f"{num_runs:04d}_{self.dir.name}")
         self.dir.mkdir(parents=True, exist_ok=True)
         self.board = Board(self._run)

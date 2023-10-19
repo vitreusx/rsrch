@@ -1,6 +1,20 @@
 {
     "configurations": [
         {
+            "name": "V4",
+            "type": "python",
+            "request": "launch",
+            "module": "rsrch.hub.v4",
+            "pythonArgs": [
+                "-O",
+            ],
+            "args": [
+                "-p",
+                "${input:v4_preset}"
+            ],
+            "justMyCode": false
+        },
+        {
             "name": "Dreamer",
             "type": "python",
             "request": "launch",
@@ -93,6 +107,12 @@
         {
             "id": "dreamer_preset",
             "description": "Dreamer Preset",
+            "type": "promptString",
+            "default": "CartPole-v1",
+        },
+        {
+            "id": "v4_preset",
+            "description": "V4 Preset",
             "type": "promptString",
             "default": "CartPole-v1",
         }

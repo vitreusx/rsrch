@@ -73,10 +73,10 @@ help = "Set up the environment for use with GPUs."
 shell = """
   export TORCH=$(\
     poetry export -f requirements.txt \
-    | grep -E "torch==[^ ]*" -o)
+    | grep -E "^torch==[^ ]*" -o)
   export TORCHVISION=$(\
     poetry export -f requirements.txt \
-    | grep -E "torchvision==[^ ]*" -o)
+    | grep -E "^torchvision==[^ ]*" -o)
   pip install -U ${TORCH}+${cuda} ${TORCHVISION}+${cuda} \
     --index-url https://download.pytorch.org/whl/${cuda}
 """

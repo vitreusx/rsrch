@@ -8,8 +8,6 @@ from rsrch.rl import gym
 from rsrch.rl.data.core import ChunkBatch
 from rsrch.types import Tensorlike
 
-from .. import api
-
 
 class State(Tensorlike):
     def __init__(self, deter: Tensor, stoch: Tensor):
@@ -51,7 +49,7 @@ def _(p: StateDist, q: StateDist):
     return D.kl_divergence(p.stoch_rv, q.stoch_rv)
 
 
-class WorldModel(api.WorldModel):
+class WorldModel:
     obs_enc: Callable[..., Tensor]
     act_enc: Callable[..., Tensor]
     deter_in: Callable[[Tensor], Tensor]

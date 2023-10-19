@@ -6,10 +6,10 @@ from torch import Tensor, nn
 import rsrch.distributions as D
 from rsrch.rl import gym
 
-from .. import api
+from .. import proto
 
 
-class WorldModel(nn.Module, api.WorldModel):
+class WorldModel(nn.Module):
     obs_space: gym.Space
     act_space: gym.Space
 
@@ -28,13 +28,13 @@ class WorldModel(nn.Module, api.WorldModel):
     def step(self, s: Tensor, a: Tensor) -> D.Distribution:
         ...
 
-    def rew(self, next_s: Tensor) -> Tensor:
+    def reward(self, next_s: Tensor) -> Tensor:
         ...
 
     def term(self, s: Tensor) -> Tensor:
         ...
 
-    def act_enc(self, a) -> Tensor:
+    def act_enc(self, a: Any) -> Tensor:
         ...
 
     def act_dec(self, enc_a: Tensor) -> Any:

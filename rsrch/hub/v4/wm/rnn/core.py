@@ -14,6 +14,11 @@ class Config:
     ...
 
 
+class Actor:
+    def __call__(self, state: Tensor) -> D.Distribution:
+        ...
+
+
 class WorldModel:
     obs_enc: Callable[..., Tensor]
     act_enc: Callable[..., Tensor]
@@ -40,32 +45,28 @@ class WorldModel:
 
         return torch.stack([h0[None], out], dim=0)
 
-
-class Actor:
-    def __call__(self, state: Tensor) -> D.Distribution:
-        ...
-
-    def imagine(self, wm: WorldModel, horizon: int, prior):
+    def imagine(self, actor: Actor, horizon: int, prior):
         h = prior
         states, act_rvs, acts = [h], [], []
         for step in range(horizon):
-            act_rv: D.Distribution = self(h)
+            act_rv: D.Distribution = actor(h)
             act_rvs.append(act_rv)
             enc_act = act_rv.rsample()
             acts.append(enc_act)
-            h = wm.pred(enc_act, h)
+            h = self.pred(enc_act, h)
             states.append(h)
 
         return torch.stack(states), torch.stack(act_rvs), torch.stack(acts)
 
 
-class LatentAgent(gym.vector.Agent):
+class Agent(gym.vector.Agent):
     def __init__(self, wm: WorldModel, actor: Actor, num_envs: int):
         self.wm = wm
         self.actor = actor
         self._state = None
 
     def reset(self, idxes, obs, info):
+        obs = self.wm.obs_enc(obs)
         reset_s = self.wm.init(obs)
         if self._state is None:
             self._state = reset_s
@@ -73,12 +74,16 @@ class LatentAgent(gym.vector.Agent):
             self._state[idxes] = reset_s
 
     def policy(self, _):
-        return self.actor(self._state).sample()
+        act = self.actor(self._state).sample()
+        act = self.wm.act_dec(act)
+        return act
 
     def step(self, act):
+        act = self.wm.act_enc(act)
         self._act = self.wm.act_enc(act)
 
     def observe(self, idxes, next_obs, term, trunc, info):
+        next_obs = self.wm.obs_enc(next_obs)
         enc_obs = self.wm.obs_enc(next_obs)
         rnn_x = torch.cat([enc_obs, self._act[idxes]], dim=-1)
         next_s = self.wm.trans(rnn_x, self._state[idxes])

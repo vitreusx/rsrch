@@ -8,11 +8,8 @@ from torch import Tensor, nn
 import rsrch.distributions as D
 from rsrch.nn.builder import *
 from rsrch.rl import gym
-from rsrch.rl.data.core import ChunkBatch
 from rsrch.rl.utils.polyak import Polyak
-
-from ..wm.api import *
-from .api import *
+from .proto import *
 
 
 def polyak_ctor(cfg):
@@ -57,7 +54,13 @@ def flat(x: Tensor):
 
 
 class Trainer(nn.Module):
-    def __init__(self, cfg: Config, actor: Actor, critic: Critic):
+    def __init__(
+        self,
+        cfg: Config,
+        actor: Actor,
+        critic: Critic,
+        act_space: gym.TensorSpace,
+    ):
         super().__init__()
         self.cfg = cfg
         self.pi = actor
@@ -72,7 +75,7 @@ class Trainer(nn.Module):
             self.vt = None
 
         if cfg.alpha.autotune:
-            self._target_ent = cfg.alpha.ent_scale * max_ent(actor.act_space)
+            self._target_ent = cfg.alpha.ent_scale * max_ent(act_space)
             self.log_alpha = nn.Parameter(torch.zeros([]), requires_grad=True)
             self.alpha_opt = cfg.alpha.opt([self.log_alpha])
             self.alpha = self.log_alpha.exp().item()
@@ -99,10 +102,10 @@ class Trainer(nn.Module):
         v = v.reshape(seq_len, batch_size, *v.shape[1:])
 
         with torch.no_grad():
-            term = wm.term_pred(flat(states)).mean
+            term = wm.term(flat(states)).mean
             term = term.reshape(seq_len, batch_size, *term.shape[1:])
             term[0] = 0
-            rew = wm.rew_pred(flat(states[1:])).mean
+            rew = wm.reward(flat(states[1:])).mean
             rew = rew.reshape(seq_len - 1, batch_size, *rew.shape[1:])
 
         w = torch.cumprod(1.0 - term, 0)

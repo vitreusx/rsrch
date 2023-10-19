@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from functools import partial
 
 import torch
 
@@ -7,7 +6,7 @@ from rsrch.exp import profiler
 from rsrch.nn.builder import *
 from rsrch.utils.config import *
 
-from . import env, sac
+from . import env, actor, wm
 
 
 @dataclass
@@ -21,11 +20,6 @@ class Config:
     class Amp:
         enabled: bool
         dtype: lambda x: getattr(torch, x)
-    
-    @dataclass
-    class AC:
-        type: Literal["sac"]
-        sac: sac.Config
 
     env: env.Config
     device: str
@@ -40,6 +34,6 @@ class Config:
     exp_steps: int
     amp: Amp
     wm: wm.Config
-    ac: ac.Config
+    actor: actor.Config
     log_every: int
     profiler: profiler.Config
