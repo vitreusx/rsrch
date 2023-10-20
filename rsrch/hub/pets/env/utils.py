@@ -1,7 +1,11 @@
-from rsrch.rl import gym
-import numpy as np
 from copy import deepcopy
+
+import envpool
+import numpy as np
+
 import rsrch.rl.gym.vector.utils as vec_utils
+from rsrch.rl import gym
+from rsrch.rl.gym.spaces.tensor import *
 
 
 class VecEnvPool(gym.VectorEnv):
@@ -14,6 +18,10 @@ class VecEnvPool(gym.VectorEnv):
             envp.action_space,
         )
         self._envp = envp
+
+    @staticmethod
+    def make(task_id: str, env_type: str, **kwargs):
+        return VecEnvPool(envpool.make(task_id, env_type, **kwargs))
 
     def reset_async(self, seed=None, options=None):
         pass

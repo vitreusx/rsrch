@@ -1,53 +1,60 @@
-from functools import partial, partialmethod
-from typing import Literal
+from functools import cached_property
 from .utils import *
 from .config import Config
 import torch
 from torch import Tensor
 from rsrch.rl import data
 import envpool
+import kornia.geometry.transform as T
 
 
 class Loader:
-    """A utility class for creating environments and processing attendant data."""
-
     def __init__(self, cfg: Config):
         self.cfg = cfg
-        self._infer_specs()
 
-    def _infer_specs(self):
-        env = self._base_env()
+    @cached_property
+    def visual(self) -> bool:
+        """Whether the observations are images."""
+        env = gym.make(self.cfg.id)
+        obs_space = env.observation_space
+        return isinstance(obs_space, gym.spaces.Box) and len(obs_space.shape) == 3
 
-        self.visual = False
-        if isinstance(env.observation_space, gym.spaces.Box):
-            self.visual = len(env.observation_space.shape) > 1
-        self.discrete = isinstance(env.action_space, gym.spaces.Discrete)
+    @cached_property
+    def discrete(self) -> bool:
+        """Whether the action space is discrete or continuous."""
+        env = gym.make(self.cfg.id)
+        return isinstance(env.action_space, gym.spaces.Discrete)
 
-        env = self.exp_env()
+    @cached_property
+    def tensor_obs_space(self):
+        """Space for the observations converted to tensors via `load_obs`."""
+        env = self.val_env()
 
         obs = vec_utils.create_empty_array(env.observation_space, 1)
-        net_obs = self._load_obs(obs)[0]
+        net_obs = self.load_obs(obs)[0]
         if self.visual:
-            self.obs_space = gym.spaces.TensorImage(net_obs.shape, net_obs.dtype)
+            return gym.spaces.TensorImage(net_obs.shape, net_obs.dtype)
         else:
-            low = self._load_obs(env.observation_space.low[None])[0]
-            high = self._load_obs(env.observation_space.high[None])[0]
-            self.obs_space = gym.spaces.TensorBox(
-                net_obs.shape, low, high, dtype=net_obs.dtype
-            )
+            low = self.load_obs(env.observation_space.low[None])[0]
+            high = self.load_obs(env.observation_space.high[None])[0]
+            return gym.spaces.TensorBox(net_obs.shape, low, high, dtype=net_obs.dtype)
+
+    @cached_property
+    def tensor_act_space(self):
+        """Space for the actions converted to tensors via `load_act`."""
+        env = self.val_env()
 
         if self.discrete:
-            self.act_space = gym.spaces.TensorDiscrete(env.action_space.n)
+            return gym.spaces.TensorDiscrete(env.action_space.n)
         else:
             act = vec_utils.create_empty_array(env.action_space, 1)
-            net_act = self._load_act(act)[0]
-            low = self._load_act(env.action_space.low[None])[0]
-            high = self._load_act(env.action_space.high[None])[0]
-            self.act_space = gym.spaces.TensorBox(
-                net_act.shape, low, high, dtype=net_act.dtype
-            )
+            net_act = self.load_act(act)[0]
+            low = self.load_act(env.action_space.low[None])[0]
+            high = self.load_act(env.action_space.high[None])[0]
+            return gym.spaces.TensorBox(net_act.shape, low, high, dtype=net_act.dtype)
 
-    def _base_env(self):
+    def make_env(self, mode="train"):
+        """Make a single env instance."""
         if self.cfg.type == "atari":
             env = self._atari_env()
         else:
@@ -58,6 +65,37 @@ class Loader:
         if self.cfg.time_limit is not None:
             env = gym.wrappers.TimeLimit(env, self.cfg.time_limit)
 
+        if mode == "train":
+            if self.cfg.type == "atari":
+                atari = self.cfg.atari
+                if atari.episodic_life:
+                    env = gym.wrappers.EpisodicLifeEnv(env)
+
+            env = self._reward_t(env)
+
+        if self.cfg.stack is not None and mode != "nostack":
+            env = gym.wrappers.FrameStack(env, self.cfg.stack)
+
+        if self.cfg.type in ["atari", "visual"]:
+            env = gym.wrappers.MarkAsImage(env, channels_last=True)
+
+        return env
+
+    def _reward_t(self, env: gym.Env | gym.VectorEnv):
+        if self.cfg.reward not in (None, "keep"):
+            if self.cfg.reward == "sign":
+                rew_f = np.sign
+                reward_range = (-1, 1)
+            elif isinstance(self.cfg.reward, tuple):
+                r_min, r_max = self.cfg.reward
+                rew_f = lambda r: np.clip(r, r_min, r_max)
+                reward_range = (r_min, r_max)
+
+            if gym.is_vector_env(env):
+                env = gym.vector.wrappers.TransformReward(env, rew_f)
+            else:
+                env = gym.wrappers.TransformReward(env, rew_f)
+            env.reward_range = reward_range
         return env
 
     def _atari_env(self):
@@ -75,15 +113,31 @@ class Loader:
             noop_max=atari.noop_max,
         )
 
-        env = BoxTransform(env, lambda x: np.transpose(x, (2, 0, 1)))
-
         if atari.fire_reset:
             if "FIRE" in env.unwrapped.get_action_meanings():
                 env = gym.wrappers.FireResetEnv(env)
 
         return env
 
-    def _atari_envpool(self, num_envs: int, mode: Literal["train", "val"]):
+    def make_envs(self, num_envs: int, mode="train"):
+        """Make vectorized envs."""
+
+        try:
+            envs = self._make_envs_opt(num_envs, mode)
+            if envs is None:
+                raise
+            return envs
+        except:
+            env_fn = lambda: self.make_env(mode)
+            if num_envs == 1:
+                return gym.vector.SyncVectorEnv([env_fn])
+            else:
+                return gym.vector.AsyncVectorEnv([env_fn] * num_envs)
+
+    def _make_envs_opt(self, num_envs: int, mode="train"):
+        if self.cfg.type != "atari":
+            return
+
         task_id = self.cfg.id
         if task_id.startswith("ALE/"):
             task_id = task_id[len("ALE/") :]
@@ -102,14 +156,17 @@ class Loader:
 
         max_steps = (self.cfg.time_limit or int(1e6)) // atari.frame_skip
 
-        env = envpool.make(
+        do_stack = self.cfg.stack is not None and mode != "nostack"
+        stack_num = self.cfg.stack if do_stack else None
+
+        env = VecEnvPool.make(
             task_id=f"{task_id}-v5",
             env_type="gymnasium",
             num_envs=num_envs,
             max_episode_steps=max_steps,
             img_height=atari.screen_size,
             img_width=atari.screen_size,
-            stack_num=self.cfg.stack,
+            stack_num=stack_num,
             gray_scale=atari.grayscale,
             frame_skip=atari.frame_skip,
             noop_max=atari.noop_max,
@@ -121,218 +178,172 @@ class Loader:
             use_fire_reset=atari.fire_reset,
             full_action_space=False,
         )
-        env = VecEnvPool(env)
 
         env = gym.wrappers.RecordEpisodeStatistics(env)
 
-        # Envpool concatenates, instead of stacking. This fixes this behavior.
-        f = lambda x: x.reshape([len(x), self.cfg.stack, -1, *x.shape[2:]])
+        def f(x: np.ndarray):
+            if do_stack:
+                # [N, #S * #C, H, W] -> [N, #S, #C, H, W] -> [N, #S, H, W, #C]
+                x = x.reshape([len(x), self.cfg.stack, -1, *x.shape[2:]])
+                x = x.transpose(0, 1, 3, 4, 2)
+            else:
+                # [N, #C, H, W] -> [N, H, W, #C]
+                x = x.transpose(0, 2, 3, 1)
+            return x
+
         env = BoxTransformV(env, f)
 
-        return env
-
-    def _make_env(self, mode: Literal["train", "val"]):
-        """Make a single environment."""
-        env = self._base_env()
-
         if mode == "train":
-            if self.cfg.type == "atari":
-                atari = self.cfg.atari
-                if atari.episodic_life:
-                    env = gym.wrappers.EpisodicLifeEnv(env)
-
             env = self._reward_t(env)
 
-        if self.cfg.stack is not None:
-            env = gym.wrappers.FrameStack(env, self.cfg.stack)
-
         return env
 
-    def _make_venv(self, num_envs: int, mode: Literal["train", "val"]):
-        """Make vectorized environment."""
+    def train_env(self) -> gym.Env:
+        """Environment variant used for training/experience collection."""
+        return self.make_env(mode="train")
 
-        if self.cfg.type == "atari":
-            venv = self._atari_envpool(num_envs, mode)
-            if venv is not None:
-                venv = self._reward_t(venv)
-                return venv
-        else:
-            env_fn = partial(self._make_env, mode=mode)
-            if num_envs == 1:
-                return gym.vector.SyncVectorEnv([env_fn])
-            else:
-                return gym.vector.AsyncVectorEnv([env_fn] * num_envs)
+    def train_envs(self, num_envs: int) -> gym.VectorEnv:
+        return self.make_envs(num_envs, mode="train")
 
-    def val_envs(self, num_envs: int):
-        """Vectorized `val_env`."""
+    def val_env(self) -> gym.Env:
+        """Environment variant used for validation and testing."""
+        return self.make_env(mode="val")
 
-        if num_envs == 1:
-            return gym.vector.SyncVectorEnv([self.val_env])
-        else:
-            return gym.vector.AsyncVectorEnv([self.val_env] * num_envs)
+    def val_envs(self, num_envs: int) -> gym.VectorEnv:
+        return self.make_envs(num_envs, mode="val")
 
-    def exp_env(self):
-        """Environment used for experience collection. Includes things such
-        as reward clipping, episodic lives etc."""
-
-        env = self._base_env()
-
-        if self.cfg.stack is not None:
-            env = gym.wrappers.FrameStack(env, self.cfg.stack)
-
-        return env
-
-    def _reward_t(self, env: gym.Env | gym.VectorEnv):
-        if self.cfg.reward != "keep":
-            if self.cfg.reward == "sign":
-                rew_f = np.sign
-                reward_range = (-1, 1)
-
-            if gym.is_vector_env(env):
-                env = gym.vector.wrappers.TransformReward(env, rew_f)
-            else:
-                env = gym.wrappers.TransformReward(env, rew_f)
-            env.reward_range = reward_range
-        return env
-
-    def exp_envs(self, num_envs: int):
-        """Vectorized `exp_env`."""
-
-        if self.cfg.type == "atari":
-            env = self._atari_envpool(num_envs, val=False)
-            if env is not None:
-                env = self._reward_t(env)
-                return env
-
-        if num_envs == 1:
-            return gym.vector.SyncVectorEnv([self.exp_env])
-        else:
-            return gym.vector.AsyncVectorEnv([self.exp_env] * num_envs)
-
-    def make_step_buffer(self, capacity: int, sampler=None):
+    def step_buffer(self, capacity: int, sampler=None):
         """Create a step buffer."""
 
-        pre_stack_env = self._base_env()
+        # We need to pass a variant of the env without stacking, for the
+        # ctor to infer proper shapes.
+        env = self.make_env(mode="nostack")
 
+        # "Actually", we create a chunk buffer with step size 1 for
+        # sake of efficiency
         return data.ChunkBuffer(
             num_steps=1,
             num_stack=self.cfg.stack,
             capacity=capacity,
-            obs_space=pre_stack_env.observation_space,
-            act_space=pre_stack_env.action_space,
+            obs_space=env.observation_space,
+            act_space=env.action_space,
             sampler=sampler,
             store=data.NumpySeqStore(
                 capacity=capacity,
-                obs_space=pre_stack_env.observation_space,
-                act_space=pre_stack_env.action_space,
+                obs_space=env.observation_space,
+                act_space=env.action_space,
             ),
         )
 
-    def fetch_step_batch(self, buffer: data.ChunkBuffer, idxes: np.ndarray):
+    def load_step_batch(self, buffer: data.ChunkBuffer, idxes: np.ndarray):
         """Given a step buffer and a list of idxes, fetch a step batch and
         transform it to tensor form. The observations are properly stacked."""
 
         batch = buffer[idxes]
 
         obs = np.stack([seq.obs[0] for seq in batch])
-        obs = self._load_obs(obs)
+        obs = self.load_obs(obs)
 
         next_obs = np.stack([seq.obs[1] for seq in batch])
-        next_obs = self._load_obs(next_obs)
+        next_obs = self.load_obs(next_obs)
 
         act = np.stack([seq.act[0] for seq in batch])
-        act = self._load_act(act)
+        act = self.load_act(act)
 
         reward = np.stack([seq.reward[0] for seq in batch])
-        reward = torch.as_tensor(reward, dtype=obs.dtype)
+        reward = torch.as_tensor(reward, dtype=obs.dtype, device=obs.device)
 
         term = torch.as_tensor([seq.term for seq in batch])
-        term = torch.as_tensor(term)
+        term = torch.as_tensor(term, dtype=bool, device=obs.device)
 
         return data.TensorStepBatch(obs, act, next_obs, reward, term)
 
-    def make_chunk_buffer(self, capacity: int, num_steps: int, sampler=None):
+    def chunk_buffer(self, capacity: int, num_steps: int, sampler=None):
         """Create a chunk buffer."""
 
-        pre_stack_env = self._base_env()
+        env = self.make_env(mode="nostack")
 
         return data.ChunkBuffer(
             num_steps=num_steps,
             num_stack=self.cfg.stack,
             capacity=capacity,
-            obs_space=pre_stack_env.observation_space,
-            act_space=pre_stack_env.action_space,
+            obs_space=env.observation_space,
+            act_space=env.action_space,
             sampler=sampler,
             store=data.NumpySeqStore(
                 capacity=capacity,
-                obs_space=pre_stack_env.observation_space,
-                act_space=pre_stack_env.action_space,
+                obs_space=env.observation_space,
+                act_space=env.action_space,
             ),
         )
 
-    def fetch_chunk_batch(self, buffer: data.ChunkBuffer, idxes: np.ndarray):
-        """Fetch a step batch and transform it to tensor form. The observations
-        are stacked as if using FrameStack."""
+    def load_chunk_batch(self, buffer: data.ChunkBuffer, idxes: np.ndarray):
+        """Given a chunk buffer and a list of idxes, fetch a step batch and
+        transform it to tensor form. The observations are stacked like
+        if using FrameStack."""
 
         batch = buffer[idxes]
         seq_len, batch_size = len(batch[0].act), len(batch)
 
         obs = np.stack([seq.obs for seq in batch], axis=1)
-        if self.cfg.stack is not None:
-            obs = np_flatten(obs, 2, 3)
-        obs = self._load_obs(obs.reshape(-1, *obs.shape[2:]))
+        obs = self.load_obs(obs.reshape(-1, *obs.shape[2:]))
+        obs = self.augment(obs)
         obs = obs.reshape([seq_len + 1, batch_size, *obs.shape[1:]])
 
         act = np.stack([seq.act for seq in batch], axis=1)
-        act = self._load_act(act.reshape(-1, *act.shape[2:]))
+        act = self.load_act(act.reshape(-1, *act.shape[2:]))
         act = act.reshape(seq_len, batch_size, *act.shape[1:])
 
         reward = np.stack([seq.reward for seq in batch], axis=1)
-        reward = torch.as_tensor(reward, dtype=obs.dtype)
+        reward = torch.as_tensor(reward, dtype=obs.dtype, device=obs.device)
 
-        term = torch.as_tensor([seq.term for seq in batch])
+        term = np.array([seq.term for seq in batch])
+        term = torch.as_tensor(term, dtype=bool, device=obs.device)
 
         return data.ChunkBatch(obs, act, reward, term)
 
-    @property
     def VecAgent(loader):
-        """A wrapper for VectorAgent that matches the input format."""
+        """Create a wrapper for vector agent that matches the input format."""
 
         class _Agent(gym.vector.AgentWrapper):
             def __init__(self, agent: gym.vector.Agent):
                 super().__init__(agent)
 
             def reset(self, idxes, obs, info):
-                obs = loader._load_obs(obs)
+                obs = loader.load_obs(obs)
                 return super().reset(idxes, obs, info)
 
             def observe(self, idxes, next_obs, term, trunc, info):
-                next_obs = loader._load_obs(next_obs)
+                next_obs = loader.load_obs(next_obs)
                 return super().observe(idxes, next_obs, term, trunc, info)
 
             def policy(self, obs):
-                obs = loader._load_obs(obs)
+                obs = loader.load_obs(obs)
                 return super().policy(obs)
 
             def step(self, act):
-                act = loader._load_act(act)
+                act = loader.load_act(act)
                 return super().step(act)
 
         return _Agent
 
-    def _load_obs(self, obs: np.ndarray) -> Tensor:
-        """Load a batch of observations."""
+    def load_obs(self, obs: np.ndarray) -> Tensor:
+        """Convert a batch of observations."""
         obs: Tensor = torch.as_tensor(obs)
-        if self.cfg.stack is not None:
-            obs = obs.flatten(1, 2)
         if self.visual:
+            # [N, {#S}, H, W, #C] -> [N, {#S} * #C, H, W]
+            if self.cfg.stack is not None:
+                obs = obs.permute(0, 1, 4, 2, 3)
+                obs = obs.flatten(1, 2)
+            else:
+                obs = obs.permute(0, 3, 1, 2)
+
             if obs.dtype == torch.uint8:
                 obs = obs / 255.0
-        else:
-            obs = obs.to(torch.float32)
+
         return obs
 
-    def _load_act(self, act: np.ndarray) -> Tensor:
+    def load_act(self, act: np.ndarray) -> Tensor:
         """Convert a batch of actions."""
         act = torch.as_tensor(act)
         if torch.is_floating_point(act):

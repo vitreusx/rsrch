@@ -21,6 +21,7 @@ class SafeNormal(nn.Module):
         max_logvar: float,
     ):
         super().__init__()
+        self._out_shape = out_shape
         out_features = 2 * int(np.prod(out_shape))
         self.head = nn.Linear(in_features, out_features, bias=True)
         self._min_logstd = 0.5 * min_logvar
@@ -41,11 +42,13 @@ class PredModel(nn.Module):
         self,
         cfg: Config,
         obs_space: gym.spaces.TensorBox,
-        act_dim: int,
+        act_space: gym.spaces.TensorBox,
     ):
         super().__init__()
 
         obs_dim = int(np.prod(obs_space.shape))
+        act_dim = int(np.prod(act_space.shape))
+
         self.net = nn.Sequential(
             fc.FullyConnected(
                 layer_sizes=[obs_dim + act_dim, *cfg.pred_layers],
@@ -58,7 +61,7 @@ class PredModel(nn.Module):
         )
 
     def forward(self, s: Tensor, a: Tensor) -> D.Normal:
-        x = torch.cat([self.scaler(s), a], -1)
+        x = torch.cat([self.scaler(s), a.flatten(1)], -1)
         return self.net(x)
 
 
@@ -84,7 +87,7 @@ class RewardModel(nn.Sequential):
         elif cfg.env.reward == "keep":
             head = SafeNormal(cfg.rew_layers[-1], [], cfg.min_logvar, cfg.max_logvar)
         else:
-            raise ValueError(clip)
+            raise ValueError(cfg.env.reward)
 
         super().__init__(
             fc.FullyConnected(
@@ -97,13 +100,22 @@ class RewardModel(nn.Sequential):
 
 
 class WorldModel(nn.Module):
-    def __init__(self, cfg: Config, )
+    def __init__(
+        self,
+        cfg: Config,
+        obs_space: gym.spaces.TensorBox,
+        act_space: gym.spaces.TensorBox,
+    ):
+        super().__init__()
+        self.step = PredModel(cfg, obs_space, act_space)
+        self.term = TermModel(cfg, obs_space)
+        self.reward = RewardModel(cfg, obs_space)
 
 
 class CEMPlanner:
     def __init__(
         self,
-        wm,
+        wm: WorldModel,
         act_space: gym.TensorSpace,
         pop: int,
         elites: int | None,
@@ -154,14 +166,14 @@ class CEMPlanner:
 def main():
     cfg_d = config.from_args(
         defaults=Path(__file__).parent / "config.yml",
+        presets=Path(__file__).parent / "presets.yml",
     )
 
     cfg = config.to_class(cfg_d, config.Config)
 
     loader = env.Loader(cfg.env)
 
-    while True:
-        ...
+    ...
 
 
 if __name__ == "__main__":

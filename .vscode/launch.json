@@ -1,6 +1,20 @@
 {
     "configurations": [
         {
+            "name": "PETS",
+            "type": "python",
+            "request": "launch",
+            "module": "rsrch.hub.pets",
+            "pythonArgs": [
+                "-O",
+            ],
+            "args": [
+                "-p",
+                "${input:pets_preset}"
+            ],
+            "justMyCode": false
+        },
+        {
             "name": "V4",
             "type": "python",
             "request": "launch",
@@ -113,6 +127,12 @@
         {
             "id": "v4_preset",
             "description": "V4 Preset",
+            "type": "promptString",
+            "default": "CartPole-v1",
+        },
+        {
+            "id": "pets_preset",
+            "description": "PETS Preset",
             "type": "promptString",
             "default": "CartPole-v1",
         }

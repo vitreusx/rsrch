@@ -16,6 +16,6 @@ class Config:
     id: str
     type: str
     atari: Atari
-    reward: Literal["keep", "sign"]
+    reward: str | tuple[int, int]
     time_limit: int | None
     stack: int | None
