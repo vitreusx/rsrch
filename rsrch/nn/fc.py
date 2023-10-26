@@ -1,4 +1,4 @@
-from typing import List, Literal
+from typing import List, Literal, Callable
 
 import torch.nn as nn
 
@@ -7,8 +7,8 @@ class FullyConnected(nn.Sequential):
     def __init__(
         self,
         layer_sizes: List[int],
-        norm_layer=nn.BatchNorm1d,
-        act_layer=nn.ReLU,
+        norm_layer: Callable[[int], nn.Module] | None = nn.BatchNorm1d,
+        act_layer: Callable[[], nn.Module] | None = nn.ReLU,
         final_layer: Literal["fc", "norm", "act"] = "fc",
     ):
         layers = []

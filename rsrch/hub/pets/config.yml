@@ -8,13 +8,17 @@ num_models: 5
 max_logvar: 1.0
 min_logvar: -1.0
 cem:
-  pop: 400
-  elites: 40
+  pop: 100 # 400
+  elites: 10 # 40
   horizon: 25
   niters: 5
+  particles: 16
 env:
   id: CartPole-v1
   type: classic
+  reward: keep
+  time_limit: null
+  stack: null
   atari:
     noop_max: 30
     frame_skip: 4
@@ -22,6 +26,19 @@ env:
     grayscale: true
     screen_size: 84
     fire_reset: true
-  reward: sign
-  time_limit: null
-  stack: 4
+optim:
+  type: adam
+  lr: 3e-4
+  eps: 1e-5
+ensemble: 4
+capacity: 100e3
+total_steps: 100e3
+env_steps: 512
+batch_size: 128
+replay_ratio: 64
+profiler:
+  enabled: false
+  start:
+    step: 0
+  duration:
+    step: 1

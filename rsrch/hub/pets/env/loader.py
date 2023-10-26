@@ -26,7 +26,7 @@ class Loader:
         return isinstance(env.action_space, gym.spaces.Discrete)
 
     @cached_property
-    def tensor_obs_space(self):
+    def obs_space(self):
         """Space for the observations converted to tensors via `load_obs`."""
         env = self.val_env()
 
@@ -40,7 +40,7 @@ class Loader:
             return gym.spaces.TensorBox(net_obs.shape, low, high, dtype=net_obs.dtype)
 
     @cached_property
-    def tensor_act_space(self):
+    def act_space(self):
         """Space for the actions converted to tensors via `load_act`."""
         env = self.val_env()
 

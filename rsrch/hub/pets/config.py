@@ -1,9 +1,11 @@
 from dataclasses import dataclass
+from functools import partial
 
 import torch
 from rsrch import nn
 from rsrch.utils.config import *
 from . import env
+from rsrch.exp import profiler
 
 
 def layer_ctor(v):
@@ -22,11 +24,17 @@ def device_ctor(v):
     return torch.device(v)
 
 
+def optim_ctor(d):
+    assert d["type"] == "adam"
+    return partial(torch.optim.Adam, lr=d["lr"], eps=d["eps"])
+
+
 @dataclass
 class Config:
     @dataclass
     class CEM:
         pop: int
+        particles: int
         elites: int | None
         horizon: int
         niters: int
@@ -41,3 +49,12 @@ class Config:
     max_logvar: float
     min_logvar: float
     env: env.Config
+    optim: optim_ctor
+    ensemble: int
+    capacity: int
+    total_steps: int
+    env_steps: int
+    batch_size: int
+    replay_ratio: float
+    cem: CEM
+    profiler: profiler.Config

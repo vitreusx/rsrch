@@ -1,0 +1,16 @@
+env:
+  type: gym
+  atari:
+    env_id: ALE/Pong-v5
+    noop_max: 30
+    frame_skip: 4
+    episodic_life: true
+    grayscale: true
+    screen_size: 84
+    fire_reset: true
+    time_limit: 108e3
+    stack: 4
+  gym:
+    env_id: CartPole-v1
+  dmc:
+    env_id: Walker2d-v1

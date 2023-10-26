@@ -238,84 +238,23 @@ def normalize(d: dict):
     return res
 
 
-def parse_var(spec: str):
-    """Parses a key=value string. Value may be quoted."""
-    parts = re.findall(EQ_PAT, spec)
-    if len(parts) > 0:
-        k, v = parts[0], parts[1:]
-        v = "=".join(v)
-        return k, v
-    else:
-        raise ValueError(spec)
+def to_data(dicts: list[dict]) -> dict:
+    """Get a merged, normalized and resolved config data dict from a number of
+    "raw" dicts."""
 
-
-def read_yml(path: str, sec=None, cwd=None):
-    """Reads YAML file, either whole or a section. Useful for loading only a part of the file. The format is either <path> or <path>:<section>."""
-
-    if cwd is None:
-        cwd = Path.cwd()
-    cwd = Path(cwd)
-
-    if not (cwd / path).exists():
-        return
-
-    with open(path, "r") as f:
-        data = yaml.safe_load(f)
-        if sec is not None:
-            for k in sec.split("."):
-                if isinstance(data, list):
-                    data = data[int(k)]
-                else:
-                    data = data[k]
-        return data
-
-
-def parse_spec(spec: str, cwd=None):
-    """Parse a config spec (either a path to YAML file or a key-value setter)."""
-
-    # First, try the file:section route.
-    parts = re.findall(COLON_SEP, spec)
-    if len(parts) == 1:
-        path = parts[0]
-        sec = None
-    else:
-        path, sec = parts[:-1], parts[-1]
-        path = ":".join(path)
-
-    data = read_yml(path, sec, cwd)
-    if data is not None:
-        return data
-
-    # If unsuccessful, try the key=value route.
-    k, v = parse_var(spec)
-    path = k.split(".")
     data = {}
-    cur = data
-    for ki in path[:-1]:
-        cur[ki] = {}
-        cur = cur[ki]
-    cur[path[-1]] = v
-
-    return data
-
-
-def from_specs(specs: list[str], cls: Type[T] = None, cwd=None) -> dict | T:
-    """Construct a config class or dict for a given list of config specs."""
-    data = {}
-    for spec in specs:
-        spec_d = normalize(parse_spec(spec, cwd))
-        update_(data, spec_d)
+    for dict in dicts:
+        update_(data, normalize(dict))
         data = resolve_exprs(data)
-    if cls is not None:
-        data = to_class(data, cls)
     return data
 
 
-def make_parser(defaults: Path = None, presets: Path = None):
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-c", "--config", nargs="*")
-    if presets is not None:
-        parser.add_argument("-p", "--presets", nargs="*")
+def nested_index(d: dict, k: str):
+    ki = k.split(".")
+    cur = d
+    for ki_ in ki[:-1]:
+        cur = cur[ki_]
+    return cur[ki[-1]]
 
 
 def from_args(
@@ -329,17 +268,27 @@ def from_args(
         parser.add_argument("-p", "--presets", nargs="*")
 
     args = parser.parse_args()
-    cfg_specs = []
+
+    dicts = []
+
     if defaults is not None:
-        cfg_specs.append(str(defaults.absolute()))
+        with open(defaults, "r") as f:
+            data = yaml.safe_load(f) or {}
+            dicts.append(data)
+
     if args.config is not None:
-        cfg_specs.extend(args.config)
+        with open(args.config, "r") as f:
+            data = yaml.safe_load(f) or {}
+            dicts.append(data)
+
     if presets is not None:
         if args.presets is not None:
-            preset_file = str(Path(presets).absolute())
-            cfg_specs.extend(f"{preset_file}:{preset}" for preset in args.presets)
+            with open(presets, "r") as f:
+                data = yaml.safe_load(f) or {}
+                for preset in args.presets:
+                    dicts.append(data.get(preset, {}))
 
-    data = from_specs(cfg_specs)
+    data = to_data(dicts)
     if cls is not None:
         data = to_class(data, cls)
 
