@@ -91,12 +91,12 @@ class Tensorlike:
 
     def reshape(self, *shape: int | Tuple[int, ...]):
         fields = {}
-        new_shape = torch.Size(*shape)
         for name in self.__tensors:
             tensor: Tensorlike = getattr(self, name)
             elem_shape = tensor.shape[len(self.shape) :]
-            tensor = tensor.reshape(*new_shape, *elem_shape)
+            tensor = tensor.reshape(*shape, *elem_shape)
             fields[name] = tensor
+        new_shape = tensor.shape[:len(tensor.shape)-len(elem_shape)]
         return self._new(new_shape, fields)
 
     def flatten(self, start_dim=0, end_dim=-1):

@@ -1,5 +1,8 @@
 from dataclasses import dataclass
+
 from rsrch.rl import gym
+
+from . import base
 from .envpool import VecEnvPool
 
 
@@ -8,9 +11,10 @@ class Config:
     env_id: str
 
 
-class Factory:
-    def __init__(self, cfg: Config):
+class Factory(base.Loader):
+    def __init__(self, cfg: Config, device):
         self.cfg = cfg
+        super().__init__(self.env(), device)
 
     def env(self, **kwargs):
         env = gym.make(self.cfg.env_id)

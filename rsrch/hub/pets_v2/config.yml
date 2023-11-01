@@ -4,8 +4,8 @@ env:
     env_id: ALE/Pong-v5
     noop_max: 30
     frame_skip: 4
-    episodic_life: true
-    grayscale: true
+    term_on_life_loss: false
+    obs_type: grayscale
     screen_size: 84
     fire_reset: true
     time_limit: 108e3
@@ -14,3 +14,27 @@ env:
     env_id: CartPole-v1
   dmc:
     env_id: Walker2d-v1
+device: cuda
+capacity: 100e3
+prefill: 10e3
+total_steps: 1e5
+wm:
+  type: gru
+  gru:
+    opt:
+      type: adam
+      lr: 1e-4
+      eps: 1e-5
+    batch_size: 64
+    seq_len: 7
+cem:
+  pop: 128 # 400
+  elites: 16 # 40
+  horizon: 64
+  niters: 4
+profiler:
+  enabled: false
+  start:
+    step: 20e3
+  duration:
+    step: 16

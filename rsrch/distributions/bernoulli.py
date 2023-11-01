@@ -29,8 +29,7 @@ class Bernoulli(Distribution, Tensorlike):
             _param = logits
 
         pivot = len(_param.shape) - event_dims
-        batch_shape = _param.shape[:-event_dims]
-        event_shape = _param.shape[-event_dims:]
+        batch_shape, event_shape = _param.shape[:pivot], _param.shape[pivot:]
 
         Tensorlike.__init__(self, batch_shape)
         self.event_shape = event_shape

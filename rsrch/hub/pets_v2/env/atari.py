@@ -1,10 +1,13 @@
 from dataclasses import dataclass
 from typing import Literal
 
-import numpy as np
-from rsrch.rl import gym
-from .envpool import VecEnvPool
 import envpool
+import numpy as np
+
+from rsrch.rl import gym
+
+from . import base
+from .envpool import VecEnvPool
 
 
 @dataclass
@@ -12,10 +15,10 @@ class Config:
     env_id: str
     screen_size: int | tuple[int, int]
     frame_skip: int
-    grayscale: bool
+    obs_type: Literal["rgb", "grayscale", "ram"]
     noop_max: int
     fire_reset: bool
-    episodic_life: bool
+    term_on_life_loss: bool
     time_limit: int | None
     stack: int | None
 
@@ -23,9 +26,11 @@ class Config:
 Mode = Literal["train", "val", "_nostack"]
 
 
-class Factory:
-    def __init__(self, cfg: Config):
+class Factory(base.Loader):
+    def __init__(self, cfg: Config, device=None):
         self.cfg = cfg
+        self._visual = self.cfg.obs_type in ("rgb", "grayscale")
+        super().__init__(self.env(mode="train"), device, self.cfg.stack)
 
     def env(self, mode: Mode, **kwargs):
         env = gym.make(self.cfg.env_id, frameskip=1)
@@ -34,14 +39,13 @@ class Factory:
             env=env,
             frame_skip=self.cfg.frame_skip,
             noop_max=self.cfg.noop_max,
-            terminal_on_life_loss=False,
+            terminal_on_life_loss=self.cfg.term_on_life_loss,
         )
 
-        is_visual = len(env.observation_space.shape) == 3
-        if is_visual:
+        if self._visual:
             proc_args.update(
                 screen_size=self.cfg.screen_size,
-                grayscale_obs=self.cfg.grayscale,
+                grayscale_obs=self.cfg.obs_type == "grayscale",
                 grayscale_newaxis=True,
                 scale_obs=False,
             )
@@ -51,10 +55,6 @@ class Factory:
         if self.cfg.fire_reset:
             if "FIRE" in env.unwrapped.get_action_meanings():
                 env = gym.wrappers.FireResetEnv(env)
-
-        if mode == "train":
-            if self.cfg.episodic_life:
-                env = gym.wrappers.EpisodicLifeEnv(env)
 
         env = gym.wrappers.RecordEpisodeStatistics(env)
 
@@ -67,6 +67,20 @@ class Factory:
         return env
 
     def vector_env(self, num_envs: int, mode: Mode, **kwargs):
+        env = self._envpool(num_envs, mode, **kwargs)
+        if env is not None:
+            return env
+
+        env_fn = lambda: self.env(mode)
+        if num_envs > 1:
+            return gym.vector.AsyncVectorEnv([env_fn] * num_envs)
+        else:
+            return gym.vector.SyncVectorEnv([env_fn])
+
+    def _envpool(self, num_envs: int, mode: Mode, **kwargs):
+        if self.cfg.obs_type in ["ram"]:
+            return
+
         task_id = self.cfg.env_id
 
         if task_id.startswith("ALE/"):
@@ -81,16 +95,10 @@ class Factory:
 
         task_id = f"{task_id}-v5"
         if task_id not in envpool.list_all_envs():
-            env_fn = lambda: self.env(mode)
-            if num_envs > 1:
-                return gym.vector.AsyncVectorEnv([env_fn] * num_envs)
-            else:
-                return gym.vector.SyncVectorEnv([env_fn])
+            return
 
         max_steps = self.cfg.time_limit or int(1e6)
         max_steps = max_steps // self.cfg.frame_skip
-
-        stack_num = self.cfg.stack if mode != "_nostack" else None
 
         if isinstance(self.cfg.screen_size, tuple):
             img_width, img_height = self.cfg.screen_size
@@ -98,17 +106,17 @@ class Factory:
             img_width = img_height = self.cfg.screen_size
 
         env = VecEnvPool.make(
-            task_id=f"{task_id}-v5",
+            task_id=task_id,
             env_type="gymnasium",
             num_envs=num_envs,
             max_episode_steps=max_steps,
             img_height=img_height,
             img_width=img_width,
-            stack_num=stack_num,
-            gray_scale=self.cfg.grayscale,
+            stack_num=self.cfg.stack,
+            gray_scale=self.cfg.obs_type == "grayscale",
             frame_skip=self.cfg.frame_skip,
             noop_max=self.cfg.noop_max,
-            episodic_life=self.cfg.episodic_life and mode == "train",
+            episodic_life=self.cfg.term_on_life_loss and mode == "train",
             zero_discount_on_life_loss=False,
             reward_clip=False,
             repeat_action_probability={"v5": 0.25, "v4": 0.0}[task_version],
@@ -125,17 +133,19 @@ class Factory:
         class _FixShape(gym.vector.wrappers.ObservationWrapper):
             def __init__(self_, env):
                 super().__init__(env)
-                num_channels = 1 if self.cfg.grayscale else 3
-                shape = [img_height, img_width, num_channels]
-                if self.cfg.stack is not None:
-                    shape = [self.cfg.stack, *shape]
+                c, h, w = self_.single_observation_space.shape[-3:]
+                n, s = self_.num_envs, self.cfg.stack
+                if s is not None:
+                    shape = [s, h, w, c // s]
+                else:
+                    shape = [h, w, c]
                 space = gym.spaces.Box(0, 255, shape, np.uint8)
                 self_.single_observation_space = space
-                vspace = gym.spaces.Box(0, 255, [num_envs, *shape], np.uint8)
+                vspace = gym.spaces.Box(0, 255, [n, *shape], np.uint8)
                 self_.observation_space = vspace
 
             def observation(self_, x: np.ndarray) -> np.ndarray:
-                if stack_num is not None:
+                if self.cfg.stack is not None:
                     # [N, #S * #C, H, W] -> [N, #S, #C, H, W] -> [N, #S, H, W, #C]
                     x = x.reshape([len(x), self.cfg.stack, -1, *x.shape[2:]])
                     x = x.transpose(0, 1, 3, 4, 2)

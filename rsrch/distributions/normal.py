@@ -72,7 +72,7 @@ class Normal(Distribution, Tensorlike):
         logp = (
             -((value - self.loc) ** 2) / (2 * var)
             - log_scale
-            - math.log(math.sqrt(2 * math.pi))
+            - 0.5 * math.log(2 * math.pi)
         )
         return sum_rightmost(logp, len(self.event_shape))
 
