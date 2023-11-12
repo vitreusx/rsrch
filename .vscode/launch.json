@@ -1,167 +1,144 @@
 {
-    "configurations": [
-        {
-            "name": "PETS v2",
-            "type": "python",
-            "request": "launch",
-            "module": "rsrch.hub.pets_v2",
-            "pythonArgs": [
-                "-O",
-            ],
-            "args": [
-                "-p",
-                "${input:pets_v2_preset}"
-            ],
-            // "env": {
-            //     "CUDA_LAUNCH_BLOCKING": "1"
-            // },
-            "justMyCode": false
-        },
+  "configurations": [
+    {
+      "name": "V5",
+      "type": "python",
+      "request": "launch",
+      "module": "rsrch.hub.v5",
+      "pythonArgs": ["-O"],
+      // "env": {
+      //     "CUDA_LAUNCH_BLOCKING": "1"
+      // },
+      "justMyCode": false
+    },
+    {
+      "name": "PETS v2",
+      "type": "python",
+      "request": "launch",
+      "module": "rsrch.hub.pets_v2",
+      "pythonArgs": ["-O"],
+      "args": ["-p", "${input:pets_v2_preset}"],
+      // "env": {
+      //     "CUDA_LAUNCH_BLOCKING": "1"
+      // },
+      "justMyCode": false
+    },
 
-        {
-            "name": "PETS",
-            "type": "python",
-            "request": "launch",
-            "module": "rsrch.hub.pets",
-            "pythonArgs": [
-                "-O",
-            ],
-            "args": [
-                "-p",
-                "${input:pets_preset}"
-            ],
-            "env": {
-                "CUDA_LAUNCH_BLOCKING": "1"
-            },
-            "justMyCode": false
-        },
-        {
-            "name": "V4",
-            "type": "python",
-            "request": "launch",
-            "module": "rsrch.hub.v4",
-            "pythonArgs": [
-                "-O",
-            ],
-            "args": [
-                "-p",
-                "${input:v4_preset}"
-            ],
-            "justMyCode": false
-        },
-        {
-            "name": "Dreamer",
-            "type": "python",
-            "request": "launch",
-            "module": "rsrch.hub.dreamer",
-            "pythonArgs": [
-                "-O",
-            ],
-            "args": [
-                "-p",
-                "${input:dreamer_preset}"
-            ],
-            "justMyCode": false
-        },
-        {
-            "name": "Rainbow",
-            "type": "python",
-            "request": "launch",
-            "module": "rsrch.hub.rainbow",
-            "pythonArgs": [
-                "-O",
-            ],
-            "args": [
-                "-p",
-                "${input:rainbow_preset}"
-            ],
-            "justMyCode": false
-        },
-        {
-            "name": "SAC",
-            "type": "python",
-            "request": "launch",
-            "module": "rsrch.hub.sac",
-            "pythonArgs": [
-                "-O",
-            ],
-            "args": [
-                "-p",
-                "${input:sac_preset}"
-            ],
-            "justMyCode": false
-        },
-        {
-            "name": "PPO",
-            "type": "python",
-            "request": "launch",
-            "module": "rsrch.hub.ppo",
-            "pythonArgs": [
-                "-O",
-            ],
-            "args": [
-                "-p",
-                "${input:ppo_preset}"
-            ],
-            "justMyCode": false
-        },
-        {
-            "name": "PPO (Alpha)",
-            "type": "python",
-            "request": "launch",
-            "module": "rsrch.hub.ppo_alpha",
-            "pythonArgs": [
-                "-O",
-            ],
-            "args": [
-                "-p",
-                "${input:ppo_preset}"
-            ],
-            "justMyCode": false
-        }
-    ],
-    "inputs": [
-        {
-            "id": "sac_preset",
-            "description": "SAC Preset",
-            "type": "promptString",
-            "default": "Alien-v5",
-        },
-        {
-            "id": "rainbow_preset",
-            "description": "Rainbow Preset",
-            "type": "promptString",
-            "default": "Alien-v5",
-        },
-        {
-            "id": "ppo_preset",
-            "description": "PPO Preset",
-            "type": "promptString",
-            "default": "Alien-v5",
-        },
-        {
-            "id": "dreamer_preset",
-            "description": "Dreamer Preset",
-            "type": "promptString",
-            "default": "CartPole-v1",
-        },
-        {
-            "id": "v4_preset",
-            "description": "V4 Preset",
-            "type": "promptString",
-            "default": "CartPole-v1",
-        },
-        {
-            "id": "pets_preset",
-            "description": "PETS Preset",
-            "type": "promptString",
-            "default": "CartPole-v1",
-        },
-        {
-            "id": "pets_v2_preset",
-            "description": "PETS v2 Preset",
-            "type": "promptString",
-            "default": "CartPole-v1",
-        }
-    ]
+    {
+      "name": "PETS",
+      "type": "python",
+      "request": "launch",
+      "module": "rsrch.hub.pets",
+      "pythonArgs": ["-O"],
+      "args": ["-p", "${input:pets_preset}"],
+      "env": {
+        "CUDA_LAUNCH_BLOCKING": "1"
+      },
+      "justMyCode": false
+    },
+    {
+      "name": "V4",
+      "type": "python",
+      "request": "launch",
+      "module": "rsrch.hub.v4",
+      "pythonArgs": ["-O"],
+      "args": ["-p", "${input:v4_preset}"],
+      "justMyCode": false
+    },
+    {
+      "name": "Dreamer",
+      "type": "python",
+      "request": "launch",
+      "module": "rsrch.hub.dreamer",
+      "pythonArgs": ["-O"],
+      "args": ["-p", "${input:dreamer_preset}"],
+      "justMyCode": false
+    },
+    {
+      "name": "Rainbow",
+      "type": "python",
+      "request": "launch",
+      "module": "rsrch.hub.rainbow",
+      "pythonArgs": ["-O"],
+      "args": ["-p", "${input:rainbow_preset}"],
+      "justMyCode": false
+    },
+    {
+      "name": "SAC",
+      "type": "python",
+      "request": "launch",
+      "module": "rsrch.hub.sac",
+      "pythonArgs": ["-O"],
+      "args": ["-p", "${input:sac_preset}"],
+      "justMyCode": false
+    },
+    {
+      "name": "PPO",
+      "type": "python",
+      "request": "launch",
+      "module": "rsrch.hub.ppo",
+      "pythonArgs": ["-O"],
+      "args": ["-p", "${input:ppo_preset}"],
+      "justMyCode": false
+    },
+    {
+      "name": "PPO (Alpha)",
+      "type": "python",
+      "request": "launch",
+      "module": "rsrch.hub.ppo_alpha",
+      "pythonArgs": ["-O"],
+      "args": ["-p", "${input:ppo_preset}"],
+      "justMyCode": false
+    }
+  ],
+  "inputs": [
+    {
+      "id": "sac_preset",
+      "description": "SAC Preset",
+      "type": "promptString",
+      "default": "Alien-v5"
+    },
+    {
+      "id": "rainbow_preset",
+      "description": "Rainbow Preset",
+      "type": "promptString",
+      "default": "Alien-v5"
+    },
+    {
+      "id": "ppo_preset",
+      "description": "PPO Preset",
+      "type": "promptString",
+      "default": "Alien-v5"
+    },
+    {
+      "id": "dreamer_preset",
+      "description": "Dreamer Preset",
+      "type": "promptString",
+      "default": "CartPole-v1"
+    },
+    {
+      "id": "v4_preset",
+      "description": "V4 Preset",
+      "type": "promptString",
+      "default": "CartPole-v1"
+    },
+    {
+      "id": "pets_preset",
+      "description": "PETS Preset",
+      "type": "promptString",
+      "default": "CartPole-v1"
+    },
+    {
+      "id": "pets_v2_preset",
+      "description": "PETS v2 Preset",
+      "type": "promptString",
+      "default": "CartPole-v1"
+    },
+    {
+      "id": "v5_preset",
+      "description": "V5 Preset",
+      "type": "promptString",
+      "default": "CartPole-v1"
+    }
+  ]
 }

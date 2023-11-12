@@ -1,3 +1,8 @@
+class Flag:
+    def __bool__(self):
+        ...
+
+
 class Every:
     def __init__(self, step_fn, period: int, hook=None):
         self.step_fn = step_fn

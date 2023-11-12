@@ -18,13 +18,14 @@ from mako.template import Template
 from rsrch.types import Namespace
 
 # Either $(...) or ${...}, covering entire text
-EVAL_PATS = [r"^\$\((?P<expr>.*)\)$", r"^\${(?P<expr>.*)}$"]
 
 
 def quote_preserving_split(sep: str):
     """A pattern for splitting <key>{sep}<value> by {sep}, while respecting
     instances of {sep} in quoted blocks."""
-    return f"(?:[\"|'].*?[\"|']|[^({re.escape(sep)})])+"
+    rx = f"(?:[\"|'].*?[\"|']|[^({re.escape(sep)})])+"
+    rx = re.compile(rx)
+    return rx
 
 
 COLON_SEP = quote_preserving_split(":")
@@ -35,32 +36,58 @@ EQ_PAT = quote_preserving_split("=")
 class Expr:
     """An expression object in the config."""
 
+    VAR_PAT = r"^\${(?P<back>\.*)(?P<var>[\w.]+)}"
+    EXPR_PAT = r"^\$\((?P<expr>.*)\)$"
+
     def __init__(self, value, path: list):
         self._value = value
         self._path = path
-        self._eval_fn = self._make_eval_fn()
+        self.eval = self._make_eval_fn()
 
     def _make_eval_fn(self):
-        # If the field value is ${...} or $(...), we pass the inner text to
-        # Python's eval.
-        for pat in EVAL_PATS:
-            m = re.match(pat, self._value)
-            if m is not None:
-                return lambda g: eval(m["expr"], g)
-        # Otherwise, we use Mako.
-        return lambda g: Template(self._value).render(**g)
+        m = re.match(self.VAR_PAT, self._value)
+        if m is not None:
+            return self._eval_var(m)
 
-    def eval(self, g: dict):
-        """Evaluate the expression, under a given context."""
+        m = re.match(self.EXPR_PAT, self._value)
+        if m is not None:
+            return self._eval_expr(m)
+
+        return self._eval_mako
+
+    def _eval_var(self, m: re.Match):
+        def _fn(g: dict):
+            cur, local = g, g
+            pivot = len(self._path) - max(len(m["back"]), 1)
+            for k in self._path[:pivot]:
+                cur = cur[k]
+                if isinstance(cur, dict):
+                    local = cur
+
+            return eval(m["var"], {**g, **local})
+
+        return _fn
+
+    def _eval_expr(self, m: re.Match):
+        def _fn(g: dict):
+            cur, local = g, g
+            for k in self._path[:-1]:
+                cur = cur[k]
+                if isinstance(cur, dict):
+                    local = cur
+
+            return eval(m["expr"], {**g, **local})
+
+        return _fn
+
+    def _eval_mako(self, g: dict):
         cur, local = g, g
-
-        # Locate field's local scope, i.e. neighbors, and add it to context.
         for k in self._path[:-1]:
             cur = cur[k]
             if isinstance(cur, dict):
                 local = cur
-        g = {**g, **local}
 
+        g = {**g, **local}
         if "buffer" in g:
             # Due to a limitation in Mako, we cannot pass "buffer" variable
             # directly, if it is defined.
@@ -68,7 +95,7 @@ class Expr:
             g["_buffer"] = g["buffer"]
             del g["buffer"]
 
-        return self._eval_fn(g)
+        return Template(self._value).render(**g)
 
     def __repr__(self):
         loc = ".".join(str(x) for x in self._path)
@@ -140,7 +167,7 @@ def _cast(x, t):
         # Note: get_args(Optional[t]) == (t, None)
         # Check if any of the variant types matches the value exactly
         for ti in get_args(t):
-            if isinstance(x, ti):
+            if isinstance(ti, type) and isinstance(x, ti):
                 return x
         # Otherwise, try to interpret the value as each of the variant types
         # and yield the first one to succeed.
@@ -195,20 +222,20 @@ def to_class(data: dict, cls: Type[T]) -> T:
     return res
 
 
-def update_(d1: dict, d2: dict):
-    """Update `d1` with keys and values from `d2` in a level-wise fashion."""
-    for k, v in d2.items():
-        if isinstance(v, dict) and k in d1:
-            update_(d1[k], v)
-        else:
-            d1[k] = v
+def update_(d1: dict, *ds: dict):
+    """Merge one or more dicts in place."""
+    for d in ds:
+        for k, v in d.items():
+            if isinstance(v, dict) and k in d1:
+                update_(d1[k], v)
+            else:
+                d1[k] = v
 
 
 def merge(*dicts: dict):
     """Merge one or more dicts into a single one."""
     merged = {}
-    for d in dicts:
-        update_(merged, d)
+    update_(merged, *dicts)
     return merged
 
 
@@ -238,15 +265,14 @@ def normalize(d: dict):
     return res
 
 
-def to_data(dicts: list[dict]) -> dict:
-    """Get a merged, normalized and resolved config data dict from a number of
-    "raw" dicts."""
+def to_dict(ds: list[dict]):
+    """Combine raw dicts to a normalized and resolved config dict."""
 
-    data = {}
-    for dict in dicts:
-        update_(data, normalize(dict))
-        data = resolve_exprs(data)
-    return data
+    cfg = {}
+    for d in ds:
+        cfg = merge(cfg, normalize(d))
+        cfg = resolve_exprs(cfg)
+    return cfg
 
 
 def nested_index(d: dict, k: str):
@@ -288,7 +314,7 @@ def from_args(
                 for preset in args.presets:
                     dicts.append(data.get(preset, {}))
 
-    data = to_data(dicts)
+    data = to_dict(dicts)
     if cls is not None:
         data = to_class(data, cls)
 

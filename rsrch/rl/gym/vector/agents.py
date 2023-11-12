@@ -30,12 +30,18 @@ class RandomAgent(Agent):
 
 
 class EpsAgent(Agent):
-    def __init__(self, opt: Agent, rand: Agent, eps: float, num_envs: int):
+    def __init__(
+        self,
+        opt: Agent,
+        rand: Agent,
+        eps: float,
+        per_batch=True,
+    ):
         super().__init__()
         self._opt = opt
         self._rand = rand
         self.eps = eps
-        self.num_envs = num_envs
+        self._per_batch = per_batch
 
     def reset(self, *args, **kwargs):
         self._opt.reset(*args, **kwargs)
@@ -46,9 +52,16 @@ class EpsAgent(Agent):
         self._rand.observe(*args, **kwargs)
 
     def policy(self, obs):
-        use_rand = np.random.rand(self.num_envs) < self.eps
-        opt_p, rand_p = self._opt.policy(obs), self._rand.policy(obs)
-        return np.where(use_rand, rand_p, opt_p)
+        if self._per_batch:
+            use_rand = np.random.rand() < self.eps
+            if use_rand:
+                return self._rand.policy(obs)
+            else:
+                return self._opt.policy(obs)
+        else:
+            use_rand = np.random.rand(len(obs)) < self.eps
+            opt_p, rand_p = self._opt.policy(obs), self._rand.policy(obs)
+            return np.where(use_rand, rand_p, opt_p)
 
     def step(self, act):
         self._opt.step(act)

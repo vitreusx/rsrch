@@ -1,3 +1,7 @@
+device: cuda
+buffer:
+  capacity: 100e3
+  prefill: 1e3
 env:
   type: gym
   atari:
@@ -14,23 +18,19 @@ env:
     env_id: CartPole-v1
   dmc:
     env_id: Walker2d-v1
-device: cuda
-capacity: 100e3
-prefill: 10e3
+batch_size: 64
+seq_len: 7
 total_steps: 1e5
-wm:
-  type: gru
-  gru:
-    opt:
-      type: adam
-      lr: 1e-4
-      eps: 1e-5
-    batch_size: 64
-    seq_len: 7
+env_steps: 512
+opt_steps: 32
+opt:
+  type: adam
+  lr: 1e-4
+  eps: 1e-5
 cem:
-  pop: 128 # 400
-  elites: 16 # 40
-  horizon: 64
+  pop: 128
+  elites: 16
+  horizon: 8
   niters: 4
 profiler:
   enabled: false

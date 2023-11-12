@@ -1,0 +1,92 @@
+device: cuda
+wm: hybrid
+algo: dreamer
+env_workers: 8
+val_episodes: 32
+train_envs: 1
+val_every: 10e3
+log_every: 128
+total_steps: 100e3
+buffer_cap: 100e3
+prefill: 5e3
+env_steps: 512
+opt_steps: 32
+env:
+  type: gym
+  atari:
+    env_id: ALE/Pong-v5
+    noop_max: 30
+    frame_skip: 4
+    term_on_life_loss: false
+    obs_type: grayscale
+    screen_size: 84
+    fire_reset: true
+    time_limit: 108e3
+    stack: 4
+  gym:
+    env_id: CartPole-v1
+  dmc:
+    env_id: Walker2d-v1
+hybrid:
+  wm:
+    batch_size: 64
+    seq_len: 15
+    opt:
+      type: adam
+      lr: 1e-3
+      eps: 1e-5
+    coefs:
+      pred: 1.0
+      obs: 1.0
+      rew: 1.0
+      term: 1.0
+    kl_mix: 0.8
+  dreamer:
+    batch_size: 64
+    horizon: 15
+    gamma: 0.99
+    gae_lambda: 0.95
+    adv_norm: true
+    alpha:
+      autotune: true
+      ent_scale: 0.5
+      value: null
+      opt: ${..opt}
+    polyak:
+      period: 1_000
+      tau: copy
+    coefs:
+      critic: 10.0
+      actor_pg: 1.0
+      actor_v: 0.0
+    opt:
+      type: adam
+      lr: 1e-5
+      eps: 1e-5
+  cem:
+    pop: 128
+    elites: 16
+    horizon: 8
+    niters: 4
+  impl:
+    state_dim: 64
+    act_type: relu
+    wm:
+      trans_type: gru
+      trans_num_layers: 4
+      conv_hidden: 32
+      init_layers: [64]
+      enc_layers: [64]
+      pred_layers: [64, 64]
+      rew_layers: [64]
+      term_layers: [64]
+    actor:
+      fc_layers: [64]
+    critic:
+      fc_layers: [64]
+profiler:
+  enabled: false
+  start:
+    step: 15e3
+  duration:
+    step: 16

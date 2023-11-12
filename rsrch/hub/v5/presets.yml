@@ -1,0 +1,6 @@
+CartPole-v1:
+  env:
+    type: gym
+    gym.env_id: CartPole-v1
+  wm: hybrid
+  algo: cem

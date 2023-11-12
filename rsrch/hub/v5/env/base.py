@@ -169,25 +169,35 @@ class Loader:
     def VecAgent(env_f):
         """Adapter for vector agents operating on tensors loaded via load_*."""
 
-        class _Wrapper(gym.vector.AgentWrapper):
-            def __init__(self, agent: gym.VecAgent):
+        class VecAgent(gym.vector.AgentWrapper):
+            def __init__(self, agent: gym.VecAgent, memoryless=False):
+                """Create an instance of VecAgent.
+                :param agent: Vector agent operating directly on loaded tensors.
+                :param memoryless: Whether the agent is memoryless, i.e. whether
+                only `policy` is implemented. Prevents unnecessary processing."""
+
                 super().__init__(agent)
+                self._memoryless = memoryless
 
             def reset(self, idxes, obs, info):
-                obs = env_f.load_obs(obs)
+                if not self._memoryless:
+                    obs = env_f.load_obs(obs)
                 return super().reset(idxes, obs, info)
 
             def policy(self, obs):
-                obs = env_f.load_obs(obs)
+                if self._memoryless:
+                    obs = env_f.load_obs(obs)
                 act = super().policy(obs)
                 return act.cpu().numpy()
 
             def step(self, act):
-                act = env_f.load_act(act)
+                if not self._memoryless:
+                    act = env_f.load_act(act)
                 return super().step(act)
 
             def observe(self, idxes, next_obs, term, trunc, info):
-                next_obs = env_f.load_obs(next_obs)
+                if not self._memoryless:
+                    next_obs = env_f.load_obs(next_obs)
                 return super().observe(idxes, next_obs, term, trunc, info)
 
-        return _Wrapper
+        return VecAgent

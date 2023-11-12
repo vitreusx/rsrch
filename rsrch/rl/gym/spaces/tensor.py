@@ -21,7 +21,11 @@ class TensorBox(TensorSpace):
     ):
         self.shape = shape
         self.low = low if low is not None else -torch.inf
+        if isinstance(self.low, Tensor):
+            self.low = self.low.cpu()
         self.high = high if high is not None else +torch.inf
+        if isinstance(self.high, Tensor):
+            self.high = self.high.cpu()
         self.dtype = dtype
 
     def sample(self):

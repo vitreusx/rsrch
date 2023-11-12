@@ -1,12 +1,13 @@
 from dataclasses import dataclass
 from functools import partial
+from typing import Literal
 
 import torch
 
 from rsrch.exp import profiler
 from rsrch.utils.config import *
 
-from . import env
+from . import cem, env
 
 
 @dataclass
@@ -22,19 +23,18 @@ class Optim:
 @dataclass
 class Config:
     @dataclass
-    class CEM:
-        pop: int
-        elites: int | None
-        horizon: int
-        niters: int
+    class Buffer:
+        capacity: int
+        prefill: int
 
-    env: env.Config
-    device: str
-    capacity: int
-    seq_len: int
-    total_steps: int
-    prefill: int
+    opt: Optim
     batch_size: int
-    wm_opt: Optim
+    seq_len: int
     profiler: profiler.Config
-    cem: CEM
+    env: env.Config
+    cem: cem.Config
+    device: str
+    buffer: Buffer
+    total_steps: int
+    env_steps: int
+    opt_steps: int

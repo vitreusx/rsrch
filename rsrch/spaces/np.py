@@ -3,6 +3,10 @@ from numbers import Number
 import numpy as np
 
 
+class Space:
+    ...
+
+
 class Box:
     def __init__(
         self,
@@ -23,3 +27,17 @@ class Discrete:
         seed: np.random.Generator | None = None,
     ):
         ...
+
+
+class Image(Box):
+    def __init__(
+        self,
+        size: tuple[int, int],
+        num_channels: int,
+        channel_last=True,
+        dtype: np.dtype = np.uint8,
+        seed: np.random.Generator | None = None,
+    ):
+        self.size = size
+        self.num_channels = num_channels
+        w, h = size
