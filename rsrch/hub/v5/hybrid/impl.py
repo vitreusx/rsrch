@@ -4,8 +4,10 @@ from typing import Literal
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch import Tensor, nn
 
+import rsrch.distributions as D
 from rsrch.nn import dist_head as dh
 from rsrch.nn import fc
 from rsrch.rl import gym
@@ -17,11 +19,23 @@ from ..common import nets
 class Config:
     @dataclass
     class WM:
+        @dataclass
+        class Encoder:
+            trivial: bool
+            conv_hidden: int
+            fc_layers: list[int]
+
+        @dataclass
+        class Recon:
+            conv_hidden: int
+            fc_layers: list[int]
+
         trans_type: Literal["rnn", "lstm", "gru"]
         trans_num_layers: int
-        conv_hidden: int
+        dist_type: Literal["dirac", "normal"]
+        encoder: Encoder
+        recon: Recon
         init_layers: list[int]
-        enc_layers: list[int]
         pred_layers: list[int]
         rew_layers: list[int]
         term_layers: list[int]
@@ -65,13 +79,9 @@ class WorldModel(nn.Module):
                 act_layer=act_layer,
             )
         elif isinstance(obs_space, gym.spaces.TensorBox):
-            # self.obs_enc = nets.ProprioEncoder(
-            #     space=obs_space,
-            #     fc_layers=cfg.wm.enc_layers,
-            #     act_layer=act_layer,
-            # )
-            self.obs_enc = nn.Identity()
+            self.obs_enc = nn.Flatten(1)
             self.recon = nets.ProprioDecoder(
+                fc_layers=[cfg.wm.rec_layers],
                 space=obs_space,
                 state_dim=cfg.state_dim,
                 act_layer=act_layer,
@@ -111,16 +121,17 @@ class WorldModel(nn.Module):
             num_layers=cfg.wm.trans_num_layers,
         )
 
-        self.trans_proj = nets.SafeNormal(cfg.state_dim, [cfg.state_dim])
-
-        self._pred = nn.Sequential(
-            fc.FullyConnected(
-                layer_sizes=[cfg.state_dim + act_dim, *cfg.wm.pred_layers],
-                act_layer=act_layer,
-                final_layer="act",
-            ),
-            nets.SafeNormal(cfg.wm.pred_layers[-1], [cfg.state_dim]),
+        pred_fc = fc.FullyConnected(
+            layer_sizes=[cfg.state_dim + act_dim, *cfg.wm.pred_layers],
+            act_layer=act_layer,
+            final_layer="act",
         )
+
+        head_t = {"dirac": dh.Dirac, "normal": nets.SafeNormal}[cfg.wm.dist_type]
+        self.trans_proj = head_t(cfg.state_dim, [cfg.state_dim])
+        pred_head = head_t(cfg.wm.pred_layers[-1], [cfg.state_dim])
+
+        self._pred = nn.Sequential(pred_fc, pred_head)
 
         self.reward = nets.RewardPred(
             state_dim=cfg.state_dim,

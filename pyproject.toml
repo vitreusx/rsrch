@@ -43,6 +43,7 @@ envpool = "^0.8.3"
 cython = "<3"
 kornia = "^0.7.0"
 streamlit = "^1.28.1"
+comet-ml = "^3.35.3"
 
 [tool.poetry.group.ext]
 optional = true

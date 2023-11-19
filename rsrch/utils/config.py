@@ -271,7 +271,7 @@ def to_dict(ds: list[dict]):
     cfg = {}
     for d in ds:
         cfg = merge(cfg, normalize(d))
-        cfg = resolve_exprs(cfg)
+    cfg = resolve_exprs(cfg)
     return cfg
 
 

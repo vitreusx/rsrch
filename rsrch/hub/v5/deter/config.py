@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from . import cem, dreamer, impl, trainer
+from . import cem, impl, trainer
 
 
 @dataclass

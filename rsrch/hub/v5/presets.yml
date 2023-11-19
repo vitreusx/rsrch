@@ -2,5 +2,18 @@ CartPole-v1:
   env:
     type: gym
     gym.env_id: CartPole-v1
-  wm: hybrid
-  algo: cem
+  wm.type: deter
+  agent.type: ppo
+  # agent.type: cem
+HalfCheetah-v4:
+  env:
+    type: gym
+    gym.env_id: HalfCheetah-v4
+  wm.type: deter
+  agent.type: cem
+LunarLander-v2:
+  env:
+    type: gym
+    gym.env_id: LunarLander-v2
+  wm.type: deter
+  agent.type: cem

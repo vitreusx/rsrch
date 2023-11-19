@@ -101,6 +101,7 @@ def main():
             dec_loss = -dec_rvs.log_prob(batch.obs).mean()
 
             loss = norm_loss + pred_loss + term_loss + rew_loss + dec_loss
+            # loss = pred_loss + term_loss + rew_loss + dec_loss
             wm_opt.zero_grad(set_to_none=True)
             loss.backward()
             wm_opt.step()

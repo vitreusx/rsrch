@@ -4,13 +4,16 @@ class Flag:
 
 
 class Every:
-    def __init__(self, step_fn, period: int, hook=None):
+    def __init__(self, step_fn, period: int | None, hook=None):
         self.step_fn = step_fn
         self.period = period
         self.hook = hook
         self._cur, self._last, self._ret = None, None, True
 
     def __bool__(self):
+        if self.period is None:
+            return False
+
         cur_step = self.step_fn()
         if self._cur != cur_step:
             self._ret = self._last is None or cur_step - self._last >= self.period

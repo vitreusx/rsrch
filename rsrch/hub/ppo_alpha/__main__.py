@@ -1,13 +1,16 @@
+from pathlib import Path
+
+import torch
+from tqdm.auto import tqdm
+
+from rsrch.exp import comet
+from rsrch.rl import data, gym
+from rsrch.rl.data import rollout
 from rsrch.utils import cron
+
 from . import config, env
 from .nets import *
 from .utils import gae_adv_est
-from pathlib import Path
-import torch
-from rsrch.rl import gym, data
-from rsrch.rl.data import rollout
-from rsrch.exp import Experiment
-from tqdm.auto import tqdm
 
 
 def main():
@@ -63,9 +66,8 @@ def main():
     env_iter = iter(rollout.steps(train_envs, train_agent))
 
     env_step = 0
-    exp = Experiment(project="ppo")
-    board = exp.board
-    board.add_step("env_step", lambda: env_step, default=True)
+    exp = comet.Experiment(project="ppo")
+    exp.register_step("env_step", lambda: env_step, default=True)
     pbar = tqdm(total=cfg.total_steps)
 
     should_val = cron.Every(lambda: env_step, cfg.val_every)
@@ -77,7 +79,7 @@ def main():
         val_iter = rollout.episodes(val_envs, val_agent, max_episodes=cfg.val_episodes)
         for _, ep in val_iter:
             val_returns.append(sum(ep.reward))
-        board.add_scalar("val/returns", np.mean(val_returns))
+        exp.add_scalar("val/returns", np.mean(val_returns))
 
     def train_step():
         nonlocal alpha, env_step
@@ -87,7 +89,7 @@ def main():
             env_idx, step = next(env_iter)
             ep_ids[env_idx] = buf.push(ep_ids[env_idx], step)
             if "episode" in step.info:
-                board.add_scalar("train/ep_ret", step.info["episode"]["r"])
+                exp.add_scalar("train/ep_ret", step.info["episode"]["r"])
             env_step += 1
             pbar.update()
 
@@ -161,16 +163,16 @@ def main():
                     alpha = log_alpha.exp().item()
 
                     if should_log:
-                        board.add_scalar("train/alpha", alpha)
-                        board.add_scalar("train/alpha_loss", alpha_loss)
-                        board.add_scalar("train/policy_ent", policy_ent)
+                        exp.add_scalar("train/alpha", alpha)
+                        exp.add_scalar("train/alpha_loss", alpha_loss)
+                        exp.add_scalar("train/policy_ent", policy_ent)
 
         if should_log:
-            board.add_scalar("train/loss", loss)
-            board.add_scalar("train/policy_loss", policy_loss)
-            board.add_scalar("train/v_loss", v_loss)
-            board.add_scalar("train/ent_loss", ent_loss)
-            board.add_scalar("train/mean_v", value.mean())
+            exp.add_scalar("train/loss", loss)
+            exp.add_scalar("train/policy_loss", policy_loss)
+            exp.add_scalar("train/v_loss", v_loss)
+            exp.add_scalar("train/ent_loss", ent_loss)
+            exp.add_scalar("train/mean_v", value.mean())
 
     while True:
         if should_val:

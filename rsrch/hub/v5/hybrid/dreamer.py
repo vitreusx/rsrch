@@ -7,11 +7,12 @@ from torch import Tensor, nn
 from torch.optim import Optimizer
 
 import rsrch.distributions as D
-from rsrch.exp import Board
+from rsrch.exp.api import Experiment
 from rsrch.rl import data, gym
 from rsrch.rl.utils import polyak
 from rsrch.utils import cron
 
+from ..agent.dreamer import Config
 from ..common.utils import Optim, Polyak, over_seq
 from .wm import WorldModel
 
@@ -63,38 +64,9 @@ def max_ent(space: gym.TensorSpace):
         return torch.log(space.high - space.low).sum()
 
 
-@dataclass
-class Config:
-    @dataclass
-    class Alpha:
-        autotune: bool
-        ent_scale: float | None
-        value: float | None
-        opt: Optim
-
-    @dataclass
-    class Coefs:
-        critic: float
-        actor_pg: float
-        actor_v: float
-
-    batch_size: int
-    horizon: int
-    gamma: float
-    gae_lambda: float
-    adv_norm: bool
-    alpha: Alpha
-    polyak: Polyak
-    coefs: Coefs
-    opt: Optim
-
-
-OptimizerF = Callable[[list[nn.Parameter]], Optimizer]
-
-
 class Context:
     should_log: cron.Flag
-    board: Board
+    exp: Experiment
 
 
 class Trainer:
@@ -196,13 +168,13 @@ class Trainer:
 
         if self.ctx.should_log:
             avg = lambda x: (loss_w[:-1] * x).mean() / (loss_w[:-1].mean() + 1e-8)
-            board = self.ctx.board
+            exp = self.ctx.exp
             for k in ["critic", "actor_pg", "actor_v", "actor_ent", "ac"]:
                 if f"{k}_loss" not in locals():
                     continue
                 loss_v = locals()[f"{k}_loss"]
-                board.add_scalar(f"train/{k}_loss", avg(loss_v))
+                exp.add_scalar(f"train/{k}_loss", avg(loss_v))
 
             if self.cfg.alpha.autotune:
-                board.add_scalar("train/alpha", self.alpha)
-                board.add_scalar("train/alpha_loss", avg(alpha_loss))
+                exp.add_scalar("train/alpha", self.alpha)
+                exp.add_scalar("train/alpha_loss", avg(alpha_loss))
