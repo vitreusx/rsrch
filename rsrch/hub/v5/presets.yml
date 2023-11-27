@@ -3,6 +3,7 @@ CartPole-v1:
     type: gym
     gym.env_id: CartPole-v1
   wm.type: deter
+  wm.deter.type: test
   agent.type: ppo
   # agent.type: cem
 HalfCheetah-v4:

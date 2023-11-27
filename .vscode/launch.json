@@ -1,14 +1,21 @@
 {
   "configurations": [
     {
+      "name": "Hydra",
+      "type": "python",
+      "request": "launch",
+      "module": "rsrch.hub.hydra",
+      "pythonArgs": ["-O"],
+      // "env": {"CUDA_LAUNCH_BLOCKING": "1"},
+      "justMyCode": false
+    },
+    {
       "name": "V5",
       "type": "python",
       "request": "launch",
       "module": "rsrch.hub.v5",
       "pythonArgs": ["-O"],
-      // "env": {
-      //     "CUDA_LAUNCH_BLOCKING": "1"
-      // },
+      // "env": {"CUDA_LAUNCH_BLOCKING": "1"},
       "justMyCode": false
     },
     {
@@ -18,9 +25,6 @@
       "module": "rsrch.hub.pets_v2",
       "pythonArgs": ["-O"],
       "args": ["-p", "${input:pets_v2_preset}"],
-      // "env": {
-      //     "CUDA_LAUNCH_BLOCKING": "1"
-      // },
       "justMyCode": false
     },
 

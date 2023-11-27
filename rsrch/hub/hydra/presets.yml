@@ -1,0 +1,10 @@
+cont: &cont
+  alpha.target_ent: $(-1/np.log(2))
+disc: &disc
+  alpha.target_ent: 0.25
+CartPole-v1:
+  <<: [*disc]
+  env:
+    type: gym
+    gym.env_id: CartPole-v1
+  

@@ -11,7 +11,7 @@ from rsrch.nn import dist_head as dh
 from rsrch.nn import fc
 from rsrch.rl import gym
 
-from ..common import nets
+from ...common import nets
 
 
 @dataclass
@@ -112,9 +112,11 @@ class WorldModel(nn.Module):
         if isinstance(act_space, gym.spaces.TensorDiscrete):
             act_dim = act_space.n
             self.act_enc = lambda x: F.one_hot(x.long(), act_dim).float()
+            self.act_dec = lambda x: x.argmax(-1)
         elif isinstance(act_space, gym.spaces.TensorBox):
             act_dim = int(np.prod(act_space.shape))
             self.act_enc = lambda x: x.flatten(1)
+            self.act_dec = lambda x: x.reshape(len(x), *act_space.shape)
 
         self._init = fc.FullyConnected(
             layer_sizes=[

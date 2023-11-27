@@ -67,19 +67,18 @@ class Trainer:
             cur_h = next_h
 
         all_hx = torch.stack(all_hx)  # [L+1, N, H]
-        acts = torch.stack(acts)  # [L, N, H]
+        act = torch.stack(acts)  # [L, N, H]
         act_rvs: D.Distribution = torch.stack(act_rvs)  # [L, H]
 
-        val = over_seq(self.critic)(all_hx)
         with torch.no_grad():
+            val = over_seq(self.critic)(all_hx)
             rew = over_seq(self.wm.reward)(all_hx[1:]).mean
             term = over_seq(self.wm.term)(all_hx).mode
-        term = 1.0 - (1.0 - term).cumprod(0)
-        val = val * term
-
-        adv, ret = gae_adv_est(rew, val, self.cfg.gamma, self.cfg.gae_lambda)
-        val, all_hx = val[:-1], all_hx[:-1]
-        logp = act_rvs.log_prob(acts)
+            logp = act_rvs.log_prob(act)
+            term = 1.0 - (1.0 - term).cumprod(0)
+            val = val * term
+            adv, ret = gae_adv_est(rew, val, self.cfg.gamma, self.cfg.gae_lambda)
+            val, all_hx = val[:-1], all_hx[:-1]
 
         act = flat(act)
         logp = flat(logp)

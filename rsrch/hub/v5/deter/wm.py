@@ -26,6 +26,9 @@ class WorldModel:
     def act_enc(self, act: Tensor) -> Tensor:
         ...
 
+    def act_dec(self, enc_act: Tensor) -> Tensor:
+        ...
+
     def init_trans(self, enc_obs: Tensor) -> Tensor:
         ...
 
@@ -43,11 +46,16 @@ class WorldModel:
         ...
 
     def recon(self, hx: Tensor) -> D.Distribution:
+        """Optional, only if using reconstruction aux loss."""
+
+
+class Actor:
+    def __init__(self, hx: Tensor) -> D.Distribution:
         ...
 
 
 class VecAgent(gym.vector.Agent):
-    def __init__(self, wm: WorldModel, actor):
+    def __init__(self, wm: WorldModel, actor: Actor):
         super().__init__()
         self.wm = wm
         self.actor = actor
@@ -61,7 +69,7 @@ class VecAgent(gym.vector.Agent):
 
     def policy(self, obs):
         act = self.actor(self._state[-1]).sample()
-        act = self.actor.act_dec(act)
+        act = self.wm.act_dec(act)
         return act
 
     def step(self, act):

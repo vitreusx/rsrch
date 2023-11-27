@@ -12,10 +12,13 @@ from types import UnionType
 from typing import *
 
 import dacite
+import numpy as np
 import ruamel.yaml as yaml
 from mako.template import Template
 
 from rsrch.types import Namespace
+
+__all__ = ["from_dicts", "from_args"]
 
 # Either $(...) or ${...}, covering entire text
 
@@ -87,7 +90,8 @@ class Expr:
             if isinstance(cur, dict):
                 local = cur
 
-        g = {**g, **local}
+        modules = {"np": np, "math": math}
+        g = {**g, **modules, **local}
         if "buffer" in g:
             # Due to a limitation in Mako, we cannot pass "buffer" variable
             # directly, if it is defined.
@@ -146,7 +150,7 @@ def resolve_exprs(data):
     data = to_expr(data)
     prev_lazy = None
     while prev_lazy != 0:
-        g = {**data, **{"_root": data, "math": math}}
+        g = {**data, **{"_root": data}}
         data, cur_lazy = _resolve_once(data, g)
         if prev_lazy == cur_lazy:
             break
@@ -283,8 +287,18 @@ def nested_index(d: dict, k: str):
     return cur[ki[-1]]
 
 
+def from_dicts(dicts: list[dict], cls: Type[T] | None = None) -> T | dict:
+    """Create config class from a list of dicts."""
+    data = to_dict(dicts)
+    if cls is not None:
+        data = to_class(data, cls)
+    return data
+
+
 def from_args(
-    cls: Type[T] = None, defaults: Path = None, presets: Path = None
+    cls: Type[T] = None,
+    defaults: Path = None,
+    presets: Path = None,
 ) -> T | dict:
     """Read config from command line arguments."""
 
@@ -314,8 +328,4 @@ def from_args(
                 for preset in args.presets:
                     dicts.append(data.get(preset, {}))
 
-    data = to_dict(dicts)
-    if cls is not None:
-        data = to_class(data, cls)
-
-    return data
+    return from_dicts(dicts, cls)

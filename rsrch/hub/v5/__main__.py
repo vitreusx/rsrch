@@ -90,17 +90,23 @@ class Trainer:
                 raise NotImplementedError(cfg.agent.type)
 
         elif cfg.wm.type == "deter":
-            wm = deter.impl.WorldModel(
-                cfg=cfg.wm.deter.spec,
-                obs_space=env_f.obs_space,
-                act_space=env_f.act_space,
-            ).to(device)
+            cfg_ = cfg.wm.deter
+            if cfg_.type == "v0":
+                wm = deter.impl.v0.WorldModel(
+                    cfg=cfg_.v0,
+                    obs_space=env_f.obs_space,
+                    act_space=env_f.act_space,
+                ).to(device)
 
-            wm_trainer = deter.Trainer(
-                cfg=cfg.wm.deter.train,
-                wm=wm,
-                ctx=self,
-            )
+                wm_trainer = deter.Trainer(
+                    cfg=cfg.wm.deter.train,
+                    wm=wm,
+                    ctx=self,
+                )
+            elif cfg_.type == "test":
+                assert cfg.env.gym.env_id == "CartPole-v1"
+                wm = deter.impl.cartpole.WorldModel()
+                wm_trainer = deter.impl.cartpole.Trainer()
 
             seq_len = cfg.wm.deter.train.seq_len
             buf = env_f.chunk_buffer(cfg.buffer_cap, seq_len, sampler)
@@ -111,17 +117,31 @@ class Trainer:
                     wm=wm,
                     act_space=env_f.act_space,
                 )
-                agent_fn = lambda: deter.wm.VecAgent(wm, planner)
-            elif cfg.agent.type == "ppo":
-                actor = deter.impl.Actor(
-                    cfg=cfg.wm.deter.spec,
-                    act_space=env_f.act_space,
-                ).to(device)
-                agent_fn = lambda: deter.wm.VecAgent(wm, actor)
 
-                critic_ctor = lambda: deter.impl.Critic(
-                    cfg=cfg.wm.deter.spec,
-                ).to(device)
+                def agent_fn():
+                    opt = deter.wm.VecAgent(wm, planner)
+                    return gym.vector.agents.EpsAgent(
+                        opt=env_f.VecAgent(opt, memoryless=False),
+                        rand=gym.vector.agents.RandomAgent(train_envs),
+                        eps=1.0,
+                        per_batch=True,
+                    )
+
+            elif cfg.agent.type == "ppo":
+                if cfg_.type == "v0":
+                    actor = deter.impl.v0.Actor(
+                        cfg=cfg_.v0,
+                        act_space=env_f.act_space,
+                    ).to(device)
+
+                    critic_ctor = lambda: deter.impl.v0.Critic(
+                        cfg=cfg_.v0,
+                    ).to(device)
+                elif cfg_.type == "test":
+                    actor = deter.impl.cartpole.Actor().to(device)
+                    critic_ctor = lambda: deter.impl.cartpole.Critic().to(device)
+
+                agent_fn = lambda: deter.wm.VecAgent(wm, actor)
 
                 ac_trainer = deter.ppo.Trainer(
                     cfg=cfg.agent.ppo,
@@ -152,7 +172,8 @@ class Trainer:
             nonlocal env_step
             env_step += n
             pbar.update(n)
-            train_agent.eps = 1.0 - env_step / cfg.total_steps
+            if hasattr(train_agent, "eps"):
+                train_agent.eps = 1.0 - env_step / cfg.total_steps
 
         while True:
             if should_val:

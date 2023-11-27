@@ -24,3 +24,7 @@ CartPole-v1:
   alpha.ent_scale: 0.25
   # alpha.autotune: false
   # alpha.value: 1e-2
+Humanoid-v4:
+  env.id: Humanoid-v4
+  env.type: classic
+  alpha.ent_scale: $(-1/np.log(2))
