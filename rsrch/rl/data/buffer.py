@@ -10,7 +10,7 @@ from rsrch.rl.gym.vector.utils import concatenate, create_empty_array
 
 from .core import ListSeq, Seq, Step
 from .sampler import Sampler
-from .store import LayeredStore, RAMStepDeque
+from .store import LayeredStore, NumpyStepDeque, RAMStepDeque
 
 __all__ = ["StepBuffer", "ChunkBuffer", "OnlineBuffer"]
 

@@ -14,13 +14,9 @@ from .utils import Optim
 @dataclass
 class Config:
     adaptive: bool
-    value: float | None
-    target_ent: float | None
     opt: Optim
-
-
-def NoAction(cb):
-    ...
+    value: float | None = None
+    target_ent: float | None = None
 
 
 def max_ent(act_space: gym.TensorSpace) -> float:
@@ -52,13 +48,14 @@ class Alpha(nn.Module):
         self,
         ent: Tensor,
         w: Tensor | None = None,
-        return_metrics=False,
+        metrics: dict | None = None,
     ):
         """Optimize alpha value based on current entropy estimates.
         :param ent: Tensor of shape (N,) containing entropy estimates.
         :param w: Optional tensor of shape (N,) containing weights for each entropy value.
-        :param return_metrics: Whether to compute and return the metrics
-        :return: A tuple (loss, metrics) with loss value (or None if alpha is not adaptive), and metrics (or empty dict if return_metrics is False)
+        :param metrics: Optional dict. If passed, auxiliary metrics are computed
+        and inserted into the dict.
+        :return: The loss value (or None if alpha is not adaptive).
         """
 
         if self.cfg.adaptive:
@@ -70,15 +67,12 @@ class Alpha(nn.Module):
             self.opt.step()
             self.alpha = self.log_alpha.exp().item()
 
-            metrics = {}
-            if return_metrics:
+            if metrics is not None:
                 metrics["train/alpha"] = self.alpha
                 metrics["train/alpha_loss"] = loss.mean()
                 metrics["train/policy_ent"] = ent.mean()
 
-            return loss, metrics
-        else:
-            return None, {}
+            return loss
 
     @property
     def value(self) -> Number:

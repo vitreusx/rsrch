@@ -79,7 +79,9 @@ class Expr:
                 if isinstance(cur, dict):
                     local = cur
 
-            return eval(m["expr"], {**g, **local})
+            modules = {"np": np, "math": math}
+            g = {**g, **modules, **local}
+            return eval(m["expr"], g)
 
         return _fn
 

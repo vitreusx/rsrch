@@ -40,7 +40,7 @@ class TanhTransform(Transform):
 
 
 class AffineTransform(Transform):
-    def __init__(self, loc, scale):
+    def __init__(self, loc: Number | Tensor, scale: Number | Tensor):
         self.loc = loc
         self.scale = scale
         if isinstance(loc, Number) and isinstance(scale, Number):

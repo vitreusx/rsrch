@@ -7,23 +7,32 @@ import numpy as np
 from rsrch.rl import gym
 
 from . import base
-from .envpool import VecEnvPool
+from ._envpool import VecEnvPool
+
+Mode = Literal["train", "val", "_nostack"]
 
 
 @dataclass
 class Config:
     env_id: str
+    """Environment name"""
     screen_size: int | tuple[int, int]
+    """Screen size. Either a single number or a pair (width, height)."""
     frame_skip: int
+    """Environment frame skip - the emulator performs action k times and returns
+    the last one, so one only sees every kth frame."""
     obs_type: Literal["rgb", "grayscale", "ram"]
+    """Observation type. One of 'rgb', 'grayscale' and 'ram'."""
     noop_max: int
+    """No-op max. (?)"""
     fire_reset: bool
+    """Fire reset. (?)"""
     term_on_life_loss: bool
+    """Whether to stop the episode on life loss."""
     time_limit: int | None
+    """Time limit."""
     stack: int | None
-
-
-Mode = Literal["train", "val", "_nostack"]
+    """Whether to return stacked observations."""
 
 
 class Factory(base.Factory):

@@ -1,7 +1,8 @@
-from gymnasium.vector import VectorEnvWrapper
-from .base import VectorEnv
-from . import utils as vec_utils
 import numpy as np
+from gymnasium.vector import VectorEnvWrapper
+
+from . import utils as vec_utils
+from .base import VectorEnv
 
 
 class RewardWrapper(VectorEnvWrapper):
@@ -43,3 +44,15 @@ class ObservationWrapper(VectorEnvWrapper):
             for i, env_i in enumerate(idxes):
                 info["final_observation"][env_i] = t[i]
         return next_obs, reward, term, trunc, info
+
+
+class ActionWrapper(VectorEnvWrapper):
+    def __init__(self, env):
+        super().__init__(env)
+
+    def action(self, act: np.ndarray) -> np.ndarray:
+        raise NotImplementedError()
+
+    def step_async(self, actions):
+        actions = self.action(actions)
+        return super().step_async(actions)

@@ -12,11 +12,9 @@ env:
     stack: 4
   gym:
     env_id: CartPole-v1
-  dmc:
-    env_id: Walker2d-v1
 alpha:
   adaptive: true
-  target_ent: 0.5
+  target_ent: 0.25
   opt:
     type: adam
     lr: 1e-3

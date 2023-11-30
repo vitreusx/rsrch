@@ -56,6 +56,10 @@ class Normal(Distribution, Tensorlike):
     def mode(self):
         return self.loc
 
+    @property
+    def var(self):
+        return self.scale.square()
+
     def sample(self, sample_shape: torch.Size = torch.Size()):
         shape = torch.Size([*sample_shape, *self.batch_shape, *self.event_shape])
         with torch.no_grad():
@@ -67,11 +71,9 @@ class Normal(Distribution, Tensorlike):
         return self.loc + self.scale * eps
 
     def log_prob(self, value: Tensor):
-        var = self.scale**2
-        log_scale = self.scale.log()
         logp = (
-            -((value - self.loc) ** 2) / (2 * var)
-            - log_scale
+            -((value - self.loc) ** 2) / (2 * self.var)
+            - self.scale.log()
             - 0.5 * math.log(2 * math.pi)
         )
         return sum_rightmost(logp, len(self.event_shape))
