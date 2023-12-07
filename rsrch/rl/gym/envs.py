@@ -3,6 +3,7 @@ from gymnasium.envs import *
 
 from .base import Env
 from .spaces import Space
+from .vector.base import VectorEnv
 
 
 class SpecEnv(Env):
@@ -40,3 +41,25 @@ class RandomEnv(Env):
         trunc = False
         info = {}
         return next_obs, reward, term, trunc, info
+
+
+class FromVectorEnv(Env):
+    def __init__(self, vector_env: VectorEnv):
+        super().__init__()
+        self._venv = vector_env
+        self.observation_space = vector_env.single_observation_space
+        self.action_space = vector_env.single_action_space
+
+    def reset(self, *, seed=None, options=None):
+        res = self._venv.reset(seed=seed, options=options)
+        return tuple(self._squeeze(x) for x in res)
+
+    def _squeeze(self, x):
+        if isinstance(x, dict):
+            return {k: self._squeeze(v) for k, v in x.items()}
+        else:
+            return x[0]
+
+    def step(self, act):
+        res = self._venv.step(act[None])
+        return tuple(self._squeeze(x) for x in res)

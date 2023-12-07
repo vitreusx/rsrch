@@ -6,7 +6,9 @@ import numpy as np
 import torch
 from torch import Tensor
 
+from rsrch import spaces
 from rsrch.rl import data, gym
+from rsrch.spaces.utils import from_gym
 
 
 class Factory:
@@ -16,9 +18,9 @@ class Factory:
         device: torch.device | None = None,
         stack: int | None = None,
     ):
-        self._np_obs_space = env.observation_space
-        self._visual = len(self._np_obs_space.shape) > 1
-        self._np_act_space = env.action_space
+        self._np_obs_space = from_gym(env.observation_space)
+        self._visual = len(self._np_obs_space.shape) > (1 if stack is None else 2)
+        self._np_act_space = from_gym(env.action_space)
         self._device = device
         self._stack = stack
 
@@ -34,16 +36,20 @@ class Factory:
     def obs_space(self):
         """Tensor space for observations."""
         space = self._np_obs_space
-        if isinstance(space, gym.spaces.Box):
+        if isinstance(space, spaces.np.Box):
             if self._visual:
-                h, w, c = space.shape
-                return gym.spaces.TensorImage([c, h, w], torch.float32)
+                if self._stack is None:
+                    c, h, w = space.shape
+                else:
+                    s, c, h, w = space.shape
+                    c *= s
+                return spaces.torch.Image([c, h, w], torch.float32, self._device)
             else:
                 low = torch.tensor(space.low, dtype=torch.float32, device=self._device)
                 high = torch.tensor(
                     space.high, dtype=torch.float32, device=self._device
                 )
-                return gym.spaces.TensorBox(space.shape, low, high, torch.float32)
+                return spaces.torch.Box(space.shape, low, high, torch.float32)
         else:
             raise ValueError(type(space))
 
@@ -51,12 +57,12 @@ class Factory:
     def act_space(self):
         """Tensor space for actions."""
         space = self._np_act_space
-        if isinstance(space, gym.spaces.Discrete):
-            return gym.spaces.TensorDiscrete(space.n, torch.int32)
-        elif isinstance(space, gym.spaces.Box):
+        if isinstance(space, spaces.np.Discrete):
+            return spaces.torch.Discrete(space.n, torch.int32, self._device)
+        elif isinstance(space, spaces.np.Box):
             low = torch.tensor(space.low, dtype=torch.float32, device=self._device)
             high = torch.tensor(space.high, dtype=torch.float32, device=self._device)
-            return gym.spaces.TensorBox(space.shape, low, high, torch.float32)
+            return spaces.torch.Box(space.shape, low, high, torch.float32, self._device)
         else:
             raise ValueError(type(space))
 
@@ -154,13 +160,9 @@ class Factory:
         obs: Tensor = torch.as_tensor(obs)
 
         if self._visual:
-            # [N, {#S}, H, W, #C] -> [N, {#S} * #C, H, W]
+            # [N, {#S}, #C, H, W] -> [N, {#S} * #C, H, W]
             if self._stack is not None:
-                obs = obs.permute(0, 1, 4, 2, 3)
                 obs = obs.flatten(1, 2)
-            else:
-                obs = obs.permute(0, 3, 1, 2)
-
             if obs.dtype == torch.uint8:
                 obs = obs / 255.0
 

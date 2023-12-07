@@ -24,16 +24,19 @@ class Distribution:
 
     @property
     def mode(self) -> Tensor:
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def sample(self, sample_shape: torch.Size) -> Tensor:
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def rsample(self, sample_shape: torch.Size) -> Tensor:
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def log_prob(self, value: Tensor) -> Tensor:
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def entropy(self) -> Tensor:
-        raise NotImplementedError
+        raise NotImplementedError()
+
+    def cdf(self, value: Tensor) -> Tensor:
+        raise NotImplementedError()

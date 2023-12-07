@@ -6,21 +6,23 @@ import numpy as np
 import torch
 from torch import Tensor, nn
 
-import rsrch.distributions as D
-from rsrch.distributions.utils import sum_rightmost
 from rsrch.types import Tensorlike
 
-
-def phi(zeta: Tensor):
-    return torch.exp(-0.5 * zeta.square()) / np.sqrt(2.0 * np.pi)
-
-
-def Phi(x: Tensor):
-    return 0.5 * (1.0 + torch.erf(x / np.sqrt(2.0)))
+from .distribution import Distribution
+from .normal import Normal
+from .utils import sum_rightmost
 
 
-def Phi_inv(y: Tensor, eps=1e-7):
-    z = (2.0 * y - 1.0).clamp(-1.0 + eps, 1.0 - eps)
+def norm_pmf(x: Tensor):
+    return (-0.5 * x.square()).exp() / math.sqrt(2 * math.pi)
+
+
+def norm_cdf(x: Tensor):
+    return 0.5 * (1.0 + (x / math.sqrt(2)).erf())
+
+
+def norm_qf(x: Tensor, eps=1e-7):
+    z = (2.0 * x - 1.0).clamp(-1.0 + eps, 1.0 - eps)
     return np.sqrt(2.0) * torch.erfinv(z)
 
 
@@ -37,80 +39,39 @@ def lazy_property(_func):
     return _prop
 
 
-class TruncNormal(D.Distribution, Tensorlike):
-    def __init__(
-        self,
-        norm: D.Normal,
-        low: Number | Tensor,
-        high: Number | Tensor,
-        event_dims: int = 0,
-    ):
-        low = torch.as_tensor(low, device=norm.device)
-        low = low.expand_as(norm.loc)
-        high = torch.as_tensor(high, device=norm.device)
-        high = high.expand_as(norm.loc)
-
+class TruncNormal(Distribution, Tensorlike):
+    def __init__(self, norm: Normal, low: Tensor, high: Tensor):
         Tensorlike.__init__(self, norm.batch_shape)
         self.event_shape = norm.event_shape
 
         self.norm = self.register("norm", norm)
-        self.low = self.register("low", low)
-        self.high = self.register("high", high)
 
-    @lazy_property
-    def alpha(self):
-        return self._zeta(self.low)
+        shape = [*self.batch_shape, *self.event_shape]
+        self.low = self.register("low", low.expand(shape))
+        self.high = self.register("high", high.expand(shape))
 
-    @lazy_property
-    def phi_alpha(self):
-        return phi(self.alpha)
+        self.low_std = self.register(
+            "low_std", (self.low - self.norm.loc) / self.norm.scale
+        )
+        self.low_pmf = self.register("low_pmf", norm_pmf(self.low_std))
+        self.low_cdf = self.register("low_cdf", norm_cdf(self.low_std))
 
-    @lazy_property
-    def Phi_alpha(self):
-        return Phi(self.alpha)
+        self.high_std = self.register(
+            "high_std", (self.high - self.norm.loc) / self.norm.scale
+        )
+        self.high_pmf = self.register("high_pmf", norm_pmf(self.high_std))
+        self.high_cdf = self.register("high_cdf", norm_cdf(self.high_std))
 
-    @lazy_property
-    def beta(self):
-        return self._zeta(self.high)
-
-    @lazy_property
-    def phi_beta(self):
-        return phi(self.beta)
-
-    @property
-    def Phi_beta(self):
-        return Phi(self.beta)
-
-    @property
-    def norm_Z(self):
-        return Phi(self.beta) - Phi(self.alpha)
-
-    def _zeta(self, x):
-        return (x - self.norm.loc) / self.norm.scale
-
-    @property
-    def mean(self):
-        f = (self.phi_alpha - self.phi_beta) / self.norm_Z
-        return self.norm.mean + f * self.norm.scale
-
-    @property
-    def mode(self):
-        return self.norm.mode.clamp(self.low, self.high)
-
-    @property
-    def var(self):
-        f1 = (self.beta * self.phi_beta - self.alpha * self.phi_alpha) / self.norm_Z
-        f2 = ((self.phi_alpha - self.phi_beta) / self.norm_Z).square()
-        return self.norm.var * (1.0 - f1 - f2)
+        self.pmf_z = self.register("pmf_z", self.high_cdf - self.low_cdf)
 
     def entropy(self):
         norm_ent = 0.5 + 0.5 * math.log(2.0 * math.pi) + self.norm.scale.log()
-        f = self.norm_Z.log() + (
+        trunc_ent = self.pmf_z.log() + (
             0.5
-            * (self.alpha * self.phi_alpha - self.beta * self.phi_beta)
-            / self.norm_Z
+            * (self.low_std * self.low_pmf - self.high_std * self.high_pmf)
+            / self.pmf_z
         )
-        ent = norm_ent + f
+        ent = norm_ent + trunc_ent
         return sum_rightmost(ent, len(self.event_shape))
 
     def log_prob(self, value: Tensor):
@@ -119,7 +80,8 @@ class TruncNormal(D.Distribution, Tensorlike):
             - self.norm.scale.log()
             - 0.5 * math.log(2 * math.pi)
         )
-        logp = norm_logp - self.norm_Z.log()
+        trunc_logp = -self.pmf_z.log()
+        logp = norm_logp + trunc_logp
         return sum_rightmost(logp, len(self.event_shape))
 
     def sample(self, sample_shape: torch.Size = torch.Size()):
@@ -129,5 +91,5 @@ class TruncNormal(D.Distribution, Tensorlike):
     def rsample(self, sample_shape: torch.Size = torch.Size()):
         shape = torch.Size([*sample_shape, *self.batch_shape, *self.event_shape])
         u = torch.rand(shape, device=self.device)
-        v = self.Phi_alpha + (self.Phi_beta - self.Phi_alpha) * u
-        return Phi_inv(v) * self.norm.scale + self.norm.loc
+        v = self.low_cdf + self.pmf_z * u
+        return norm_qf(v) * self.norm.scale + self.norm.loc

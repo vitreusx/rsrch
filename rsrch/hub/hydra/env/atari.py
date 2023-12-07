@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal, SupportsFloat
 
 import envpool
 import numpy as np
@@ -9,7 +9,7 @@ from rsrch.rl import gym
 from . import base
 from ._envpool import VecEnvPool
 
-Mode = Literal["train", "val", "_nostack"]
+Mode = Literal["train", "val"]
 
 
 @dataclass
@@ -35,23 +35,70 @@ class Config:
     """Whether to return stacked observations."""
 
 
+class FixShape(gym.ObservationWrapper):
+    def __init__(self, env: gym.Env, stack_num: int | None):
+        super().__init__(env)
+        self._stack_num = stack_num
+        assert isinstance(env.observation_space, gym.spaces.Box)
+        low = self.observation(env.observation_space.low)
+        high = self.observation(env.observation_space.high)
+        self.observation_space = gym.spaces.Box(
+            low, high, low.shape, low.dtype, self.observation_space._np_random
+        )
+
+    def observation(self, obs: np.ndarray) -> np.ndarray:
+        if self._stack_num is not None:
+            obs = np.transpose(obs, (0, 3, 1, 2))
+        else:
+            obs = np.transpose(obs, (2, 0, 1))
+        return obs
+
+
+class FixShapeEP(gym.vector.wrappers.ObservationWrapper):
+    def __init__(self, env: gym.VectorEnv, stack_num: int):
+        super().__init__(env)
+        self._stack_num = stack_num
+
+        assert isinstance(self.observation_space, gym.spaces.Box)
+        low_v = self.observation(self.observation_space.low)
+        high_v = self.observation(self.observation_space.high)
+        self.observation_space = gym.spaces.Box(
+            low_v, high_v, low_v.shape, low_v.dtype, self.observation_space._np_random
+        )
+        self.single_observation_space = gym.spaces.Box(
+            low_v[0],
+            high_v[0],
+            low_v.shape[1:],
+            low_v.dtype,
+            self.single_observation_space._np_random,
+        )
+
+    def observation(self, obs: np.ndarray) -> np.ndarray:
+        obs = obs.reshape(len(obs), self._stack_num, -1, *obs.shape[2:])
+        return obs
+
+
 class Factory(base.Factory):
     def __init__(self, cfg: Config, device=None):
         self.cfg = cfg
-        self._visual = self.cfg.obs_type in ("rgb", "grayscale")
         super().__init__(self.env(mode="train"), device, self.cfg.stack)
 
-    def env(self, *, mode: Mode, **kwargs):
+    def env(self, *, mode: Mode = "train", **kwargs):
+        env = self._envpool(num_envs=1, mode=mode)
+        if env is not None:
+            return gym.envs.FromVectorEnv(env)
+
         env = gym.make(self.cfg.env_id, frameskip=1)
 
+        episodic = self.cfg.term_on_life_loss and mode == "train"
         proc_args = dict(
             env=env,
             frame_skip=self.cfg.frame_skip,
             noop_max=self.cfg.noop_max,
-            terminal_on_life_loss=self.cfg.term_on_life_loss,
+            terminal_on_life_loss=episodic,
         )
 
-        if self._visual:
+        if self.cfg.obs_type in ("rgb", "grayscale"):
             proc_args.update(
                 screen_size=self.cfg.screen_size,
                 grayscale_obs=self.cfg.obs_type == "grayscale",
@@ -65,18 +112,17 @@ class Factory(base.Factory):
             if "FIRE" in env.unwrapped.get_action_meanings():
                 env = gym.wrappers.FireResetEnv(env)
 
-        env = gym.wrappers.RecordEpisodeStatistics(env)
-
         if self.cfg.time_limit is not None:
             env = gym.wrappers.TimeLimit(env, self.cfg.time_limit)
 
         if self.cfg.stack is not None:
             env = gym.wrappers.FrameStack(env, self.cfg.stack)
+        env = FixShape(env, self.cfg.stack)
 
         return env
 
-    def vector_env(self, num_envs: int, *, mode: Mode, **kwargs):
-        env = self._envpool(num_envs, mode, **kwargs)
+    def vector_env(self, num_envs: int, *, mode: Mode = "train", **kwargs):
+        env = self._envpool(num_envs, mode=mode, **kwargs)
         if env is not None:
             return env
 
@@ -134,35 +180,7 @@ class Factory(base.Factory):
             full_action_space=False,
         )
 
-        env = gym.wrappers.RecordEpisodeStatistics(env)
-
-        # The way envpool "stacks" is incorrect (the channels are actually
-        # concatenated instead.) Also, the images are channel-first, as opposed
-        # to channel-last. The following wrapper fixes these issues.
-        class _FixShape(gym.vector.wrappers.ObservationWrapper):
-            def __init__(self_, env):
-                super().__init__(env)
-                c, h, w = self_.single_observation_space.shape[-3:]
-                n, s = self_.num_envs, self.cfg.stack
-                if s is not None:
-                    shape = [s, h, w, c // s]
-                else:
-                    shape = [h, w, c]
-                space = gym.spaces.Box(0, 255, shape, np.uint8)
-                self_.single_observation_space = space
-                vspace = gym.spaces.Box(0, 255, [n, *shape], np.uint8)
-                self_.observation_space = vspace
-
-            def observation(self_, x: np.ndarray) -> np.ndarray:
-                if self.cfg.stack is not None:
-                    # [N, #S * #C, H, W] -> [N, #S, #C, H, W] -> [N, #S, H, W, #C]
-                    x = x.reshape([len(x), self.cfg.stack, -1, *x.shape[2:]])
-                    x = x.transpose(0, 1, 3, 4, 2)
-                else:
-                    # [N, #C, H, W] -> [N, H, W, #C]
-                    x = x.transpose(0, 2, 3, 1)
-                return x
-
-        env = _FixShape(env)
+        if self.cfg.stack is not None:
+            env = FixShapeEP(env, self.cfg.stack)
 
         return env

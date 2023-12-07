@@ -12,10 +12,34 @@ env:
     stack: 4
   gym:
     env_id: CartPole-v1
-alpha:
-  adaptive: true
-  target_ent: 0.25
+type: ppo_clean
+ppo:
+  device: cuda
+  env_batch: 2048
+  num_envs: 1
+  opt_iters: 10
+  opt_batch: 64
+  warmup: 10e3
+  total_steps: 1e6
+  clip_coeff: 0.2
+  clip_vloss: true
+  adv_norm: true
+  vf_coeff: 0.5
+  clip_grad: 0.5
+  gamma: 0.99
+  gae_lambda: 0.95
+  seed: 42
+  clip_rew: 1.0
+  anneal_lr: true
+  share_enc: true
   opt:
     type: adam
-    lr: 1e-3
+    lr: 3e-4
     eps: 1e-5
+  alpha:
+    adaptive: true
+    target_ent: 0.25
+    opt:
+      type: adam
+      lr: 1e-2
+      eps: 1e-5

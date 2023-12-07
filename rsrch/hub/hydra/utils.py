@@ -3,7 +3,7 @@ from functools import cache, partial, wraps
 from typing import Literal
 
 import torch
-from torch import Tensor
+from torch import Tensor, nn
 
 from rsrch.rl.utils import polyak
 
@@ -60,3 +60,10 @@ def gae_adv_est(r: Tensor, v: Tensor, gamma: float, gae_lambda: float):
     adv = torch.stack(adv)
     ret = v[:-1] + adv
     return adv, ret
+
+
+def layer_init(layer, std: float = torch.nn.init.calculate_gain("relu"), bias=0.0):
+    if isinstance(layer, (nn.Linear, nn.Conv2d)):
+        nn.init.orthogonal_(layer.weight, std)
+        nn.init.constant_(layer.bias, bias)
+    return layer

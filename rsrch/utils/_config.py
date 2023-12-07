@@ -297,12 +297,15 @@ def _attr_docstrings(t):
     return docs
 
 
-def _is_dataclass(t):
-    orig = get_origin(t)
-    args = get_args(t)
-    return is_dataclass(t) or (
-        orig in (Union, Optional, UnionType) and any(_is_dataclass(ti) for ti in args)
-    )
+def get_dataclass(t):
+    if is_dataclass(t):
+        return t
+    else:
+        orig = get_origin(t)
+        args = get_args(t)
+        if orig in (Union, Optional, UnionType):
+            dts = [ti for ti in args if is_dataclass(ti)]
+            return dts[0] if len(dts) > 0 else None
 
 
 @overload
@@ -342,9 +345,10 @@ def cli(
             defs = yaml.safe_load(f) or {}
 
     def add_overrides(t, path=[], doc=None, defv=MISSING, cur=defs):
-        if _is_dataclass(t):
-            docs = _attr_docstrings(t)
-            for field in fields(t):
+        dt = get_dataclass(t)
+        if dt is not None:
+            docs = _attr_docstrings(dt)
+            for field in fields(dt):
                 field_defv = MISSING
                 if field.name in cur:
                     field_defv = cur[field.name]

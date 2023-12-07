@@ -1,13 +1,16 @@
 cont: &cont
-  alpha:
+  ppo.alpha:
     adaptive: false
     value: 0.0
     # adaptive: true
-    # target_ent: $(-1/np.log(2))  
-disc: &disc
-  alpha.target_ent: 0.25
+    # target_ent: 0.0
+  ppo.share_enc: false
+discrete: &discrete
+  ppo.alpha:
+    adaptive: true
+    target_ent: 0.25
 CartPole-v1:
-  <<: [*disc]
+  <<: [*discrete]
   env:
     type: gym
     gym.env_id: CartPole-v1
@@ -16,3 +19,14 @@ Walker2d-v4:
   env:
     type: gym
     gym.env_id: Walker2d-v4
+HalfCheetah-v4:
+  <<: [*cont]
+  env:
+    type: gym
+    gym.env_id: HalfCheetah-v4
+Alien-v5:
+  <<: [*discrete]
+  env:
+    type: atari
+    atari.env_id: ALE/Alien-v5
+  ppo.num_envs: 8

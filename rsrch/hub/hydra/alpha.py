@@ -5,6 +5,7 @@ import numpy as np
 import torch
 from torch import Tensor, nn
 
+from rsrch import spaces
 from rsrch.exp.api import Experiment
 from rsrch.rl import gym
 
@@ -17,13 +18,14 @@ class Config:
     opt: Optim
     value: float | None = None
     target_ent: float | None = None
+    min_value: float | None = 1e-6
 
 
-def max_ent(act_space: gym.TensorSpace) -> float:
+def max_ent(act_space: spaces.torch.Space) -> float:
     """Compute maximum entropy for a policy over a given action space."""
-    if isinstance(act_space, gym.spaces.TensorDiscrete):
+    if isinstance(act_space, spaces.torch.Discrete):
         return np.log(act_space.n)
-    elif isinstance(act_space, gym.spaces.TensorBox):
+    elif isinstance(act_space, spaces.torch.Box):
         return torch.log(act_space.high - act_space.low).sum().item()
     else:
         raise ValueError(type(act_space))
@@ -32,11 +34,13 @@ def max_ent(act_space: gym.TensorSpace) -> float:
 class Alpha(nn.Module):
     """Alpha parameter for entropy regularization."""
 
-    def __init__(self, cfg: Config, act_space: gym.TensorSpace):
+    def __init__(self, cfg: Config, act_space: spaces.torch.Space):
         super().__init__()
         self.cfg = cfg
         if cfg.adaptive:
-            self.log_alpha = nn.Parameter(torch.zeros([]))
+            log_min_value = torch.tensor(cfg.min_value).log()
+            self.log_alpha = nn.Parameter(torch.tensor(log_min_value))
+            self.register_buffer("min_value", log_min_value)
             self.opt = cfg.opt.make()([self.log_alpha])
             assert cfg.target_ent is not None
             self.target_ent = max_ent(act_space) * cfg.target_ent
@@ -65,6 +69,8 @@ class Alpha(nn.Module):
             self.opt.zero_grad(set_to_none=True)
             loss.mean().backward()
             self.opt.step()
+            with torch.no_grad():
+                self.log_alpha.fill_(torch.max(self.log_alpha, self.min_value))
             self.alpha = self.log_alpha.exp().item()
 
             if metrics is not None:

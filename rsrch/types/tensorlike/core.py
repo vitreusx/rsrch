@@ -219,46 +219,68 @@ class Tensorlike:
                 fields[name] = _tensors
             return repr._new(new_shape, fields)
 
-    def index(self, idx):
+    def __getitem__(self, idx):
         if not isinstance(idx, tuple):
             idx = (idx,)
 
+        num_e = sum(isinstance(x, type(Ellipsis)) for x in idx)
+        if num_e > 1:
+            raise IndexError("an index can only have a single ellipsis ('...')")
+
+        if num_e > 0:
+            new_idx = []
+            for x in idx:
+                if isinstance(x, type(Ellipsis)):
+                    rem = len(self.shape) - (len(idx) - 1)
+                    new_idx.extend(slice(None) for _ in range(rem))
+                else:
+                    new_idx.append(x)
+            idx = tuple(new_idx)
+
+        shape = self._prototype[idx].shape
+        return self._getitem(idx, shape)
+
+    def _getitem(self, idx, shape):
         fields = {}
         for name, batched in self.__tensors.items():
             tensor: Tensorlike = getattr(self, name)
             if batched:
                 if isinstance(tensor, torch.Tensor):
-                    event_dims = len(tensor.shape) - len(self.shape)
-                    t_idx = idx
-                    if any(isinstance(x, type(Ellipsis)) for x in idx):
-                        t_idx = (*t_idx, ..., *(slice(None) for _ in range(event_dims)))
-                    tensor = tensor[t_idx]
+                    tensor = tensor[idx]
                 else:
-                    tensor = tensor.index(idx)
+                    tensor = tensor._getitem(idx, shape)
             fields[name] = tensor
 
-        new_shape = self._prototype[idx].shape
-
-        return self._new(new_shape, fields)
-
-    def __getitem__(self, idx):
-        return self.index(idx)
+        return self._new(shape, fields)
 
     def __setitem__(self, idx, value):
         if not isinstance(idx, tuple):
             idx = (idx,)
 
+        num_e = sum(isinstance(x, type(Ellipsis)) for x in idx)
+        if num_e > 1:
+            raise IndexError("an index can only have a single ellipsis ('...')")
+
+        if num_e > 0:
+            new_idx = []
+            for x in idx:
+                if isinstance(x, type(Ellipsis)):
+                    rem = len(self.shape) - (len(idx) - 1)
+                    new_idx.extend(slice(None) for _ in range(rem))
+                else:
+                    new_idx.append(x)
+            idx = tuple(new_idx)
+
+        return self._setitem(idx, value)
+
+    def _setitem(self, idx, value):
         for name, batched in self.__tensors.items():
             tensor: Tensorlike = getattr(self, name)
             if batched:
                 if isinstance(tensor, torch.Tensor):
-                    event_dims = len(tensor.shape) - len(self.shape)
-                    t_idx = idx
-                    if any(isinstance(x, type(Ellipsis)) for x in idx):
-                        t_idx = (*t_idx, ..., *(slice(None) for _ in range(event_dims)))
-                    tensor[t_idx] = getattr(value, name)
-                else:
                     tensor[idx] = getattr(value, name)
+                else:
+                    tensor._setitem(idx, getattr(value, name))
         return self
 
     def __len__(self):

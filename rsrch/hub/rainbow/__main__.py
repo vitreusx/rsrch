@@ -6,7 +6,7 @@ import torch
 from torch import nn
 from tqdm.auto import tqdm
 
-from rsrch.exp import Experiment
+from rsrch.exp import tensorboard
 from rsrch.exp.profiler import Profiler
 from rsrch.nn.rewrite import rewrite_module_
 from rsrch.rl import data, gym
@@ -139,7 +139,6 @@ def main():
         opt=QAgent(q, loader),
         rand=gym.vector.agents.RandomAgent(train_envs),
         eps=expl_eps(0),
-        num_envs=train_envs.num_envs,
     )
 
     ep_ids = [None for _ in range(train_envs.num_envs)]
@@ -154,9 +153,8 @@ def main():
     assert opt_batch_ % cfg.sched.env_batch == 0
     opt_steps = opt_batch_ // cfg.sched.opt_batch
 
-    exp = Experiment(project="rainbow")
-    board = exp.board
-    board.add_step("env_step", lambda: env_step, default=True)
+    exp = tensorboard.Experiment("rainbow")
+    exp.register_step("env_step", lambda: env_step, default=True)
     pbar = tqdm(total=cfg.sched.num_frames, dynamic_ncols=True)
 
     prof = Profiler(
@@ -177,7 +175,7 @@ def main():
             val_returns.append(sum(ep.reward))
         q.train()
 
-        board.add_scalar("val/returns", np.mean(val_returns))
+        exp.add_scalar("val/returns", np.mean(val_returns))
 
     def collect_exp():
         ctr = 0
@@ -257,9 +255,9 @@ def main():
             scaler.update()
 
             if should_log:
-                board.add_scalar("train/q_loss", mean_q_loss)
-                board.add_scalar("train/expl_eps", exp_agent.eps)
-                board.add_scalar("train/mean_q_pred", pred.mean())
+                exp.add_scalar("train/q_loss", mean_q_loss)
+                exp.add_scalar("train/expl_eps", exp_agent.eps)
+                exp.add_scalar("train/mean_q_pred", pred.mean())
 
     while True:
         if should_val:

@@ -2,6 +2,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+from torch import Tensor
 from torch.utils.tensorboard import SummaryWriter
 
 
@@ -29,4 +30,6 @@ class Experiment:
             step = self._default_step
         if isinstance(step, str):
             step = self._step_fns[step]()
+        if isinstance(value, Tensor):
+            value = value.float()
         self._writer.add_scalar(tag, value, global_step=step)

@@ -1,12 +1,12 @@
-from numbers import Number
 from typing import Literal
 
 import numpy as np
 import torch
-import torch.nn as nn
-from torch import Tensor
+import torch.nn.functional as F
+from torch import Tensor, nn
 
 import rsrch.distributions as D
+from rsrch import spaces
 
 
 def layer_init(layer, std=1e-2, bias=0.0):
@@ -137,81 +137,36 @@ class Dirac(nn.Module):
         return D.Dirac(out, len(self._out_shape))
 
 
-class SquashedNormal(nn.Module):
-    def __init__(
-        self,
-        in_features: int,
-        out_shape: tuple[int, ...],
-        low: Tensor | Number,
-        high: Tensor | Number,
-    ):
-        super().__init__()
-        self._out_shape = out_shape
-        self.fc = nn.Linear(in_features, 2 * int(np.prod(out_shape)))
-        self.fc.apply(layer_init)
-        self.register_buffer("low", low)
-        self.register_buffer("high", high)
-
-    def forward(self, x: Tensor) -> D.SquashedNormal:
-        out = self.fc(x)
-        mean, log_std = out.chunk(2, -1)
-        mean = mean.reshape(-1, *self._out_shape)
-        log_std = log_std.reshape(-1, *self._out_shape)
-        std = log_std.exp()
-        return D.SquashedNormal(mean, std, self.low, self.high, len(self._out_shape))
-
-
 class TruncNormal(nn.Module):
     def __init__(
         self,
         in_features: int,
-        out_shape: tuple[int, ...],
-        low: Tensor | Number,
-        high: Tensor | Number,
+        act_space: spaces.torch.Box,
     ):
         super().__init__()
-        self._out_shape = out_shape
-        self.fc = nn.Linear(in_features, 2 * int(np.prod(out_shape)))
-        self.fc.apply(layer_init)
-        self.register_buffer("low", low)
-        self.register_buffer("high", high)
+        self._out_shape = act_space.shape
+        self.register_buffer("low", act_space.low.cpu())
+        self.register_buffer("high", act_space.high.cpu())
+        # self.register_buffer("_loc", 0.5 * (act_space.low + act_space.high))
+        # self.register_buffer("_scale", 0.5 * (act_space.high - act_space.low))
+        # out_features = 2 * int(np.prod(act_space.shape))
+        # self.fc = nn.Linear(in_features, out_features)
+        # self.fc.apply(layer_init)
+        act_dim = int(np.prod(act_space.shape))
+        self.loc_fc = nn.Linear(in_features, act_dim)
+        self.loc_fc.apply(layer_init)
+        self.log_std = nn.Parameter(torch.zeros(1, *self._out_shape))
 
-    def forward(self, x: Tensor) -> D.SquashedNormal:
-        out = self.fc(x)
-        mean, std = out.chunk(2, -1)
-        mean = mean.reshape(-1, *self._out_shape)
-        std = nn.functional.softplus(std).reshape(-1, *self._out_shape)
-        return D.TruncNormal(
-            D.Normal(mean, std, len(self._out_shape)),
-            self.low,
-            self.high,
-        )
-
-
-class Piecewise(nn.Module):
-    def __init__(
-        self,
-        in_features: int,
-        out_shape: tuple[int, ...],
-        num_buckets: int,
-        low: Tensor | Number,
-        high: Tensor | Number,
-    ):
-        super().__init__()
-        self._out_shape = out_shape
-        self._num_buckets = num_buckets
-        out_features = num_buckets * int(np.prod(out_shape))
-        self.fc = nn.Linear(in_features, out_features)
-        self.fc.apply(layer_init)
-        self.register_buffer("low", low)
-        self.register_buffer("high", high)
-
-    def forward(self, x: Tensor) -> D.SquashedNormal:
-        logits = self.fc(x)
-        logits = logits.reshape(-1, *self._out_shape, self._num_buckets)
-        return D.Piecewise(
-            D.Categorical(logits=logits),
-            self.low,
-            self.high,
-            len(self._out_shape),
-        )
+    def forward(self, x: Tensor):
+        # out: Tensor = self.fc(x)
+        # loc, scale = out.chunk(2, -1)
+        # loc = loc.tanh().reshape(-1, *self._out_shape)
+        # scale = F.softplus(scale.reshape(-1, *self._out_shape))
+        # rv = D.Normal(loc, scale, len(self._out_shape))
+        # rv = D.TruncNormal(rv, self.low, self.high)
+        # rv = D.Affine(rv, self._loc, self._scale)
+        loc: Tensor = self.loc_fc(x).reshape(-1, *self._out_shape)
+        scale = F.softplus(self.log_std)
+        rv = D.Normal(loc, scale, len(self._out_shape))
+        rv = D.TruncNormal(rv, self.low, self.high)
+        return rv

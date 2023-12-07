@@ -1,6 +1,7 @@
 import math
 from numbers import Number
 
+import numpy as np
 import torch
 from torch import Tensor
 
@@ -77,6 +78,10 @@ class Normal(Distribution, Tensorlike):
             - 0.5 * math.log(2 * math.pi)
         )
         return sum_rightmost(logp, len(self.event_shape))
+
+    def cdf(self, value: Tensor):
+        value = (value - self.loc) / (np.sqrt(2) * self.scale)
+        return 0.5 * (1.0 + torch.erf(value))
 
     def entropy(self):
         ent = 0.5 + 0.5 * math.log(2 * math.pi) + self.scale.log()

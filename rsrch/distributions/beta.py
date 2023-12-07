@@ -1,12 +1,13 @@
 import torch
 from torch import Tensor
 
-import rsrch.distributions as D
-from rsrch.distributions.utils import sum_rightmost
 from rsrch.types import Tensorlike
 
+from .distribution import Distribution
+from .utils import sum_rightmost
 
-class Beta(D.Distribution, Tensorlike):
+
+class Beta(Distribution, Tensorlike):
     def __init__(self, alpha: Tensor, beta: Tensor, event_dims: int = 0):
         shape = alpha.shape
         pivot = len(shape) - event_dims
