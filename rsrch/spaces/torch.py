@@ -17,14 +17,12 @@ class Space:
         self.shape = tuple(shape)
         self.dtype = dtype
         self.device = torch.device(device or "cpu")
-        if isinstance(seed, torch.Generator):
-            self._gen = seed
-        else:
-            self._seed, self._gen = seed, None
+        self._seed = seed
+        self._gen = seed if isinstance(seed, torch.Generator) else None
 
     @property
     def gen(self):
-        if self._gen is None:
+        if self._gen is None and self._seed is not None:
             self._gen = torch.Generator(self.device)
             self._gen.manual_seed(self._seed)
         return self._gen
@@ -82,7 +80,7 @@ class Box(Space):
 
     def sample(self, sample_size: tuple[int, ...] = ()):
         shape = [*sample_size, *self.shape]
-        if isinstance(self.dtype, torch.float):
+        if self.dtype.is_floating_point:
             u = torch.rand(
                 shape, dtype=self.dtype, device=self.device, generator=self.gen
             )

@@ -18,9 +18,11 @@ class Factory:
         device: torch.device | None = None,
         stack: int | None = None,
     ):
-        self._np_obs_space = from_gym(env.observation_space)
-        self._visual = len(self._np_obs_space.shape) > (1 if stack is None else 2)
-        self._np_act_space = from_gym(env.action_space)
+        self.env_obs_space = from_gym(env.observation_space)
+        """Numpy space for env observations."""
+        self._visual = len(self.env_obs_space.shape) > (1 if stack is None else 2)
+        self.env_act_space = from_gym(env.action_space)
+        """Numpy space for env actions."""
         self._device = device
         self._stack = stack
 
@@ -33,9 +35,9 @@ class Factory:
         ...
 
     @cached_property
-    def obs_space(self):
-        """Tensor space for observations."""
-        space = self._np_obs_space
+    def net_obs_space(self):
+        """Tensor space for observation in the network format."""
+        space = self.env_obs_space
         if isinstance(space, spaces.np.Box):
             if self._visual:
                 if self._stack is None:
@@ -43,26 +45,60 @@ class Factory:
                 else:
                     s, c, h, w = space.shape
                     c *= s
-                return spaces.torch.Image([c, h, w], torch.float32, self._device)
-            else:
-                low = torch.tensor(space.low, dtype=torch.float32, device=self._device)
-                high = torch.tensor(
-                    space.high, dtype=torch.float32, device=self._device
+                return spaces.torch.Image(
+                    [c, h, w],
+                    dtype=torch.float32,
+                    device=self._device,
                 )
-                return spaces.torch.Box(space.shape, low, high, torch.float32)
+            else:
+                low = torch.tensor(
+                    space.low,
+                    dtype=torch.float32,
+                    device=self._device,
+                )
+                high = torch.tensor(
+                    space.high,
+                    dtype=torch.float32,
+                    device=self._device,
+                )
+                return spaces.torch.Box(
+                    space.shape,
+                    low,
+                    high,
+                    dtype=torch.float32,
+                    device=self._device,
+                )
         else:
             raise ValueError(type(space))
 
     @cached_property
-    def act_space(self):
-        """Tensor space for actions."""
-        space = self._np_act_space
+    def net_act_space(self):
+        """Tensor space for actions in the network format."""
+        space = self.env_act_space
         if isinstance(space, spaces.np.Discrete):
-            return spaces.torch.Discrete(space.n, torch.int32, self._device)
+            return spaces.torch.Discrete(
+                space.n,
+                dtype=torch.int32,
+                device=self._device,
+            )
         elif isinstance(space, spaces.np.Box):
-            low = torch.tensor(space.low, dtype=torch.float32, device=self._device)
-            high = torch.tensor(space.high, dtype=torch.float32, device=self._device)
-            return spaces.torch.Box(space.shape, low, high, torch.float32, self._device)
+            low = torch.tensor(
+                space.low,
+                dtype=torch.float32,
+                device=self._device,
+            )
+            high = torch.tensor(
+                space.high,
+                dtype=torch.float32,
+                device=self._device,
+            )
+            return spaces.torch.Box(
+                space.shape,
+                low,
+                high,
+                dtype=torch.float32,
+                device=self._device,
+            )
         else:
             raise ValueError(type(space))
 
@@ -103,7 +139,7 @@ class Factory:
     ) -> data.ChunkBuffer:
         """Create a chunk buffer."""
 
-        obs_space = self._np_obs_space
+        obs_space = self.env_obs_space
         if self._stack:
             obs_space = gym.spaces.Box(
                 low=obs_space.low[0],
@@ -116,7 +152,7 @@ class Factory:
         store = data.NumpySeqStore(
             capacity=capacity,
             obs_space=obs_space,
-            act_space=self._np_act_space,
+            act_space=self.env_act_space,
         )
 
         return data.ChunkBuffer(
@@ -124,7 +160,7 @@ class Factory:
             num_stack=self._stack,
             capacity=capacity,
             obs_space=obs_space,
-            act_space=self._np_act_space,
+            act_space=self.env_act_space,
             sampler=sampler,
             store=store,
         )

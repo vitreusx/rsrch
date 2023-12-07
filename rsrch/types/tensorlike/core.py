@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from numbers import Number
 from typing import Sequence, Tuple, TypeVar, overload
 
 import numpy as np
@@ -86,7 +87,13 @@ class Tensorlike:
         else:
             return NotImplemented
 
-    def reshape(self, *shape: int | Tuple[int, ...]):
+    def reshape(self, *shape: int | tuple[int, ...]):
+        if isinstance(shape[0], Number):
+            return self._reshape(shape)
+        else:
+            return self._reshape(shape[0])
+
+    def _reshape(self, shape: tuple[int, ...]):
         fields = {}
         for name, batched in self.__tensors.items():
             tensor: Tensorlike = getattr(self, name)

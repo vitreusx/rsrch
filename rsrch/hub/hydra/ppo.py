@@ -104,9 +104,9 @@ def main(env_cfg: env.Config, cfg: Config):
     device = torch.device(device)
 
     env_f = env.make_factory(env_cfg, device)
-    assert isinstance(env_f.obs_space, spaces.torch.Box)
-    obs_dim = int(np.prod(env_f.obs_space.shape))
-    is_discrete = isinstance(env_f.act_space, spaces.torch.Discrete)
+    assert isinstance(env_f.net_obs_space, spaces.torch.Box)
+    obs_dim = int(np.prod(env_f.net_obs_space.shape))
+    is_discrete = isinstance(env_f.net_act_space, spaces.torch.Discrete)
     is_visual = env_f._visual
 
     class ActorCritic(nn.Module):
@@ -146,9 +146,9 @@ def main(env_cfg: env.Config, cfg: Config):
             critic_head.apply(partial(layer_init, std=1.0))
 
             if is_discrete:
-                actor_head = dh.Categorical(z_dim, env_f.act_space.n)
+                actor_head = dh.Categorical(z_dim, env_f.net_act_space.n)
             else:
-                actor_head = Normal2(z_dim, env_f.act_space)
+                actor_head = Normal2(z_dim, env_f.net_act_space)
                 # actor_head = dh.TruncNormal(z_dim, env_f.act_space)
 
             if cfg.share_enc:
@@ -181,14 +181,14 @@ def main(env_cfg: env.Config, cfg: Config):
             act_rv, _ = ac(env_f.move_obs(obs), values=False)
             act = act_rv.sample()
             if not is_discrete:
-                act = act.clamp(env_f.act_space.low, env_f.act_space.high)
+                act = act.clamp(env_f.net_act_space.low, env_f.net_act_space.high)
             return env_f.move_act(act, to="env")
 
     envs = env_f.vector_env(num_envs=cfg.num_envs)
     agent = make_agent()
     env_iter = iter(rollout.steps(envs, agent))
 
-    alpha_ = alpha.Alpha(cfg.alpha, env_f.act_space)
+    alpha_ = alpha.Alpha(cfg.alpha, env_f.net_act_space)
 
     exp = tensorboard.Experiment(project="hydra")
     env_step, total_steps = 0, cfg.total_steps
