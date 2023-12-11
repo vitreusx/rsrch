@@ -7,9 +7,13 @@ from torch.utils.tensorboard import SummaryWriter
 
 
 class Experiment:
-    def __init__(self, project: str, name=None):
-        if name is None:
-            name = f"{datetime.now():%Y-%m-%d_%H-%M-%S}"
+    def __init__(self, project: str, prefix=None):
+        now = f"{datetime.now():%Y-%m-%d_%H-%M-%S}"
+        if prefix is None:
+            name = now
+        else:
+            name = f"{prefix}__{now}"
+
         self.dir = Path(f"runs/{project}/{name}")
         self.dir.mkdir(parents=True, exist_ok=True)
 

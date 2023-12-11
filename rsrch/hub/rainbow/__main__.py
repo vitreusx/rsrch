@@ -8,7 +8,7 @@ from tqdm.auto import tqdm
 
 from rsrch.exp import tensorboard
 from rsrch.exp.profiler import Profiler
-from rsrch.nn.rewrite import rewrite_module_
+from rsrch.nn.rewrite import rewrite_module
 from rsrch.rl import data, gym
 from rsrch.rl.data import rollout
 from rsrch.rl.utils import polyak
@@ -84,11 +84,11 @@ def main():
 
             def apply_sn(name, mod):
                 if isinstance(mod, ImpalaResidual):
-                    mod = rewrite_module_(mod, apply_sn_res)
+                    mod = rewrite_module(mod, apply_sn_res)
 
                 return mod
 
-            rewrite_module_(enc, apply_sn)
+            rewrite_module(enc, apply_sn)
 
         enc = enc.to(device)
         return enc
@@ -108,7 +108,7 @@ def main():
         num_actions = val_env.action_space.n
         head = QHead(enc.out_features, num_actions, cfg.dist)
         if cfg.noisy_nets.enabled:
-            rewrite_module_(head, apply_noisy)
+            rewrite_module(head, apply_noisy)
         return nn.Sequential(enc, head)
 
     q = make_q().to(device)

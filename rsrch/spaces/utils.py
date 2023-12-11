@@ -11,3 +11,15 @@ def from_gym(space: gym.Space) -> np.Space:
         return np.Discrete(space.n, space.dtype, space._np_random)
     else:
         raise NotImplementedError(type(space))
+
+
+def to_gym(space: np.Space) -> gym.Space:
+    """Convert a space from here to OpenAI gym's space format."""
+    if isinstance(space, np.Box):
+        return gym.spaces.Box(
+            space.low, space.high, space.shape, space.dtype, space._seed
+        )
+    elif isinstance(space, np.Discrete):
+        return gym.spaces.Discrete(space.n, space._seed)
+    else:
+        raise NotImplementedError(type(space))

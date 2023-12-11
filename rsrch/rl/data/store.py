@@ -30,7 +30,7 @@ class Allocator:
                 self.slots[id] = ptr, ptr + n
                 self.blocks[idx][0] = ptr + n
                 self.free_space -= n
-                return ptr
+                return slice(ptr, ptr + n)
 
     def __getitem__(self, id):
         return self.slots[id]

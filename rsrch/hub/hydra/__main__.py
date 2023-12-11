@@ -4,14 +4,13 @@ from typing import Literal
 
 from rsrch.utils import _config
 
-from . import env, ppo, ppo_clean
+from . import env, ppo, td3
 
 
 @dataclass
 class Config:
     env: env.Config
-    type: Literal["ppo", "ppo_clean"]
-    ppo: ppo.Config
+    type: Literal["ppo", "td3"]
 
 
 def main():
@@ -26,9 +25,9 @@ def main():
     )
 
     if cfg.type == "ppo":
-        ppo.main(cfg.env, cfg.ppo)
-    elif cfg.type == "ppo_clean":
-        ppo_clean.main()
+        ppo.main()
+    elif cfg.type == "td3":
+        td3.main()
 
 
 if __name__ == "__main__":

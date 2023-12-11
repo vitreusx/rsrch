@@ -18,6 +18,9 @@ class Space(NDArrayOperatorsMixin):
         else:
             self._seed, self._gen = seed, None
 
+    def empty(self, shape: tuple[int, ...] = ()):
+        return np.empty([*shape, *self.shape], dtype=self.dtype)
+
     @property
     def gen(self) -> np.random.Generator:
         if self._gen is None:
@@ -48,8 +51,8 @@ class Box(Space):
     def __init__(
         self,
         shape: tuple[int, ...],
-        low: np.ndarray | Number,
-        high: np.ndarray | Number,
+        low: np.ndarray | Number | None = None,
+        high: np.ndarray | Number | None = None,
         dtype: np.dtype | None = None,
         seed: np.random.Generator | None = None,
     ):
@@ -57,7 +60,23 @@ class Box(Space):
             low = np.asarray(low)
             dtype = low.dtype
         else:
+            dtype = np.dtype(dtype)
+            if low is None:
+                if np.issubdtype(dtype, np.floating):
+                    low = np.finfo(dtype).min
+                elif np.issubdtype(dtype, np.integer):
+                    low = np.iinfo(dtype).min
+                elif dtype == np.dtype(bool):
+                    low = 0
             low = np.asarray(low, dtype)
+
+        if high is None:
+            if np.issubdtype(dtype, np.floating):
+                high = np.finfo(dtype).max
+            elif np.issubdtype(dtype, np.integer):
+                high = np.iinfo(dtype).max
+            elif dtype == np.dtype(bool):
+                high = 1
         high = np.asarray(high, dtype)
 
         super().__init__(shape, dtype, seed)

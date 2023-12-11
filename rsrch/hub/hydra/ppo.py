@@ -1,73 +1,52 @@
-import math
 import random
-from collections import defaultdict
 from dataclasses import dataclass
 from functools import partial
-from pathlib import Path
-from typing import Literal
 
 import numpy as np
 import torch
 import torch.nn.functional as F
-from ruamel import yaml
-from torch import Tensor, nn
+from torch import Tensor, nn, optim
 
 import rsrch.distributions as D
 from rsrch import spaces
 from rsrch.exp import tensorboard
 from rsrch.exp.pbar import ProgressBar
-from rsrch.nn import dist_head as dh
 from rsrch.rl import data, gym
 from rsrch.rl.data import rollout
-from rsrch.rl.utils import polyak
-from rsrch.types import Tensorlike
-from rsrch.utils import _config, cron
-from rsrch.utils.stats import RunningMeanStd
+from rsrch.rl.data.core import Step
 
-from . import alpha, env, utils
-from .utils import Optim, gae_adv_est, layer_init
+from . import env
+from .utils import over_seq
 
 
 @dataclass
 class Config:
-    alpha: alpha.Config
-    device: Literal["cuda", "cpu"]
-    env_batch: int
-    num_envs: int
-    opt_iters: int
-    opt_batch: int
-    warmup: int
-    total_steps: int
-    clip_coeff: float
-    clip_vloss: bool
-    adv_norm: bool
-    vf_coeff: float
-    clip_grad: float | None
-    gamma: float
-    gae_lambda: float
-    seed: int
-    clip_rew: float | None
-    anneal_lr: bool
-    opt: Optim
-    share_enc: bool
+    seed: int = 1
+    device: str = "cuda"
+    env_id: str = "Ant-v4"
+    total_steps: int = int(1e6)
+    lr: float = 3e-4
+    num_envs: int = 1
+    env_batch: int = 2048
+    anneal_lr: bool = True
+    gamma: float = 0.99
+    gae_lambda: float = 0.95
+    batch_size: int = 64
+    opt_iters: int = 10
+    norm_adv: bool = True
+    clip_coef: float = 0.2
+    clip_vloss: bool = True
+    ent_coef: float = 0.0
+    vf_coef: float = 0.5
+    max_grad_norm: float = 0.5
+    target_kl: float = None
 
 
-class RewardNorm:
-    """Normalize rewards so that the state values have a fixed expected value."""
-
-    def __init__(self, gamma=0.99, eps=1e-8):
-        self.rms = RunningMeanStd(shape=())
-        self.ret = 0.0
-        self.gamma = gamma
-        self.eps = eps
-
-    def reset(self):
-        self.ret = 0.0
-
-    def update(self, rew: float):
-        self.ret = self.ret * self.gamma + rew
-        self.rms.update([rew])
-        return rew / (float(self.rms.std) + self.eps)
+def layer_init(layer, std=nn.init.calculate_gain("relu"), bias=0.0):
+    if isinstance(layer, (nn.Linear, nn.Conv2d)):
+        torch.nn.init.orthogonal_(layer.weight, std)
+        torch.nn.init.constant_(layer.bias, bias)
+    return layer
 
 
 class Normal2(nn.Module):
@@ -93,253 +72,231 @@ class Normal2(nn.Module):
         return rv
 
 
-def main(env_cfg: env.Config, cfg: Config):
-    torch.manual_seed(cfg.seed)
+class TruncNormal2(nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        act_space: spaces.torch.Box,
+    ):
+        super().__init__()
+        self._out_shape = act_space.shape
+        self.register_buffer("low", act_space.low)
+        self.register_buffer("high", act_space.high)
+        self.register_buffer("_loc", 0.5 * (act_space.low + act_space.high))
+        self.register_buffer("_scale", 0.5 * (act_space.high - act_space.low))
+        act_dim = int(np.prod(act_space.shape))
+        self.loc_fc = nn.Linear(in_features, act_dim)
+        self.loc_fc.apply(partial(layer_init, std=1e-2))
+        self.log_std = nn.Parameter(torch.zeros(1, *self._out_shape))
+
+    def forward(self, x: Tensor):
+        loc: Tensor = self.loc_fc(x).reshape(-1, *self._out_shape)
+        loc = 5 * loc.tanh()
+        loc = self._loc + loc * self._scale
+        scale = F.softplus(self.log_std) * self._scale
+        rv = D.Normal(loc, scale, len(self._out_shape))
+        rv = D.TruncNormal(rv, self.low, self.high)
+        return rv
+
+
+def main():
+    cfg = Config()
+
     random.seed(cfg.seed)
     np.random.seed(cfg.seed)
+    torch.manual_seed(cfg.seed)
+    torch.backends.cudnn.deterministic = True
 
-    device = cfg.device
-    if device == "cuda" and not torch.cuda.is_available():
-        device = "cpu"
-    device = torch.device(device)
+    device = torch.device(cfg.device)
 
+    env_cfg = env.Config(type="gym", gym=env.gym.Config(env_id=cfg.env_id))
     env_f = env.make_factory(env_cfg, device)
-    assert isinstance(env_f.net_obs_space, spaces.torch.Box)
-    obs_dim = int(np.prod(env_f.net_obs_space.shape))
-    is_discrete = isinstance(env_f.net_act_space, spaces.torch.Discrete)
-    is_visual = env_f._visual
+    assert isinstance(env_f.env_act_space, spaces.np.Box)
+    assert isinstance(env_f.env_obs_space, spaces.np.Box)
+    envs = env_f.vector_env(cfg.num_envs)
+
+    steps_per_batch = cfg.env_batch // cfg.num_envs
+    num_epochs = cfg.total_steps // cfg.env_batch
 
     class ActorCritic(nn.Module):
         def __init__(self):
             super().__init__()
-            z_dim = 256 if is_visual else 64
+
+            obs_dim = int(np.prod(env_f.obs_space.shape))
 
             def make_enc():
-                if is_visual:
-                    enc = nn.Sequential(
-                        nn.Conv2d(4, 32, 8, 4),
-                        nn.ReLU(),
-                        nn.Conv2d(32, 64, 4, 2),
-                        nn.ReLU(),
-                        nn.Conv2d(64, 64, 3, 1),
-                        nn.ReLU(),
-                        nn.AdaptiveMaxPool2d((7, 7)),
-                        nn.Flatten(),
-                        nn.Linear(64 * 7 * 7, z_dim),
-                    )
-                else:
-                    enc = nn.Sequential(
-                        nn.Flatten(1),
-                        nn.Linear(obs_dim, 64),
-                        nn.ReLU(),
-                        nn.Linear(64, z_dim),
-                        nn.ReLU(),
-                    )
-
+                enc = nn.Sequential(
+                    nn.Linear(obs_dim, 64),
+                    nn.Tanh(),
+                    nn.Linear(64, 64),
+                    nn.Tanh(),
+                )
                 enc.apply(layer_init)
                 return enc
 
+            critic_stem = make_enc()
             critic_head = nn.Sequential(
-                nn.Linear(z_dim, 1),
+                nn.Linear(64, 1),
                 nn.Flatten(0),
             )
             critic_head.apply(partial(layer_init, std=1.0))
+            self.critic = nn.Sequential(critic_stem, critic_head)
 
-            if is_discrete:
-                actor_head = dh.Categorical(z_dim, env_f.net_act_space.n)
-            else:
-                actor_head = Normal2(z_dim, env_f.net_act_space)
-                # actor_head = dh.TruncNormal(z_dim, env_f.act_space)
+            actor_stem = make_enc()
+            # actor_head = Normal2(64, env_f.net_act_space)
+            actor_head = TruncNormal2(64, env_f.act_space)
+            self.actor = nn.Sequential(actor_stem, actor_head)
 
-            if cfg.share_enc:
-                self.enc = make_enc()
-                self.critic_head = critic_head
-                self.actor_head = actor_head
-            else:
-                self.critic = nn.Sequential(make_enc(), critic_head)
-                self.actor = nn.Sequential(make_enc(), actor_head)
-
-        def forward(self, obs: Tensor, values=True):
-            if cfg.share_enc:
-                z = self.enc(obs)
-                v = self.critic_head(z) if values else None
-                return self.actor_head(z), v
-            else:
-                v = self.critic(obs) if values else None
-                return self.actor(obs), v
+        def forward(self, x: Tensor):
+            return self.actor(x), self.critic(x)
 
     ac = ActorCritic().to(device)
-    ac_opt = cfg.opt.make()(ac.parameters())
-
+    optimizer = optim.Adam(ac.parameters(), lr=cfg.lr, eps=1e-5)
     if cfg.anneal_lr:
-        sched = torch.optim.lr_scheduler.LinearLR(ac_opt, 1.0, 0.0, cfg.total_steps)
+        lr_sched = optim.lr_scheduler.LinearLR(optimizer, 1.0, 0.0, num_epochs)
 
-    class make_agent(gym.vector.Agent):
-        @torch.inference_mode()
-        def policy(self, obs):
-            ac.eval()
-            act_rv, _ = ac(env_f.move_obs(obs), values=False)
-            act = act_rv.sample()
-            if not is_discrete:
-                act = act.clamp(env_f.net_act_space.low, env_f.net_act_space.high)
-            return env_f.move_act(act, to="env")
+    batch_shape = [steps_per_batch, cfg.num_envs]
+    obs = env_f.obs_space.sample(batch_shape)
+    act = env_f.act_space.sample(batch_shape)
+    logp = torch.empty(batch_shape, device=device)
+    rew = np.empty(batch_shape)
+    cont = np.empty(batch_shape)
+    val = torch.empty(batch_shape, device=device)
+    next_val = torch.empty(batch_shape, device=device)
+    ep_ret_ = np.zeros([cfg.num_envs])
+    adv_ = np.zeros(batch_shape)
 
-    envs = env_f.vector_env(num_envs=cfg.num_envs)
-    agent = make_agent()
-    env_iter = iter(rollout.steps(envs, agent))
-
-    alpha_ = alpha.Alpha(cfg.alpha, env_f.net_act_space)
+    obs_, _ = envs.reset(seed=cfg.seed)
+    obs_ = env_f.move_obs(obs_)
+    term_ = np.zeros([cfg.num_envs])
 
     exp = tensorboard.Experiment(project="hydra")
-    env_step, total_steps = 0, cfg.total_steps
+    env_step = 0
     exp.register_step("env_step", lambda: env_step, default=True)
-    pbar = ProgressBar(total=total_steps)
+    pbar = ProgressBar(desc="Hydra", total=cfg.total_steps)
 
-    should_log = cron.Every(lambda: env_step, 128)
-    should_stop = cron.Once(lambda: env_step >= total_steps)
+    autocast = torch.autocast(device.type, torch.bfloat16, enabled=False)
 
-    def incr_env_step(n=1):
-        nonlocal env_step
-        env_step += n
-        pbar.update(n)
-        for _ in range(n):
-            sched.step()
+    for _ in range(num_epochs):
+        step = 0
+        while True:
+            with torch.no_grad():
+                with autocast:
+                    act_rv_, val_ = ac(obs_)
 
-    vpg_buf = data.OnlineBuffer()
-    vpg_ep_ids = [None for _ in range(envs.num_envs)]
-    ep_rets = [0.0 for _ in range(envs.num_envs)]
-    env_rew_norms = [RewardNorm() for _ in range(envs.num_envs)]
+            if step > 0:
+                for env_idx in range(cfg.num_envs):
+                    if not done_[env_idx]:
+                        next_val[step - 1, env_idx] = val_[env_idx]
 
-    for _ in range(cfg.warmup):
-        next(env_iter)
-        incr_env_step()
+            if step >= steps_per_batch:
+                break
 
-    while not should_stop:
-        vpg_buf.reset()
-        for _ in range(cfg.env_batch):
-            env_idx, step = next(env_iter)
+            act_ = act_rv_.sample()
+            env_act = env_f.move_act(act_, to="env")
+            env_act = env_act.clip(env_f.env_act_space.low, env_f.env_act_space.high)
+            next_obs, rew_, term_, trunc_, info_ = envs.step(env_act)
 
-            ep_rets[env_idx] += step.reward
-            step.reward = env_rew_norms[env_idx].update(step.reward)
+            ep_ret_ += rew_
+            done_ = term_ | trunc_
+            act[step] = act_
+            logp[step] = act_rv_.log_prob(act_)
+            cont[step] = 1.0 - term_.astype(float)
+            val[step] = val_
+            obs[step] = obs_
+            rew[step] = rew_
 
-            vpg_ep_ids[env_idx] = vpg_buf.push(vpg_ep_ids[env_idx], step)
+            for env_idx in range(cfg.num_envs):
+                if done_[env_idx]:
+                    if term_[env_idx]:
+                        next_val[step, env_idx] = 0.0
+                    else:
+                        final_obs = info_["final_observation"][env_idx]
+                        final_obs = env_f.move_obs(final_obs[None])
+                        with torch.no_grad():
+                            with autocast:
+                                final_val = ac.critic(final_obs)[0]
+                        next_val[step, env_idx] = final_val
+                    exp.add_scalar("train/ep_ret", ep_ret_[env_idx])
+                    ep_ret_[env_idx] = 0.0
 
-            if step.done:
-                exp.add_scalar("train/ep_ret", ep_rets[env_idx])
-                ep_rets[env_idx] = 0.0
-                env_rew_norms[env_idx].reset()
+            next_obs = env_f.move_obs(next_obs)
+            obs_ = next_obs
 
-            incr_env_step()
+            env_step += cfg.num_envs
+            pbar.update(cfg.num_envs)
+            step += 1
 
-        episodes = [*vpg_buf.values()]
-        sizes = np.array([len(ep.act) for ep in episodes])
+        last_adv = 0.0
+        val_, next_val_ = val.cpu().numpy(), next_val.cpu().numpy()
+        for t in reversed(range(steps_per_batch)):
+            delta = (rew[t] + cfg.gamma * cont[t] * next_val_[t]) - val_[t]
+            adv_[t] = last_adv = delta + cfg.gamma * cfg.gae_lambda * cont[t] * last_adv
 
-        obs = np.stack([o for ep in episodes for o in ep.obs])
-        obs = env_f.move_obs(obs)
-        ep_obs = obs.split_with_sizes([*(sizes + 1)])
+        adv = torch.as_tensor(adv_, device=device)
+        ret = torch.as_tensor(adv_ + val_, device=device)
 
-        obs_mask = []
-        for o in ep_obs:
-            obs_mask.extend([True] * (len(o) - 1))
-            obs_mask.append(False)
-        obs_mask = torch.tensor(obs_mask)
-        obs_idxes = torch.where(obs_mask)[0]
+        b_obs = obs.flatten(0, 1)
+        b_logp = logp.flatten(0, 1)
+        b_act = act.flatten(0, 1)
+        b_adv = adv.flatten(0, 1)
+        b_ret = ret.flatten(0, 1)
+        b_val = val.flatten(0, 1)
 
-        act = np.stack([a for ep in episodes for a in ep.act])
-        act = env_f.move_act(act)
-
-        rew = torch.tensor(
-            [r for ep in episodes for r in ep.reward],
-            device=device,
-            dtype=torch.float32,
-        )
-
-        term = [ep.term for ep in episodes]
-
-        if cfg.clip_rew is not None:
-            rew = rew.clamp(-cfg.clip_rew, cfg.clip_rew)
-
-        with torch.no_grad():
-            policy, val = ac(obs)
-            logp = policy[obs_idxes].log_prob(act)
-
-            ep_rews = rew.split_with_sizes([*sizes])
-            ep_vals = val.split_with_sizes([*(sizes + 1)])
-
-            adv, ret = [], []
-            for ep_term, ep_rew, ep_val in zip(term, ep_rews, ep_vals):
-                if ep_term:
-                    ep_val[-1] = 0.0
-                ep_adv, ep_ret = gae_adv_est(ep_rew, ep_val, cfg.gamma, cfg.gae_lambda)
-                adv.append(ep_adv)
-                ret.append(ep_ret)
-            adv, ret = torch.cat(adv), torch.cat(ret)
-
-            val = torch.cat([v[:-1] for v in ep_vals])
-
-        metrics = {} if should_log else None
-
+        # Optimizing the policy and value network
+        clipfracs = []
         for _ in range(cfg.opt_iters):
-            perm = torch.randperm(len(act))
-            for idxes in perm.split(cfg.opt_batch):
-                idxes_ = obs_idxes[idxes]
-                new_policy, new_value = ac(obs[idxes_])
-                new_logp = new_policy.log_prob(act[idxes])
-                log_ratio = new_logp - logp[idxes]
-                ratio = log_ratio.exp()
+            for idxes in torch.randperm(cfg.env_batch).split(cfg.batch_size):
+                with autocast:
+                    new_act_rv, new_val = ac(b_obs[idxes])
+                    new_logp = new_act_rv.log_prob(b_act[idxes])
+                    new_ent = new_act_rv.entropy()
 
-                adv_ = adv[idxes]
-                if cfg.adv_norm:
-                    adv_ = (adv_ - adv_.mean()) / (adv_.std() + 1e-8)
+                logratio = new_logp - b_logp[idxes]
+                ratio = logratio.exp()
 
-                t1 = -adv_ * ratio
-                t2 = -adv_ * ratio.clamp(1 - cfg.clip_coeff, 1 + cfg.clip_coeff)
-                policy_loss = torch.max(t1, t2).mean()
+                with torch.no_grad():
+                    clipfracs += [
+                        ((ratio - 1.0).abs() > cfg.clip_coef).float().mean().item()
+                    ]
 
+                mb_adv = b_adv[idxes]
+                if cfg.norm_adv:
+                    mb_adv = (mb_adv - mb_adv.mean()) / (mb_adv.std() + 1e-8)
+
+                # Policy loss
+                pg_loss1 = -mb_adv * ratio
+                pg_loss2 = -mb_adv * torch.clamp(
+                    ratio, 1 - cfg.clip_coef, 1 + cfg.clip_coef
+                )
+                pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+
+                # Value loss
+                mb_ret, mb_old_val = b_ret[idxes], b_val[idxes]
                 if cfg.clip_vloss:
-                    clipped_v = val[idxes] + (new_value - val[idxes]).clamp(
-                        -cfg.clip_coeff, cfg.clip_coeff
+                    v_loss_unclipped = (new_val - mb_ret) ** 2
+                    v_clipped = mb_old_val + torch.clamp(
+                        new_val - mb_old_val,
+                        -cfg.clip_coef,
+                        cfg.clip_coef,
                     )
-                    v_loss1 = (new_value - ret[idxes]).square()
-                    v_loss2 = (clipped_v - ret[idxes]).square()
-                    v_loss = 0.5 * torch.max(v_loss1, v_loss2).mean()
+                    v_loss_clipped = (v_clipped - b_ret[idxes]) ** 2
+                    v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
+                    v_loss = 0.5 * v_loss_max.mean()
                 else:
-                    v_loss = 0.5 * (new_value - ret[idxes]).square().mean()
-                v_loss = cfg.vf_coeff * v_loss
+                    v_loss = 0.5 * ((new_val - mb_ret) ** 2).mean()
 
-                policy_ent = new_policy.entropy()
+                entropy_loss = new_ent.mean()
+                loss = pg_loss - cfg.ent_coef * entropy_loss + v_loss * cfg.vf_coef
 
-                ent_adv = alpha_.value * policy_ent
-                t1 = -ent_adv * ratio
-                t2 = -ent_adv * ratio.clamp(1 - cfg.clip_coeff, 1 + cfg.clip_coeff)
-                ent_loss = torch.max(t1, t2).mean()
-
-                loss = policy_loss + v_loss + ent_loss
-                ac_opt.zero_grad(set_to_none=True)
+                optimizer.zero_grad()
                 loss.backward()
-                if cfg.clip_grad is not None:
-                    nn.utils.clip_grad.clip_grad_norm_(ac.parameters(), cfg.clip_grad)
-                ac_opt.step()
+                nn.utils.clip_grad_norm_(ac.parameters(), cfg.max_grad_norm)
+                optimizer.step()
 
-                if metrics is not None:
-                    if "train/loss" not in metrics:
-                        metrics["train/loss"] = loss
-                        metrics["train/policy_loss"] = policy_loss
-                        metrics["train/v_loss"] = v_loss
-                        metrics["train/ent_loss"] = ent_loss
-                        metrics["train/mean_v"] = val.mean()
-                        metrics["train/mean_ent"] = policy_ent.mean()
+        exp.add_scalar("train/value_loss", v_loss.item())
+        exp.add_scalar("train/policy_loss", pg_loss.item())
+        exp.add_scalar("train/mean_ent", new_ent.mean().item())
+        exp.add_scalar("train/clip_frac", np.mean(clipfracs))
 
-                alpha_.opt_step(policy_ent, metrics=metrics)
-
-        if cfg.anneal_lr:
-            if metrics is not None:
-                metrics["train/lr"] = sched.get_last_lr()[0]
-
-        if metrics is not None:
-            for name, value in metrics.items():
-                exp.add_scalar(name, value)
-
-
-if __name__ == "__main__":
-    main()
+        lr_sched.step()

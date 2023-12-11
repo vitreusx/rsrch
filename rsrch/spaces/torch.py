@@ -27,6 +27,9 @@ class Space:
             self._gen.manual_seed(self._seed)
         return self._gen
 
+    def empty(self, shape: tuple[int, ...] = ()):
+        return torch.empty([*shape, *self.shape], dtype=self.dtype, device=self.device)
+
     @classmethod
     def __torch_function__(cls, func, types, args=(), kwargs=None):
         kwargs = {} if kwargs is None else kwargs
@@ -49,8 +52,8 @@ class Box(Space):
     def __init__(
         self,
         shape: tuple[int, ...],
-        low: Tensor | Number,
-        high: Tensor | Number,
+        low: Tensor | Number | None = None,
+        high: Tensor | Number | None = None,
         dtype: torch.dtype | None = None,
         device: torch.device | None = None,
         seed: torch.Generator | int | None = None,
@@ -59,7 +62,18 @@ class Box(Space):
             low = torch.as_tensor(low, device=device)
             dtype = low.dtype
         else:
+            if low is None:
+                if dtype.is_floating_point:
+                    low = torch.finfo(dtype).min
+                else:
+                    low = torch.iinfo(dtype).min
             low = torch.as_tensor(low, dtype=dtype, device=device)
+
+        if high is None:
+            if dtype.is_floating_point:
+                high = torch.finfo(dtype).max
+            else:
+                high = torch.iinfo(dtype).max
         high = torch.as_tensor(high, dtype=dtype, device=device)
 
         super().__init__(shape, dtype, device, seed)
@@ -87,14 +101,12 @@ class Box(Space):
             u = torch.where(self.bounded, u * (self.high - self.low), u)
             u = torch.where(self.bounded_below, self.low + u, u)
         else:
-            u = torch.randint(
-                self.low,
-                self.high,
-                shape,
-                dtype=self.dtype,
-                device=self.device,
-                generator=self.gen,
+            u = torch.rand(
+                shape, dtype=torch.float32, device=self.device, generator=self.gen
             )
+            u = (self.high - self.low).float() * u + self.low
+            u = u.clamp(self.low, self.high - 1e-8)
+            u = u.to(self.dtype)
 
         return u
 
@@ -134,7 +146,7 @@ class Discrete(Space):
         device: torch.device | None = None,
         seed: torch.Generator | None = None,
     ):
-        assert isinstance(dtype, torch.int)
+        assert not dtype.is_floating_point
         super().__init__((), dtype, device, seed)
         self.n = n
 
