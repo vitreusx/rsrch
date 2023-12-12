@@ -18,7 +18,7 @@ from rsrch.rl.utils import polyak
 from rsrch.utils import cron
 
 from . import env
-from .utils import TruncNormal2
+from .utils import GenAdvEst, TruncNormal2, over_seq
 
 
 @dataclass
@@ -28,10 +28,11 @@ class Config:
     env_id: str = "Ant-v4"
     total_steps: int = int(1e6)
     train_envs: int = 1
-    buffer_cap: int = int(100e3)
-    warmup: int = int(25e3)
+    buffer_cap: int = int(128e3)
+    warmup: int = int(16e3)
     env_batch: int = 1
-    batch_size: int = 256
+    batch_size: int = 32
+    num_steps: int = 16
     opt_iters: int = 1
     policy_opt_freq: float = 0.5
     expl_noise: float = 0.1
@@ -39,6 +40,7 @@ class Config:
     noise_clip: float = 0.5
     gamma: float = 0.99
     tau: float = 0.995
+    gae_lambda: float = 0.95
     val_episodes: int = 16
     val_envs: int = val_episodes
     val_every: int = int(32e3)
@@ -70,6 +72,35 @@ def main():
 
     obs_dim = int(np.prod(env_f.obs_space.shape))
     act_dim = int(np.prod(env_f.act_space.shape))
+
+    class WorldModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.num_layers, self.state_dim = 2, 64
+
+            self._init = nn.Sequential(
+                nn.Linear(obs_dim, 64),
+                nn.ReLU(),
+                nn.Linear(64, 64),
+                nn.ReLU(),
+                nn.Linear(64, self.num_layers * self.state_dim),
+            )
+
+            self._seq = nn.GRU(
+                input_size=obs_dim + act_dim,
+                hidden_size=self.state_dim,
+                num_layers=self.num_layers,
+            )
+
+            self.to(device)
+
+        def forward(self, obs: Tensor, act: Tensor):
+            # obs.shape, act.shape = [L+1, N, ...], [L, N, ...]
+            L, N = act.shape[:2]
+            h0 = self._init(obs[0]).reshape(N, self.num_layers, self.state_dim)
+            seq_x = torch.cat([act, obs[1:]], -1)
+            _, hx = self._seq(seq_x, h0)
+            return torch.cat([h0[-1][None], hx], 0)
 
     class Q(nn.Module):
         def __init__(self):
@@ -121,6 +152,8 @@ def main():
             act = act.clamp(env_f.act_space.low, env_f.act_space.high)
             return act
 
+    wm = WorldModel()
+
     q1, q2, q1_t, q2_t = Q(), Q(), Q(), Q()
     q1_p = polyak.Polyak(q1, q1_t, cfg.tau)
     q2_p = polyak.Polyak(q2, q2_t, cfg.tau)
@@ -136,7 +169,8 @@ def main():
     polyak.sync(actor, actor_t)
 
     sampler = data.UniformSampler()
-    buf = env_f.step_buffer(cfg.buffer_cap, sampler)
+    # buf = env_f.step_buffer(cfg.buffer_cap, sampler)
+    buf = env_f.slice_buffer(cfg.buffer_cap, num_steps=cfg.num_steps, sampler=sampler)
     ep_ids = [None for _ in range(train_envs.num_envs)]
     ep_rets = [0.0 for _ in range(train_envs.num_envs)]
     ep_lens = [0 for _ in range(train_envs.num_envs)]
@@ -177,6 +211,8 @@ def main():
     should_log_a = cron.Every(lambda: env_step, 128)
     q_opt_iters, actor_opt_iters = 0, 0
 
+    gen_adv_est = GenAdvEst(gamma=cfg.gamma, gae_lambda=cfg.gae_lambda)
+
     with prof(name="Hydra") as _prof:
         while env_step < cfg.total_steps:
             if should_val:
@@ -213,24 +249,25 @@ def main():
 
             for _ in range(cfg.opt_iters):
                 idxes = sampler.sample(cfg.batch_size)
-                batch = env_f.fetch_step_batch(buf, idxes)
+                batch = env_f.fetch_slice_batch(buf, idxes)
 
                 with torch.no_grad():
-                    noise = torch.randn_like(batch.act) * cfg.policy_noise
+                    next_act = over_seq(actor_t)(batch.obs)
+                    noise = torch.randn_like(next_act) * cfg.policy_noise
                     noise = noise.clamp(-cfg.noise_clip, cfg.noise_clip)
                     noise = noise * act_scale
-                    next_act = actor_t(batch.next_obs) + noise
+                    next_act = next_act + noise
                     next_act = next_act.clamp(env_f.act_space.low, env_f.act_space.high)
 
-                    next_q1_t = q1_t(batch.next_obs, next_act)
-                    next_q2_t = q2_t(batch.next_obs, next_act)
-                    q_target = batch.reward + cfg.gamma * (
-                        1.0 - batch.term.float()
-                    ) * torch.min(next_q1_t, next_q2_t)
+                    next_q1_t = over_seq(q1_t)(batch.obs, next_act)
+                    next_q2_t = over_seq(q2_t)(batch.obs, next_act)
+                    vt = torch.min(next_q1_t, next_q2_t)
 
-                q1_pred = q1(batch.obs, batch.act)
+                    q_target = gen_adv_est.ret(batch.reward, batch.term, vt)
+
+                q1_pred = over_seq(q1)(batch.obs[:-1], batch.act)
                 q1_loss = F.mse_loss(q1_pred, q_target)
-                q2_pred = q2(batch.obs, batch.act)
+                q2_pred = over_seq(q2)(batch.obs[:-1], batch.act)
                 q2_loss = F.mse_loss(q2_pred, q_target)
                 q_loss = q1_loss + q2_loss
 
@@ -248,7 +285,9 @@ def main():
                     exp.add_scalar("train/q_opt_iters", q_opt_iters)
 
                 if q_opt_iters * cfg.policy_opt_freq >= actor_opt_iters:
-                    actor_loss = -q1(batch.obs, actor(batch.obs)).mean()
+                    actor_loss = -over_seq(q1)(
+                        batch.obs, over_seq(actor)(batch.obs)
+                    ).mean()
                     actor_opt.zero_grad(set_to_none=True)
                     actor_loss.backward()
                     actor_opt.step()

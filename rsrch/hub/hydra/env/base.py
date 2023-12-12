@@ -161,7 +161,7 @@ class Factory:
         act = self.move_act(act.reshape(-1, *act.shape[2:]))
         act = act.reshape(seq_len, batch_size, *act.shape[1:])
 
-        reward = np.array([seq.reward for seq in batch])
+        reward = np.stack([seq.reward for seq in batch], axis=1)
         reward = torch.as_tensor(reward, dtype=obs.dtype, device=obs.device)
 
         term = np.array([seq.term for seq in batch])

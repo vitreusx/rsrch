@@ -57,13 +57,16 @@ class Box(Space):
         seed: np.random.Generator | None = None,
     ):
         if dtype is None:
-            low = np.asarray(low)
+            if low is None:
+                dtype = np.float32
+                low = -np.inf
+            low = np.asarray(low, dtype)
             dtype = low.dtype
         else:
             dtype = np.dtype(dtype)
             if low is None:
                 if np.issubdtype(dtype, np.floating):
-                    low = np.finfo(dtype).min
+                    low = -np.inf
                 elif np.issubdtype(dtype, np.integer):
                     low = np.iinfo(dtype).min
                 elif dtype == np.dtype(bool):
@@ -72,7 +75,7 @@ class Box(Space):
 
         if high is None:
             if np.issubdtype(dtype, np.floating):
-                high = np.finfo(dtype).max
+                high = np.inf
             elif np.issubdtype(dtype, np.integer):
                 high = np.iinfo(dtype).max
             elif dtype == np.dtype(bool):
@@ -114,6 +117,11 @@ class Box(Space):
 
     def __array__(self, dtype=None):
         return self.low.copy()
+
+    def __getitem__(self, idx):
+        low = self.low[idx]
+        high = self.high[idx]
+        return Box(low.shape, low, high, low.dtype)
 
     def __array_ufunc__(self, ufunc, method, *args, **kwargs):
         if method == "__call__":

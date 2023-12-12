@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from functools import cache, partial, wraps
+from functools import cache, partial, singledispatchmethod, wraps
 from typing import Literal
 
 import numpy as np
@@ -98,3 +98,58 @@ class TruncNormal2(nn.Module):
         rv = D.Normal(loc, scale, len(self._out_shape))
         rv = D.TruncNormal(rv, self.low, self.high)
         return rv
+
+
+class GenAdvEst:
+    """Generalized advantage estimator."""
+
+    def __init__(self, gamma: float, gae_lambda: float):
+        self.gamma = gamma
+        self.gae_lambda = gae_lambda
+
+    def ret(self, rew: Tensor, term: Tensor, v: Tensor):
+        """Compute amortized returns.
+        :param rew: Reward tensor, of shape (L, ...).
+        :param cont: Whether next state (corresponding to next_v) is
+        non-terminal, of shape (L, ...).
+        :param v: Value tensor, of shape (L + 1, ...)."""
+
+        L = len(rew)
+        ret = torch.empty_like(rew)
+        for t in reversed(range(L)):
+            if t == L - 1:
+                cont = 1.0 - term.float()
+                gae_est = rew[t] + self.gamma * cont * v[t + 1]
+            else:
+                gae_est = rew[t] + self.gamma * last_ret
+            ret[t] = last_ret = (
+                self.gae_lambda * gae_est + (1.0 - self.gae_lambda) * v[t]
+            )
+
+        return ret
+
+    def __call__(self, v: Tensor, next_v: Tensor, term: Tensor, rew: Tensor):
+        """Compute advantages and returns via GAE.
+        :param v: Value tensor, of shape (L, ...).
+        :param next_v: Next-value tensor, of shape (L, ...).
+        :param cont: Whether final next-state (corresponding to next_v) is
+        non-terminal, of shape (...).
+        :param rew: Reward tensor, of shape (L, ...).
+        """
+
+        last_adv = 0.0
+        L = len(v)
+        adv = torch.empty_like(v)
+        for t in reversed(range(L)):
+            if t == L - 1:
+                cont = 1.0 - term.float()
+                delta = rew[t] + self.gamma * cont * next_v[t] - v[t]
+                adv[t] = last_adv = (
+                    delta + self.gamma * self.gae_lambda * cont * last_adv
+                )
+            else:
+                delta = rew[t] + self.gamma * next_v[t] - v[t]
+                adv[t] = last_adv = delta + self.gamma * self.gae_lambda * last_adv
+
+        ret = adv + v
+        return adv, ret

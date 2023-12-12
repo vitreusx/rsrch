@@ -16,7 +16,7 @@ from rsrch.rl.data import rollout
 from rsrch.rl.data.core import Step
 
 from . import env
-from .utils import over_seq
+from .utils import TruncNormal2, over_seq
 
 
 @dataclass
@@ -47,56 +47,6 @@ def layer_init(layer, std=nn.init.calculate_gain("relu"), bias=0.0):
         torch.nn.init.orthogonal_(layer.weight, std)
         torch.nn.init.constant_(layer.bias, bias)
     return layer
-
-
-class Normal2(nn.Module):
-    def __init__(
-        self,
-        in_features: int,
-        act_space: spaces.torch.Box,
-    ):
-        super().__init__()
-        self._out_shape = act_space.shape
-        self.register_buffer("loc", 0.5 * (act_space.low + act_space.high))
-        self.register_buffer("scale", 0.5 * (act_space.high - act_space.low))
-        act_dim = int(np.prod(self._out_shape))
-        self.mean_fc = nn.Linear(in_features, act_dim)
-        self.mean_fc.apply(partial(layer_init, std=1e-2))
-        self.log_std = nn.Parameter(torch.zeros(1, *self._out_shape))
-
-    def forward(self, x: Tensor) -> D.Normal:
-        mean: Tensor = self.mean_fc(x).reshape(-1, *self._out_shape)
-        std = self.log_std.exp().expand_as(mean)
-        rv = D.Normal(mean, std, len(self._out_shape))
-        rv = D.Affine(rv, self.loc, self.scale)
-        return rv
-
-
-class TruncNormal2(nn.Module):
-    def __init__(
-        self,
-        in_features: int,
-        act_space: spaces.torch.Box,
-    ):
-        super().__init__()
-        self._out_shape = act_space.shape
-        self.register_buffer("low", act_space.low)
-        self.register_buffer("high", act_space.high)
-        self.register_buffer("_loc", 0.5 * (act_space.low + act_space.high))
-        self.register_buffer("_scale", 0.5 * (act_space.high - act_space.low))
-        act_dim = int(np.prod(act_space.shape))
-        self.loc_fc = nn.Linear(in_features, act_dim)
-        self.loc_fc.apply(partial(layer_init, std=1e-2))
-        self.log_std = nn.Parameter(torch.zeros(1, *self._out_shape))
-
-    def forward(self, x: Tensor):
-        loc: Tensor = self.loc_fc(x).reshape(-1, *self._out_shape)
-        loc = 5 * loc.tanh()
-        loc = self._loc + loc * self._scale
-        scale = F.softplus(self.log_std) * self._scale
-        rv = D.Normal(loc, scale, len(self._out_shape))
-        rv = D.TruncNormal(rv, self.low, self.high)
-        return rv
 
 
 def main():
@@ -143,7 +93,6 @@ def main():
             self.critic = nn.Sequential(critic_stem, critic_head)
 
             actor_stem = make_enc()
-            # actor_head = Normal2(64, env_f.net_act_space)
             actor_head = TruncNormal2(64, env_f.act_space)
             self.actor = nn.Sequential(actor_stem, actor_head)
 

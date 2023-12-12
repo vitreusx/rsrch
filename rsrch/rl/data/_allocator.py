@@ -27,19 +27,25 @@ class Allocator:
         """Reallocate a block of memory."""
         ptr, end = self.slots[id]
         if end - ptr > new_size:
-            self.slots[id] = ptr, ptr + new_size
-            self.free_space += (end - ptr) - new_size
-            self.blocks.append([ptr, ptr + new_size])
-            self._fix_blk()
-            return slice(ptr, ptr + new_size)
+            self.shrink(id, new_size)
         elif end - ptr < new_size:
             state = deepcopy(self)
             self.free(id)
-            blk = self.malloc(id, end - ptr)
+            blk = self.malloc(id, new_size)
             if blk is None:
                 for attr in ["slots", "mem_size", "free_space", "blocks"]:
                     setattr(self, attr, getattr(state, attr))
             return blk
+
+    def shrink(self, id: int, new_size: int):
+        """Shrink a block of memory."""
+        ptr, end = self.slots[id]
+        if end - ptr > new_size:
+            self.slots[id] = ptr, ptr + new_size
+            self.free_space += (end - ptr) - new_size
+            self.blocks.append([ptr + new_size, end])
+            self._fix_blk()
+            return slice(ptr, ptr + new_size)
 
     def _fix_blk(self):
         self.blocks.sort()
