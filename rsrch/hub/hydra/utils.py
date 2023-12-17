@@ -81,22 +81,46 @@ class TruncNormal2(nn.Module):
     ):
         super().__init__()
         self._out_shape = act_space.shape
-        self.register_buffer("low", act_space.low)
-        self.register_buffer("high", act_space.high)
+        self.register_buffer("_low", -torch.ones_like(act_space.low))
+        self.register_buffer("_high", torch.ones_like(act_space.high))
+        self.register_buffer("_loc", 0.5 * (act_space.low + act_space.high))
+        self.register_buffer("_scale", 0.5 * (act_space.high - act_space.low))
+        act_dim = int(np.prod(act_space.shape))
+        self.loc_fc = nn.Linear(in_features, act_dim)
+        # self.loc_fc.apply(partial(layer_init, std=1e-2))
+        self.loc_fc.apply(layer_init)
+        self.log_std = nn.Parameter(torch.ones(1, *self._out_shape))
+
+    def forward(self, x: Tensor):
+        loc: Tensor = self.loc_fc(x).reshape(-1, *self._out_shape)
+        loc, scale = loc.tanh(), self.log_std.exp()
+        rv = D.Normal(loc, scale, len(self._out_shape))
+        rv = D.TruncNormal(rv, self._low, self._high)
+        rv = D.Affine(rv, self._loc, self._scale)
+        return rv
+
+
+class Normal2(nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        act_space: spaces.torch.Box,
+    ):
+        super().__init__()
+        self._out_shape = act_space.shape
         self.register_buffer("_loc", 0.5 * (act_space.low + act_space.high))
         self.register_buffer("_scale", 0.5 * (act_space.high - act_space.low))
         act_dim = int(np.prod(act_space.shape))
         self.loc_fc = nn.Linear(in_features, act_dim)
         self.loc_fc.apply(partial(layer_init, std=1e-2))
+        # self.loc_fc.apply(layer_init)
         self.log_std = nn.Parameter(torch.zeros(1, *self._out_shape))
 
     def forward(self, x: Tensor):
         loc: Tensor = self.loc_fc(x).reshape(-1, *self._out_shape)
-        loc = 5 * loc.tanh()
-        loc = self._loc + loc * self._scale
-        scale = F.softplus(self.log_std) * self._scale
+        loc, scale = loc.tanh(), self.log_std.exp()
         rv = D.Normal(loc, scale, len(self._out_shape))
-        rv = D.TruncNormal(rv, self.low, self.high)
+        rv = D.Affine(rv, self._loc, self._scale)
         return rv
 
 
@@ -128,7 +152,7 @@ class GenAdvEst:
 
         return ret
 
-    def __call__(self, v: Tensor, next_v: Tensor, term: Tensor, rew: Tensor):
+    def adv_ret(self, v: Tensor, next_v: Tensor, term: Tensor, rew: Tensor):
         """Compute advantages and returns via GAE.
         :param v: Value tensor, of shape (L, ...).
         :param next_v: Next-value tensor, of shape (L, ...).

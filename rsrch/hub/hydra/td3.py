@@ -25,7 +25,7 @@ from .utils import GenAdvEst, TruncNormal2, over_seq
 class Config:
     seed: int = 1
     device: str = "cuda"
-    env_id: str = "Ant-v4"
+    env_id: str = "Humanoid-v4"
     total_steps: int = int(1e6)
     train_envs: int = 1
     buffer_cap: int = int(128e3)
@@ -92,14 +92,30 @@ def main():
                 num_layers=self.num_layers,
             )
 
+            self.pred = nn.Sequential(
+                nn.Linear(self.state_dim, 64),
+                nn.ReLU(),
+                nn.Linear(64, 64),
+                nn.ReLU(),
+                nn.Linear(64, self.state_dim),
+            )
+
+            self.rew_head = nn.Sequential(
+                nn.Linear(self.state_dim, 64),
+                nn.ReLU(),
+                nn.Linear(64, 1),
+                nn.Flatten(0),
+            )
+
             self.to(device)
 
         def forward(self, obs: Tensor, act: Tensor):
             # obs.shape, act.shape = [L+1, N, ...], [L, N, ...]
             L, N = act.shape[:2]
             h0 = self._init(obs[0]).reshape(N, self.num_layers, self.state_dim)
+            h0 = h0.permute(1, 0, 2)
             seq_x = torch.cat([act, obs[1:]], -1)
-            _, hx = self._seq(seq_x, h0)
+            hx, _ = self._seq(seq_x, h0.contiguous())
             return torch.cat([h0[-1][None], hx], 0)
 
     class Q(nn.Module):
@@ -152,7 +168,8 @@ def main():
             act = act.clamp(env_f.act_space.low, env_f.act_space.high)
             return act
 
-    wm = WorldModel()
+    # wm = WorldModel()
+    # wm_opt = torch.optim.Adam(wm.parameters(), lr=3e-4, eps=1e-5)
 
     q1, q2, q1_t, q2_t = Q(), Q(), Q(), Q()
     q1_p = polyak.Polyak(q1, q1_t, cfg.tau)
@@ -276,6 +293,16 @@ def main():
                 q_opt.step()
                 q_opt_iters += 1
 
+                # wm_hx = wm(batch.obs, batch.act)
+                # pred_hx = over_seq(wm.pred)(wm_hx[:-1])
+                # pred_loss = F.mse_loss(pred_hx, wm_hx[1:].detach())
+                # wm_rew = over_seq(wm.rew_head)(wm_hx[1:])
+                # rew_loss = F.mse_loss(wm_rew, batch.reward)
+                # wm_loss = pred_loss + rew_loss
+
+                # wm_opt.zero_grad(set_to_none=True)
+                # wm_loss.backward()
+
                 if should_log_q:
                     exp.add_scalar("train/q1_pred", q1_pred.mean())
                     exp.add_scalar("train/q2_pred", q2_pred.mean())
@@ -283,6 +310,8 @@ def main():
                     exp.add_scalar("train/q2_loss", q2_loss)
                     exp.add_scalar("train/q_loss", q_loss)
                     exp.add_scalar("train/q_opt_iters", q_opt_iters)
+                    # exp.add_scalar("train/pred_loss", pred_loss)
+                    # exp.add_scalar("train/rew_loss", rew_loss)
 
                 if q_opt_iters * cfg.policy_opt_freq >= actor_opt_iters:
                     actor_loss = -over_seq(q1)(

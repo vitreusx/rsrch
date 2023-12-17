@@ -16,14 +16,14 @@ from rsrch.rl.data import rollout
 from rsrch.rl.data.core import Step
 
 from . import env
-from .utils import TruncNormal2, over_seq
+from .utils import Normal2, TruncNormal2, over_seq
 
 
 @dataclass
 class Config:
     seed: int = 1
     device: str = "cuda"
-    env_id: str = "Ant-v4"
+    env_id: str = "Humanoid-v4"
     total_steps: int = int(1e6)
     lr: float = 3e-4
     num_envs: int = 1
@@ -93,7 +93,8 @@ def main():
             self.critic = nn.Sequential(critic_stem, critic_head)
 
             actor_stem = make_enc()
-            actor_head = TruncNormal2(64, env_f.act_space)
+            # actor_head = TruncNormal2(64, env_f.act_space)
+            actor_head = Normal2(64, env_f.act_space)
             self.actor = nn.Sequential(actor_stem, actor_head)
 
         def forward(self, x: Tensor):
