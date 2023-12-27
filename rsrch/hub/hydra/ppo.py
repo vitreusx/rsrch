@@ -49,6 +49,27 @@ def layer_init(layer, std=nn.init.calculate_gain("relu"), bias=0.0):
     return layer
 
 
+class ClipNormal(nn.Module):
+    def __init__(self, in_features: int, act_space: spaces.torch.Box):
+        super().__init__()
+        self.register_buffer("low", act_space.low)
+        self.register_buffer("high", act_space.high)
+        self._out_shape = act_space.shape
+        act_dim = int(np.prod(act_space.shape))
+        self.loc_fc = nn.Linear(in_features, act_dim)
+        self.log_std = nn.Parameter(torch.zeros(1, *self._out_shape))
+
+    def forward(self, x: Tensor) -> Tensor:
+        loc: Tensor = self.loc_fc(x)
+        loc = loc.reshape(-1, *self._out_shape)
+        scale = self.log_std.exp().expand_as(loc)
+        return D.ClipNormal(
+            D.Normal(loc, scale, len(self._out_shape)),
+            self.low,
+            self.high,
+        )
+
+
 def main():
     cfg = Config()
 
@@ -93,8 +114,10 @@ def main():
             self.critic = nn.Sequential(critic_stem, critic_head)
 
             actor_stem = make_enc()
-            # actor_head = TruncNormal2(64, env_f.act_space)
-            actor_head = Normal2(64, env_f.act_space)
+            # actor_head = Normal2(64, env_f.act_space)
+            actor_head = TruncNormal2(64, env_f.act_space)
+            # actor_head = ClipNormal(64, env_f.act_space)
+
             self.actor = nn.Sequential(actor_stem, actor_head)
 
         def forward(self, x: Tensor):

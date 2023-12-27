@@ -12,24 +12,25 @@ class Distribution:
 
     @property
     def variance(self) -> Tensor:
-        return self.std.square()
+        return self.var
 
     @property
     def var(self) -> Tensor:
-        return self.variance
+        raise NotImplementedError()
 
     @property
     def std(self) -> Tensor:
-        return self.variance.sqrt()
+        return self.var.sqrt()
 
     @property
     def mode(self) -> Tensor:
         raise NotImplementedError()
 
-    def sample(self, sample_shape: torch.Size) -> Tensor:
-        raise NotImplementedError()
+    def sample(self, sample_shape: torch.Size = ()) -> Tensor:
+        with torch.no_grad():
+            return self.rsample(sample_shape)
 
-    def rsample(self, sample_shape: torch.Size) -> Tensor:
+    def rsample(self, sample_shape: torch.Size = ()) -> Tensor:
         raise NotImplementedError()
 
     def log_prob(self, value: Tensor) -> Tensor:

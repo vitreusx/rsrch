@@ -26,19 +26,6 @@ def norm_qf(x: Tensor, eps=1e-7):
     return np.sqrt(2.0) * torch.erfinv(z)
 
 
-def lazy_property(_func):
-    @property
-    def _prop(self):
-        var = "_" + _func.__name__
-        if not hasattr(self, var):
-            self.register(var, None)
-        if getattr(self, var) is None:
-            setattr(self, var, _func(self))
-        return getattr(self, var)
-
-    return _prop
-
-
 class TruncNormal(Distribution, Tensorlike):
     def __init__(self, norm: Normal, low: Tensor, high: Tensor):
         Tensorlike.__init__(self, norm.batch_shape)
@@ -51,13 +38,15 @@ class TruncNormal(Distribution, Tensorlike):
         self.high = self.register("high", high.expand(shape))
 
         self.low_std = self.register(
-            "low_std", (self.low - self.norm.loc) / self.norm.scale
+            "low_std",
+            (self.low - self.norm.loc) / self.norm.scale,
         )
         self.low_pmf = self.register("low_pmf", norm_pmf(self.low_std))
         self.low_cdf = self.register("low_cdf", norm_cdf(self.low_std))
 
         self.high_std = self.register(
-            "high_std", (self.high - self.norm.loc) / self.norm.scale
+            "high_std",
+            (self.high - self.norm.loc) / self.norm.scale,
         )
         self.high_pmf = self.register("high_pmf", norm_pmf(self.high_std))
         self.high_cdf = self.register("high_cdf", norm_cdf(self.high_std))

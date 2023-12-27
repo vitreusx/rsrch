@@ -4,13 +4,13 @@ from typing import Literal
 
 from rsrch.utils import _config
 
-from . import env, ppo, td3
+from . import dreamerx, env, ppo, td3
 
 
 @dataclass
 class Config:
     env: env.Config
-    type: Literal["ppo", "td3"]
+    type: Literal["ppo", "td3", "dreamerx"]
 
 
 def main():
@@ -28,6 +28,8 @@ def main():
         ppo.main()
     elif cfg.type == "td3":
         td3.main()
+    elif cfg.type == "dreamerx":
+        dreamerx.main()
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ from .affine import Affine
 from .bernoulli import Bernoulli
 from .beta import Beta
 from .categorical import Categorical
+from .clip_normal import ClipNormal
 from .dirac import Dirac
 from .distribution import Distribution
 from .ensemble import Ensemble

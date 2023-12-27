@@ -168,8 +168,8 @@ def main():
             act = act.clamp(env_f.act_space.low, env_f.act_space.high)
             return act
 
-    # wm = WorldModel()
-    # wm_opt = torch.optim.Adam(wm.parameters(), lr=3e-4, eps=1e-5)
+    wm = WorldModel()
+    wm_opt = torch.optim.Adam(wm.parameters(), lr=3e-4, eps=1e-5)
 
     q1, q2, q1_t, q2_t = Q(), Q(), Q(), Q()
     q1_p = polyak.Polyak(q1, q1_t, cfg.tau)
@@ -293,15 +293,15 @@ def main():
                 q_opt.step()
                 q_opt_iters += 1
 
-                # wm_hx = wm(batch.obs, batch.act)
-                # pred_hx = over_seq(wm.pred)(wm_hx[:-1])
-                # pred_loss = F.mse_loss(pred_hx, wm_hx[1:].detach())
-                # wm_rew = over_seq(wm.rew_head)(wm_hx[1:])
-                # rew_loss = F.mse_loss(wm_rew, batch.reward)
-                # wm_loss = pred_loss + rew_loss
+                wm_hx = wm(batch.obs, batch.act)
+                pred_hx = over_seq(wm.pred)(wm_hx[:-1])
+                pred_loss = F.mse_loss(pred_hx, wm_hx[1:].detach())
+                wm_rew = over_seq(wm.rew_head)(wm_hx[1:])
+                rew_loss = F.mse_loss(wm_rew, batch.reward)
+                wm_loss = pred_loss + rew_loss
 
-                # wm_opt.zero_grad(set_to_none=True)
-                # wm_loss.backward()
+                wm_opt.zero_grad(set_to_none=True)
+                wm_loss.backward()
 
                 if should_log_q:
                     exp.add_scalar("train/q1_pred", q1_pred.mean())

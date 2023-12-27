@@ -80,8 +80,20 @@ class Normal(Distribution, Tensorlike):
         return sum_rightmost(logp, len(self.event_shape))
 
     def cdf(self, value: Tensor):
-        value = (value - self.loc) / (np.sqrt(2) * self.scale)
-        return 0.5 * (1.0 + torch.erf(value))
+        value = (value - self.loc) / self.scale
+        return torch.special.ndtr(value)
+
+    def log_cdf(self, value: Tensor):
+        value = (value - self.loc) / self.scale
+        return torch.special.log_ndtr(value)
+
+    def sf(self, value: Tensor):
+        value = (value - self.loc) / self.scale
+        return torch.special.ndtr(-value)
+
+    def log_sf(self, value: Tensor):
+        value = (value - self.loc) / self.scale
+        return torch.special.log_ndtr(-value)
 
     def entropy(self):
         ent = 0.5 + 0.5 * math.log(2 * math.pi) + self.scale.log()
