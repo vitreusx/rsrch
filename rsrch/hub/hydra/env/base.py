@@ -7,7 +7,8 @@ from torch import Tensor
 
 from rsrch import spaces
 from rsrch.rl import data, gym
-from rsrch.rl.data._buffer import SliceBatch, SliceBuffer, Step, StepBatch, StepBuffer
+from rsrch.rl.data._buffer import SliceBuffer, StepBuffer
+from rsrch.rl.data._types import SliceBatch, Step, StepBatch
 from rsrch.spaces.utils import from_gym, to_gym
 
 

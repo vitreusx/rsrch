@@ -48,7 +48,7 @@ class Config:
     val_episodes: int = 16
     val_envs: int = val_episodes
     val_every: int = int(32e3)
-    rec_every: int = int(128e3)
+    rec_every: int = val_every
     prioritized: bool = False
     n_step: int = 1
 
@@ -250,7 +250,7 @@ def main():
                 actor.eval()
 
                 with TemporaryDirectory() as tmpdir:
-                    frame_idx = 0
+                    frame_idx, ep_ret = 0, 0.0
                     obs, info = rec_env.reset()
                     rec_agent.reset(obs, info)
 
@@ -260,7 +260,10 @@ def main():
                     while True:
                         act = rec_agent.policy(obs)
                         next_obs, rew, term, trunc, info = rec_env.step(act)
+                        rec_agent.step(act)
                         rec_agent.observe(act, next_obs, rew, term, trunc, info)
+                        ep_ret += rew
+                        obs = next_obs
 
                         frame_idx += 1
                         dest = Path(tmpdir) / f"{frame_idx:08d}.png"
@@ -273,9 +276,9 @@ def main():
                         tmpdir,
                         fps=rec_env.metadata.get("render_fps", 30),
                     )
-                    dst = exp.dir / "videos" / f"step={env_step}.mp4"
+                    dst = vid_dir / f"step={env_step}.mp4"
                     dst.parent.mkdir(parents=True, exist_ok=True)
-                    vid.write_videofile(str(dst))
+                    vid.write_videofile(str(dst), verbose=False, logger=None)
 
                 actor.train()
 
