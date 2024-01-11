@@ -3,8 +3,11 @@ from numbers import Number
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch import Tensor
+from torch import Size, Tensor
+from torch._C import Size
 
+from rsrch import spaces
+from rsrch.nn.utils import ST
 from rsrch.types import Tensorlike
 
 from .categorical import Categorical
@@ -99,3 +102,61 @@ class Piecewise3(Tensorlike, Distribution):
     def sample(self, sample_size: tuple[int, ...] = ()):
         with torch.no_grad():
             return self.rsample(sample_size)
+
+
+class Piecewise4(Distribution, Tensorlike):
+    def __init__(self, space: spaces.torch.Box, size_logits: Tensor, logits: Tensor):
+        event_shape = space.shape
+        batch_shape = size_logits.shape[: len(size_logits.shape) - 1 - len(event_shape)]
+        Tensorlike.__init__(self, batch_shape)
+        self.event_shape = event_shape
+
+        loc, scale = space.low, space.high - space.low
+        self.log_sizes = self.register(
+            "log_sizes",
+            size_logits.log_softmax(-1) + scale.log().unsqueeze(-1),
+        )
+        self.sizes = self.register("sizes", self.log_sizes.exp())
+        self.ends = self.register("ends", loc.unsqueeze(-1) + self.sizes.cumsum(-1))
+
+        self.ind_rv = self.register("ind_rv", Categorical(logits=logits))
+
+    def log_prob(self, value: Tensor) -> Tensor:
+        index = torch.searchsorted(self.ends, value.unsqueeze(-1))
+        index = index.clamp_max(self.ends.shape[-1] - 1)
+        log_pmf, log_sizes = self.ind_rv.log_probs, self.log_sizes
+        index, log_pmf, log_sizes = torch.broadcast_tensors(index, log_pmf, log_sizes)
+        index = index[..., :1]
+        ind_logp = log_pmf.gather(-1, index).squeeze(-1)
+        size_logp = -log_sizes.gather(-1, index).squeeze(-1)
+        logp = ind_logp + size_logp
+        return sum_rightmost(logp, len(self.event_shape))
+
+    def entropy(self):
+        ind_ent = self.ind_rv.entropy()
+        size_ent = (self.ind_rv.probs * self.log_sizes).sum(-1)
+        ent = ind_ent + size_ent
+        return sum_rightmost(ent, len(self.event_shape))
+
+    def sample(self, sample_shape=()):
+        index = self.ind_rv.sample(sample_shape)
+        unif = torch.rand(index.shape, device=index.device)
+        index = index.unsqueeze(-1)
+        index, sizes, ends = torch.broadcast_tensors(index, self.sizes, self.ends)
+        index = index[..., :1]
+        sizes = sizes.gather(-1, index).squeeze(-1)
+        ends = ends.gather(-1, index).squeeze(-1)
+        return ends - sizes * unif
+
+    def rsample(self, sample_shape=()):
+        index = self.ind_rv.sample(sample_shape).unsqueeze(-1)
+        unif = torch.rand(index.shape, device=index.device)
+        log_pmf = self.ind_rv.log_probs
+        index, unif, sizes, ends, log_pmf = torch.broadcast_tensors(
+            index, unif, self.sizes, self.ends, log_pmf
+        )
+        index, unif = index[..., :1], unif[..., :1]
+        sizes = sizes.gather(-1, index).squeeze(-1)
+        ends = ends.gather(-1, index).squeeze(-1)
+        log_pmf = log_pmf.gather(-1, index).squeeze(-1)
+        return ends - sizes * unif + (log_pmf - log_pmf.detach())

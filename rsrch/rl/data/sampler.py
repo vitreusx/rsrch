@@ -1,4 +1,4 @@
-from typing import Protocol
+from typing import Protocol, Sequence
 
 import numpy as np
 
@@ -62,15 +62,16 @@ class PrioritizedSampler:
             self._min[idx] = self._min._zero
         self._beg += 1
 
-    def update(self, ids, prio):
-        prio = prio**self.alpha + self.eps
+    def update(self, ids: Sequence[int], prio_values: Sequence[float]):
+        ids, prio_values = np.asarray(ids), np.asarray(prio_values)
+        prio_values = prio_values**self.alpha + self.eps
         idxes = ids % self.max_size
-        self._priorities[idxes] = prio
-        self._max[idxes] = prio
+        self._priorities[idxes] = prio_values
+        self._max[idxes] = prio_values
         if not self.batch_max:
-            self._min[idxes] = prio
+            self._min[idxes] = prio_values
 
-    def sample(self, n):
+    def sample(self, n: int):
         unif = self._priorities.total * np.random.rand(n)
         idxes = self._priorities.searchsorted(unif)
         if self.batch_max:

@@ -69,7 +69,7 @@ class Seq:
 @dataclass
 class SliceBatch:
     """A batch of equal-length sequences/trajectories in an MDP.
-    By convention, the sequences are of shape (L, N, ...) where L is the
+    The sequences are of shape (L, N, ...) where L is the
     sequence length, and N is the batch size."""
 
     obs: Sequence[ObsType]

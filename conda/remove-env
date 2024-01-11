@@ -1,4 +1,0 @@
-#!/usr/bin/bash -i
-set -exo pipefail
-
-conda remove -n rsrch --all --yes

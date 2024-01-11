@@ -1,5 +1,0 @@
-#!/usr/bin/bash -i
-set -exo pipefail
-
-cd "$(dirname "$0")"
-conda-lock lock --mamba 

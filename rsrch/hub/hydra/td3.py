@@ -1,10 +1,14 @@
 import random
 from dataclasses import dataclass
 from functools import partial
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import numpy as np
 import torch
 import torch.nn.functional as F
+from moviepy.editor import ImageSequenceClip, VideoFileClip
+from PIL import Image
 from torch import Tensor, nn
 
 import rsrch.distributions as D
@@ -25,7 +29,7 @@ from .utils import GenAdvEst, TruncNormal2, over_seq
 class Config:
     seed: int = 1
     device: str = "cuda"
-    env_id: str = "Humanoid-v4"
+    env_id: str = "Ant-v4"
     total_steps: int = int(1e6)
     train_envs: int = 1
     buffer_cap: int = int(128e3)
@@ -44,6 +48,9 @@ class Config:
     val_episodes: int = 16
     val_envs: int = val_episodes
     val_every: int = int(32e3)
+    rec_every: int = int(128e3)
+    prioritized: bool = False
+    n_step: int = 1
 
 
 def layer_init(layer, std=nn.init.calculate_gain("relu"), bias=0.0):
@@ -67,56 +74,13 @@ def main():
     env_f = env.make_factory(env_cfg, device)
     assert isinstance(env_f.obs_space, spaces.torch.Box)
     assert isinstance(env_f.act_space, spaces.torch.Box)
-    train_envs = env_f.vector_env(cfg.train_envs)
-    val_envs = env_f.vector_env(cfg.val_envs)
+
+    train_envs = env_f.vector_env(cfg.train_envs, mode="train")
+    val_envs = env_f.vector_env(cfg.val_envs, mode="val")
+    rec_env = env_f.env(mode="val", record=True)
 
     obs_dim = int(np.prod(env_f.obs_space.shape))
     act_dim = int(np.prod(env_f.act_space.shape))
-
-    class WorldModel(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.num_layers, self.state_dim = 2, 64
-
-            self._init = nn.Sequential(
-                nn.Linear(obs_dim, 64),
-                nn.ReLU(),
-                nn.Linear(64, 64),
-                nn.ReLU(),
-                nn.Linear(64, self.num_layers * self.state_dim),
-            )
-
-            self._seq = nn.GRU(
-                input_size=obs_dim + act_dim,
-                hidden_size=self.state_dim,
-                num_layers=self.num_layers,
-            )
-
-            self.pred = nn.Sequential(
-                nn.Linear(self.state_dim, 64),
-                nn.ReLU(),
-                nn.Linear(64, 64),
-                nn.ReLU(),
-                nn.Linear(64, self.state_dim),
-            )
-
-            self.rew_head = nn.Sequential(
-                nn.Linear(self.state_dim, 64),
-                nn.ReLU(),
-                nn.Linear(64, 1),
-                nn.Flatten(0),
-            )
-
-            self.to(device)
-
-        def forward(self, obs: Tensor, act: Tensor):
-            # obs.shape, act.shape = [L+1, N, ...], [L, N, ...]
-            L, N = act.shape[:2]
-            h0 = self._init(obs[0]).reshape(N, self.num_layers, self.state_dim)
-            h0 = h0.permute(1, 0, 2)
-            seq_x = torch.cat([act, obs[1:]], -1)
-            hx, _ = self._seq(seq_x, h0.contiguous())
-            return torch.cat([h0[-1][None], hx], 0)
 
     class Q(nn.Module):
         def __init__(self):
@@ -127,12 +91,12 @@ def main():
                 nn.Linear(256, 256),
                 nn.ReLU(),
             )
-            # self.enc.apply(layer_init)
+            self.enc.apply(layer_init)
             self.head = nn.Sequential(
                 nn.Linear(256, 1),
                 nn.Flatten(0),
             )
-            # self.head.apply(partial(layer_init, std=1.0))
+            self.head.apply(partial(layer_init, std=1.0))
             self.to(device)
 
         def forward(self, obs: Tensor, act: Tensor):
@@ -143,30 +107,44 @@ def main():
     class Actor(nn.Module):
         def __init__(self):
             super().__init__()
-            self.enc = nn.Sequential(
+            self.net = nn.Sequential(
                 nn.Flatten(1),
                 nn.Linear(obs_dim, 256),
                 nn.ReLU(),
                 nn.Linear(256, 256),
                 nn.ReLU(),
+                nn.Linear(256, act_dim),
             )
             self.register_buffer(
-                "_loc", 0.5 * (env_f.act_space.low + env_f.act_space.high)
+                "act_loc", 0.5 * (env_f.act_space.low + env_f.act_space.high)
             )
             self.register_buffer(
-                "_scale", 0.5 * (env_f.act_space.high - env_f.act_space.low)
+                "act_scale", 0.5 * (env_f.act_space.high - env_f.act_space.low)
             )
-            # self.enc.apply(layer_init)
-            self.head = nn.Linear(256, act_dim)
-            # self.head.apply(layer_init)
             self.to(device)
 
         def forward(self, obs: Tensor) -> Tensor:
-            act = self.head(self.enc(obs))
+            act = self.net(obs)
             act = act.reshape(-1, *env_f.act_space.shape)
-            act = self._loc + self._scale * act
-            act = act.clamp(env_f.act_space.low, env_f.act_space.high)
+            act = self.act_loc + self.act_scale * F.tanh(act)
             return act
+
+    class WorldModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc = nn.Sequential(
+                nn.Linear(obs_dim + act_dim, 256),
+                nn.ReLU(),
+                nn.Linear(256, 256),
+                nn.ReLU(),
+                nn.Linear(256, obs_dim),
+            )
+            layer_init(self.fc, std=1e-2)
+            self.to(device)
+
+        def forward(self, obs: Tensor, act: Tensor) -> Tensor:
+            x = torch.cat([obs, act], -1)
+            return obs + self.fc(x)
 
     wm = WorldModel()
     wm_opt = torch.optim.Adam(wm.parameters(), lr=3e-4, eps=1e-5)
@@ -185,9 +163,19 @@ def main():
     polyak.sync(q2, q2_t)
     polyak.sync(actor, actor_t)
 
-    sampler = data.UniformSampler()
-    # buf = env_f.step_buffer(cfg.buffer_cap, sampler)
-    buf = env_f.slice_buffer(cfg.buffer_cap, num_steps=cfg.num_steps, sampler=sampler)
+    if cfg.prioritized:
+        sampler = data.PrioritizedSampler(cfg.buffer_cap)
+        max_loss = None
+    else:
+        sampler = data.UniformSampler()
+
+    if cfg.n_step == 1:
+        buf = env_f.step_buffer(cfg.buffer_cap, sampler)
+    else:
+        buf = env_f.slice_buffer(
+            cfg.buffer_cap, num_steps=cfg.num_steps, sampler=sampler
+        )
+
     ep_ids = [None for _ in range(train_envs.num_envs)]
     ep_rets = [0.0 for _ in range(train_envs.num_envs)]
     ep_lens = [0 for _ in range(train_envs.num_envs)]
@@ -197,6 +185,7 @@ def main():
     exp.register_step("env_step", lambda: env_step, default=True)
     pbar = ProgressBar(desc="Hydra", total=cfg.total_steps)
     prof = Profiler2(exp.dir / "traces", device)
+    vid_dir = exp.dir / "videos"
 
     act_scale = 0.5 * (env_f.act_space.high - env_f.act_space.low)
 
@@ -213,6 +202,9 @@ def main():
                 act = (act + noise).clamp(env_f.act_space.low, env_f.act_space.high)
                 return env_f.move_act(act, to="env")
 
+    train_agent = TrainAgent()
+    env_iter = iter(rollout.steps(train_envs, train_agent))
+
     class ValAgent(gym.vector.Agent):
         @torch.inference_mode()
         def policy(self, obs):
@@ -220,32 +212,79 @@ def main():
             act = actor(obs)
             return env_f.move_act(act, to="env")
 
-    train_agent, val_agent = TrainAgent(), ValAgent()
-    env_iter = iter(rollout.steps(train_envs, train_agent))
+    val_agent = ValAgent()
+
+    class RecAgent(gym.Agent):
+        @torch.inference_mode()
+        def policy(self, obs):
+            obs = env_f.move_obs(obs[None])
+            act = actor(obs)
+            return env_f.move_act(act, to="env")[0]
+
+    rec_agent = RecAgent()
 
     should_val = cron.Every(lambda: env_step, cfg.val_every)
+    should_rec = cron.Every(lambda: env_step, cfg.rec_every)
     should_log_q = cron.Every(lambda: env_step, 128)
     should_log_a = cron.Every(lambda: env_step, 128)
     q_opt_iters, actor_opt_iters = 0, 0
 
-    gen_adv_est = GenAdvEst(gamma=cfg.gamma, gae_lambda=cfg.gae_lambda)
+    # gen_adv_est = GenAdvEst(gamma=cfg.gamma, gae_lambda=cfg.gae_lambda)
 
     with prof(name="Hydra") as _prof:
         while env_step < cfg.total_steps:
             if should_val:
                 actor.eval()
-                val_eps = iter(
-                    rollout.episodes(val_envs, val_agent, max_episodes=cfg.val_episodes)
+                val_eps = rollout.episodes(
+                    val_envs,
+                    val_agent,
+                    max_episodes=cfg.val_episodes,
                 )
                 val_rets = []
-                for _, ep in val_eps:
+                for _, ep in iter(val_eps):
                     val_rets.append(sum(ep.reward))
                 exp.add_scalar("val/mean_ret", np.mean(val_rets))
                 actor.train()
 
+            if should_rec:
+                actor.eval()
+
+                with TemporaryDirectory() as tmpdir:
+                    frame_idx = 0
+                    obs, info = rec_env.reset()
+                    rec_agent.reset(obs, info)
+
+                    dest = Path(tmpdir) / f"{frame_idx:08d}.png"
+                    Image.fromarray(rec_env.render()).save(dest)
+
+                    while True:
+                        act = rec_agent.policy(obs)
+                        next_obs, rew, term, trunc, info = rec_env.step(act)
+                        rec_agent.observe(act, next_obs, rew, term, trunc, info)
+
+                        frame_idx += 1
+                        dest = Path(tmpdir) / f"{frame_idx:08d}.png"
+                        Image.fromarray(rec_env.render()).save(dest)
+
+                        if term or trunc:
+                            break
+
+                    vid = ImageSequenceClip(
+                        tmpdir,
+                        fps=rec_env.metadata.get("render_fps", 30),
+                    )
+                    dst = exp.dir / "videos" / f"step={env_step}.mp4"
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    vid.write_videofile(str(dst))
+
+                actor.train()
+
             for _ in range(cfg.env_batch):
                 env_idx, step = next(env_iter)
-                ep_ids[env_idx], _ = buf.push(ep_ids[env_idx], step)
+                ep_ids[env_idx], step_id = buf.push(ep_ids[env_idx], step)
+                if isinstance(sampler, data.PrioritizedSampler):
+                    if max_loss is not None and step_id is not None:
+                        sampler.update([step_id], [max_loss])
 
                 ep_rets[env_idx] += step.reward
                 ep_lens[env_idx] += 1
@@ -265,40 +304,51 @@ def main():
                 continue
 
             for _ in range(cfg.opt_iters):
-                idxes = sampler.sample(cfg.batch_size)
-                batch = env_f.fetch_slice_batch(buf, idxes)
+                if isinstance(sampler, data.PrioritizedSampler):
+                    idxes, _ = sampler.sample(cfg.batch_size)
+                elif isinstance(sampler, data.UniformSampler):
+                    idxes = sampler.sample(cfg.batch_size)
+                # batch = env_f.fetch_slice_batch(buf, idxes)
+                batch = env_f.fetch_step_batch(buf, idxes)
 
                 with torch.no_grad():
-                    next_act = over_seq(actor_t)(batch.obs)
+                    next_act = actor_t(batch.next_obs)
                     noise = torch.randn_like(next_act) * cfg.policy_noise
                     noise = noise.clamp(-cfg.noise_clip, cfg.noise_clip)
                     noise = noise * act_scale
                     next_act = next_act + noise
                     next_act = next_act.clamp(env_f.act_space.low, env_f.act_space.high)
 
-                    next_q1_t = over_seq(q1_t)(batch.obs, next_act)
-                    next_q2_t = over_seq(q2_t)(batch.obs, next_act)
-                    vt = torch.min(next_q1_t, next_q2_t)
+                    next_q1_t = q1_t(batch.next_obs, next_act)
+                    next_q2_t = q2_t(batch.next_obs, next_act)
+                    next_q = torch.min(next_q1_t, next_q2_t)
+                    q_target = (
+                        batch.reward + cfg.gamma * (1.0 - batch.term.float()) * next_q
+                    )
 
-                    q_target = gen_adv_est.ret(batch.reward, batch.term, vt)
-
-                q1_pred = over_seq(q1)(batch.obs[:-1], batch.act)
-                q1_loss = F.mse_loss(q1_pred, q_target)
-                q2_pred = over_seq(q2)(batch.obs[:-1], batch.act)
-                q2_loss = F.mse_loss(q2_pred, q_target)
+                q1_pred = q1(batch.obs, batch.act)
+                q1_loss = (q1_pred - q_target).square()
+                q2_pred = q2(batch.obs, batch.act)
+                q2_loss = (q2_pred - q_target).square()
                 q_loss = q1_loss + q2_loss
 
                 q_opt.zero_grad(set_to_none=True)
-                q_loss.backward()
+                q_loss.mean().backward()
                 q_opt.step()
                 q_opt_iters += 1
 
-                wm_hx = wm(batch.obs, batch.act)
-                pred_hx = over_seq(wm.pred)(wm_hx[:-1])
-                pred_loss = F.mse_loss(pred_hx, wm_hx[1:].detach())
-                wm_rew = over_seq(wm.rew_head)(wm_hx[1:])
-                rew_loss = F.mse_loss(wm_rew, batch.reward)
-                wm_loss = pred_loss + rew_loss
+                if isinstance(sampler, data.PrioritizedSampler):
+                    q_loss_ = q_loss.detach().cpu().numpy()
+                    if max_loss is None:
+                        max_loss = np.amax(q_loss_)
+                        prio = max_loss * np.ones([len(buf)])
+                        sampler.update([*buf.keys()], prio)
+
+                    sampler.update(idxes, q_loss_)
+                    max_loss = max(max_loss, np.amax(q_loss_))
+
+                wm_pred = wm(batch.obs, batch.act)
+                wm_loss = F.mse_loss(wm_pred, batch.next_obs)
 
                 wm_opt.zero_grad(set_to_none=True)
                 wm_loss.backward()
@@ -306,25 +356,21 @@ def main():
                 if should_log_q:
                     exp.add_scalar("train/q1_pred", q1_pred.mean())
                     exp.add_scalar("train/q2_pred", q2_pred.mean())
-                    exp.add_scalar("train/q1_loss", q1_loss)
-                    exp.add_scalar("train/q2_loss", q2_loss)
-                    exp.add_scalar("train/q_loss", q_loss)
-                    exp.add_scalar("train/q_opt_iters", q_opt_iters)
-                    # exp.add_scalar("train/pred_loss", pred_loss)
-                    # exp.add_scalar("train/rew_loss", rew_loss)
+                    exp.add_scalar("train/q1_loss", q1_loss.mean())
+                    exp.add_scalar("train/q2_loss", q2_loss.mean())
+                    exp.add_scalar("train/q_loss", q_loss.mean())
+                    exp.add_scalar("train/wm_loss", wm_loss)
 
                 if q_opt_iters * cfg.policy_opt_freq >= actor_opt_iters:
-                    actor_loss = -over_seq(q1)(
-                        batch.obs, over_seq(actor)(batch.obs)
-                    ).mean()
+                    actor_loss = -q1(batch.obs, actor(batch.obs)).mean()
                     actor_opt.zero_grad(set_to_none=True)
                     actor_loss.backward()
                     actor_opt.step()
+                    actor_opt_iters += 1
+
                     actor_p.step()
                     q1_p.step()
                     q2_p.step()
-                    actor_opt_iters += 1
 
                     if should_log_a:
                         exp.add_scalar("train/actor_loss", actor_loss)
-                        exp.add_scalar("train/actor_opt_iters", actor_opt_iters)

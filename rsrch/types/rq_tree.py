@@ -13,7 +13,6 @@ class RangeQueryTree:
         zero=0.0,
         init=None,
         dtype=None,
-        refresh_every=None,
     ):
         """Create a range-query tree.
 

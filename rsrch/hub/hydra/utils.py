@@ -177,3 +177,11 @@ class GenAdvEst:
 
         ret = adv + v
         return adv, ret
+
+
+def symlog(x: Tensor) -> Tensor:
+    return torch.copysign((x.abs() + 1.0).log(), x)
+
+
+def symexp(x: Tensor) -> Tensor:
+    return torch.copysign(x.abs().exp() - 1.0, x)

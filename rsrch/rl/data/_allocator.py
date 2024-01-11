@@ -2,7 +2,8 @@ from copy import deepcopy
 
 
 class Allocator:
-    """A helper class for managing (virtual) allocations."""
+    """A helper class for managing (virtual) allocations. Mainly used for
+    reserving space in preallocated arrays for RL buffers."""
 
     def __init__(self, mem_size: int):
         self.slots = {}
@@ -48,6 +49,7 @@ class Allocator:
             return slice(ptr, ptr + new_size)
 
     def _fix_blk(self):
+        """Normalize blocks structure by sorting it and merging adjacent blocks."""
         self.blocks.sort()
         blocks = []
         for idx in range(len(self.blocks)):
@@ -95,6 +97,8 @@ class Allocator:
         return map_
 
     def clear(self):
+        """Free all allocated blocks."""
+
         self.slots = {}
         self.free_space = self.mem_size
         self.blocks = [[0, self.mem_size]]

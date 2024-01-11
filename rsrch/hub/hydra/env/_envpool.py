@@ -64,6 +64,7 @@ class VecEnvPool(gym.VectorEnv):
     def __str__(self):
         return f"VecEnvPool({self._envp})"
 
+
 class BoxTransform(gym.ObservationWrapper):
     def __init__(self, env: gym.Env, f):
         super().__init__(env)

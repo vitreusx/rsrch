@@ -23,7 +23,7 @@ from .utils import Normal2, TruncNormal2, over_seq
 class Config:
     seed: int = 1
     device: str = "cuda"
-    env_id: str = "Humanoid-v4"
+    env_id: str = "Hopper-v4"
     total_steps: int = int(1e6)
     lr: float = 3e-4
     num_envs: int = 1
@@ -67,6 +67,50 @@ class ClipNormal(nn.Module):
             D.Normal(loc, scale, len(self._out_shape)),
             self.low,
             self.high,
+        )
+
+
+class Piecewise4(nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        out_space: spaces.torch.Box,
+        num_particles=4,
+    ):
+        super().__init__()
+        self.out_space = out_space
+        self.num_particles = num_particles
+        out_dim = int(np.prod(out_space.shape))
+        self.fc = nn.Linear(in_features, 2 * out_dim * num_particles)
+        self.fc.apply(partial(layer_init, std=1e-2))
+
+    def forward(self, x: Tensor):
+        out: Tensor = self.fc(x)
+        size_logits, logits = out.chunk(2, -1)
+        size_logits = size_logits.reshape(-1, *self.out_space.shape, self.num_particles)
+        logits = logits.reshape(-1, *self.out_space.shape, self.num_particles)
+        return D.Piecewise4(self.out_space, size_logits, logits)
+
+
+class Beta(nn.Module):
+    def __init__(self, in_features: int, out_space: spaces.torch.Box):
+        super().__init__()
+        self.shape = out_space.shape
+        out_dim = int(np.prod(out_space.shape))
+        self.fc = nn.Linear(in_features, 2 * out_dim)
+        self.fc.apply(partial(layer_init, std=1e-2))
+        self.register_buffer("loc", out_space.low)
+        self.register_buffer("scale", out_space.high - out_space.low)
+
+    def forward(self, x: Tensor):
+        out: Tensor = self.fc(x)
+        alpha, beta = out.chunk(2, -1)
+        alpha, beta = 1.0 + alpha.exp(), 1.0 + beta.exp()
+        alpha, beta = alpha.reshape(-1, *self.shape), beta.reshape(-1, *self.shape)
+        return D.Affine(
+            D.Beta(alpha, beta, len(self.shape)),
+            self.loc,
+            self.scale,
         )
 
 
@@ -114,9 +158,7 @@ def main():
             self.critic = nn.Sequential(critic_stem, critic_head)
 
             actor_stem = make_enc()
-            # actor_head = Normal2(64, env_f.act_space)
-            actor_head = TruncNormal2(64, env_f.act_space)
-            # actor_head = ClipNormal(64, env_f.act_space)
+            actor_head = Beta(64, env_f.act_space)
 
             self.actor = nn.Sequential(actor_stem, actor_head)
 
@@ -143,7 +185,7 @@ def main():
     obs_ = env_f.move_obs(obs_)
     term_ = np.zeros([cfg.num_envs])
 
-    exp = tensorboard.Experiment(project="hydra")
+    exp = tensorboard.Experiment(project="hydra", prefix=cfg.env_id)
     env_step = 0
     exp.register_step("env_step", lambda: env_step, default=True)
     pbar = ProgressBar(desc="Hydra", total=cfg.total_steps)

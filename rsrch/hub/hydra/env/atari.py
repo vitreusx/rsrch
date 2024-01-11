@@ -1,15 +1,14 @@
 from dataclasses import dataclass
-from typing import Any, Literal, SupportsFloat
+from typing import Any, Literal
 
 import envpool
 import numpy as np
+import torch
 
 from rsrch.rl import gym
 
 from . import base
 from ._envpool import VecEnvPool
-
-Mode = Literal["train", "val"]
 
 
 @dataclass
@@ -78,17 +77,26 @@ class FixShapeEP(gym.vector.wrappers.ObservationWrapper):
         return obs
 
 
-class Factory(base.Factory):
-    def __init__(self, cfg: Config, device=None):
+class Factory(base.FactoryBase):
+    def __init__(
+        self,
+        cfg: Config,
+        device: torch.device,
+    ):
         self.cfg = cfg
         super().__init__(self.env(mode="train"), device, self.cfg.stack)
 
-    def env(self, *, mode: Mode = "train", **kwargs):
-        env = self._envpool(num_envs=1, mode=mode)
-        if env is not None:
-            return gym.envs.FromVectorEnv(env)
+    def env(self, mode="val", record=False):
+        if not record:
+            env = self._envpool(num_envs=1, mode=mode)
+            if env is not None:
+                return gym.envs.FromVectorEnv(env)
 
-        env = gym.make(self.cfg.env_id, frameskip=1)
+        env = gym.make(
+            self.cfg.env_id,
+            frameskip=1,
+            render_mode="rgb_array" if record else None,
+        )
 
         episodic = self.cfg.term_on_life_loss and mode == "train"
         proc_args = dict(
@@ -121,18 +129,18 @@ class Factory(base.Factory):
 
         return env
 
-    def vector_env(self, num_envs: int, *, mode: Mode = "train", **kwargs):
-        env = self._envpool(num_envs, mode=mode, **kwargs)
+    def vector_env(self, num_envs: int, mode="val"):
+        env = self._envpool(num_envs, mode=mode)
         if env is not None:
             return env
 
-        env_fn = lambda: self.env(mode)
+        env_fn = lambda: self.env(mode=mode)
         if num_envs > 1:
             return gym.vector.AsyncVectorEnv([env_fn] * num_envs)
         else:
             return gym.vector.SyncVectorEnv([env_fn])
 
-    def _envpool(self, num_envs: int, mode: Mode, **kwargs):
+    def _envpool(self, num_envs: int, mode):
         if self.cfg.obs_type in ["ram"]:
             return
 

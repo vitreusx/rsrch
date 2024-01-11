@@ -6,7 +6,11 @@
       "request": "launch",
       "module": "rsrch.hub.hydra",
       "pythonArgs": ["-O"],
-      // "env": {"CUDA_LAUNCH_BLOCKING": "1"},
+      "env": {
+        // "CUDA_LAUNCH_BLOCKING": "1", 
+        "MUJOCO_GL": "osmesa",
+        "KINETO_LOG_LEVEL": "3", // ERROR
+      },
       "justMyCode": false
     },
     {

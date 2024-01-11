@@ -8,67 +8,35 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = "3.10.*"
 poetry = "^1.5"
-ipykernel = "^6.21.2"
+ipykernel = "^6.22.0"
 ipywidgets = "^8.0.4"
 setuptools = "*"
-conda-lock = "*"
 tensorboard = "^2.12.2"
 torch-tb-profiler = "^0.4.1"
 colorama = "*"
 moviepy = "*"
 python-slugify = "*"
-mujoco-py = "^2.1.2.14"
 patchelf = "^0.17.2.1"
 mujoco = "<=2.3.3"
 ptflops = "^0.7"
 h5py = "^3.8.0"
 sympy = "^1.12"
-torch = "^2.0"
-torchvision = "^0.15"
-tensordict = "^0.1.2"
+torch = "^2.1"
+torchvision = "^0.16"
 gymnasium = { version = "^0.28.1", extras = ["accept-rom-license", "all"] }
 poethepoet = "^0.21.0"
 wandb = "^0.15.5"
 plotly = "^5.15.0"
-addict = "^2.4.0"
 dacite = "^1.8.1"
-ray = { version = "^2.3.1", extras = ["default"] }
-pydantic = "<2"
-grpcio = "<=1.49.1"
-cloudpickle = "^2.2.1"
 mako = "^1.2.4"
-py-spy = "^0.3.14"
-gitpython = "^3.1.36"
 envpool = "^0.8.3"
 cython = "<3"
-kornia = "^0.7.0"
-streamlit = "^1.28.1"
-comet-ml = "^3.35.3"
-
-[tool.poetry.group.ext]
-optional = true
-
-[tool.poetry.group.ext.dependencies]
 box2d-py = { path = "ext/box2d-py" }
-
-[tool.poetry.group.dev]
-optional = true
-
-[tool.poetry.group.dev.dependencies]
-ipykernel = "^6.22.0"
 black = { version = "^23.3.0", extras = ["jupyter"] }
 nbconvert = "^7.3.1"
 pylint = "^2.17.4"
 isort = ">=5"
-sphinx = "^7.2.2"
-furo = "*"
-
-[tool.poetry.group.conda]
-optional = true
-
-[tool.poetry.group.conda.dependencies]
-requests = "2.29.0"
-
+poetry-plugin-export = "^1.6.0"
 
 [tool.poe.tasks.gpu-setup]
 help = "Set up the environment for use with GPUs."
@@ -82,7 +50,7 @@ shell = """
   pip install -U ${TORCH}+${cuda} ${TORCHVISION}+${cuda} \
     --index-url https://download.pytorch.org/whl/${cuda}
 """
-args = [{ name = "cuda", default = "cu117" }]
+args = [{ name = "cuda", default = "cu118" }]
 
 [tool.poe.tasks.fix-opencv]
 help = "Replace opencv-python with headless version."
@@ -105,11 +73,6 @@ shell = """
   fi
 """
 args = [{ name = "port", default = "8081" }]
-
-[tool.poe.tasks.profile]
-help = "Profile a script with py-spy."
-cmd = "py-spy record -f speedscope -o ${trace_file} -i -n -s"
-args = [{ name = "trace_file", default = "trace.json" }]
 
 [build-system]
 requires = ["poetry-core>=1.5"]

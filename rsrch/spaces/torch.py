@@ -5,8 +5,6 @@ from torch import Tensor
 
 
 class Space:
-    _TORCH_FUNCTIONS = {}
-
     def __init__(
         self,
         shape: tuple[int, ...],

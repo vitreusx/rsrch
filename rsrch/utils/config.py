@@ -1,48 +1,49 @@
-from __future__ import annotations
-
 import argparse
-import io
+import ast
+import inspect
 import math
 import re
-from copy import copy
-from dataclasses import is_dataclass
-from enum import Enum
+from dataclasses import MISSING, fields, is_dataclass
 from pathlib import Path
 from types import UnionType
-from typing import *
+from typing import (
+    Any,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Set,
+    Tuple,
+    Type,
+    TypeVar,
+    Union,
+    get_args,
+    get_origin,
+    overload,
+)
 
-import dacite
 import numpy as np
-import ruamel.yaml as yaml
 from mako.template import Template
+from ruamel import yaml
 
-from rsrch.types import Namespace
-
-__all__ = ["from_dicts", "from_args"]
-
-# Either $(...) or ${...}, covering entire text
+__all__ = ["compose", "cli"]
 
 
-def quote_preserving_split(sep: str):
-    """A pattern for splitting <key>{sep}<value> by {sep}, while respecting
-    instances of {sep} in quoted blocks."""
-    rx = f"(?:[\"|'].*?[\"|']|[^({re.escape(sep)})])+"
-    rx = re.compile(rx)
-    return rx
-
-
-COLON_SEP = quote_preserving_split(":")
-
-EQ_PAT = quote_preserving_split("=")
+class AttrDict(dict):
+    def __getattr__(self, __name):
+        try:
+            return super().__getattribute__(__name)
+        except AttributeError:
+            return self[__name]
 
 
 class Expr:
-    """An expression object in the config."""
+    """An expression object."""
 
-    VAR_PAT = r"^\${(?P<back>\.*)(?P<var>[\w.]+)}"
-    EXPR_PAT = r"^\$\((?P<expr>.*)\)$"
+    VAR_PAT = r"^\${(?P<back>\.*)(?P<var>[\w.]+)}"  # e.g. ${..opt.lr}
+    EXPR_PAT = r"^\${(?P<expr>.*)}$"  # e.g. $(-1/np.log(2))
 
-    def __init__(self, value, path: list):
+    def __init__(self, value: str, path: list):
         self._value = value
         self._path = path
         self.eval = self._make_eval_fn()
@@ -105,69 +106,82 @@ class Expr:
 
     def __repr__(self):
         loc = ".".join(str(x) for x in self._path)
-        return f"Lazy({loc}: {self._value})"
+        return f"Expr({loc}: {self._value})"
 
 
-def to_expr(value, path=[]):
-    """Convert string fields in the dict to Expr objects."""
-
+def replace_str_by_expr(value: Any, path=[]):
+    """Replace string fields in the object by Expr instances."""
     if isinstance(value, dict):
-        new_value = Namespace()
+        new_value = {}
         for k, v in [*value.items()]:
-            new_value[k] = to_expr(v, [*path, k])
+            new_value[k] = replace_str_by_expr(v, [*path, k])
         value = new_value
     elif isinstance(value, list):
         for i, v in enumerate(value):
-            value[i] = to_expr(v, [*path, i])
+            value[i] = replace_str_by_expr(v, [*path, i])
     elif isinstance(value, str):
         value = Expr(value, path)
     return value
 
 
-def _resolve_once(data, g):
-    """Try to convert `Expr` objects to regular values, using current context."""
+def resolve_exprs(x: Any):
+    """Convert Expr objects to regular values via evaluation, recursively (that is, expressions can refer to each other.)"""
 
-    num_exprs = 0
-    if isinstance(data, dict):
-        for k, v in [*data.items()]:
-            new_v, v_lazy = _resolve_once(v, g)
-            data[k] = new_v
-            num_exprs += v_lazy
-    elif isinstance(data, list):
-        for i, v in enumerate(data):
-            new_v, v_lazy = _resolve_once(v, g)
-            data[i] = new_v
-            num_exprs += v_lazy
-    elif isinstance(data, Expr):
-        try:
-            data = data.eval(g)
-        except:
-            pass
-        num_exprs += isinstance(data, Expr)
-    return data, num_exprs
+    def _resolve_once(value: Any, g: dict):
+        """Convert Expr objects to regular values via evaluation, non-recursively."""
+        changed = False
+        if isinstance(value, dict):
+            for k, v in [*value.items()]:
+                new_v, v_changed = _resolve_once(v, g)
+                value[k] = new_v
+                changed |= v_changed
+        elif isinstance(value, list):
+            for i, v in enumerate(value):
+                new_v, v_changed = _resolve_once(v, g)
+                value[i] = new_v
+                changed |= v_changed
+        elif isinstance(value, Expr):
+            try:
+                value = value.eval(g)
+                changed |= not isinstance(value, Expr)
+            except:
+                ...
 
+        return value, changed
 
-def resolve_exprs(data):
-    """Convert $(...)'s and ${...}'s to regular values."""
-    data = to_expr(data)
-    prev_lazy = None
-    while prev_lazy != 0:
-        g = {**data, **{"_root": data}}
-        data, cur_lazy = _resolve_once(data, g)
-        if prev_lazy == cur_lazy:
+    def _g(x):
+        d = {}
+        for k, v in x.items():
+            if not isinstance(v, Expr):
+                d[k] = _g(v) if isinstance(v, dict) else v
+        return AttrDict(d)
+
+    while True:
+        x, changed = _resolve_once(x, _g(x))
+        if not changed:
             break
-        prev_lazy = cur_lazy
-    return data
+
+    return x
 
 
-def _cast(x, t):
-    """Cast `x` to `t`, where `t` may be a Generic (for example Union or Tuple)."""
+def cast(x, t):
+    """Cast `x` to `t`, where `t` may be a Generic (for example Union or Tuple). Raise ValueError, if the value cannot be converted to the specified type."""
 
     # get_origin gets the generic "type", get_args the arguments in square
     # brackets. For example, get_origin(Union[str, int]) == Union and
     # get_args(Union[str, int]) == (str, int)
     orig = get_origin(t)
-    if orig is None:
+    if is_dataclass(t):
+        # Allow conversion of dicts to dataclasses
+        args = {}
+        for field in fields(t):
+            if field.name in x:
+                args[field.name] = cast(x[field.name], field.type)
+        try:
+            return t(**args)
+        except:
+            raise ValueError()
+    elif orig is None:
         return x if isinstance(t, type) and isinstance(x, t) else t(x)
     elif orig in (Union, Optional, UnionType):
         # Note: get_args(Optional[t]) == (t, None)
@@ -179,21 +193,18 @@ def _cast(x, t):
         # and yield the first one to succeed.
         for ti in get_args(t):
             try:
-                return _cast(x, ti)
+                return cast(x, ti)
             except:
                 pass
         raise ValueError()
     elif orig in (Tuple, tuple):
-        # In this case, since python 3.8, generics are the same as builtins
-        # (i.e. Tuple == tuple), so we can use orig for construction
-        return orig([_cast(xi, ti) for xi, ti in zip(x, get_args(t))])
+        return tuple([cast(xi, ti) for xi, ti in zip(x, get_args(t))])
     elif orig in (List, Set, list, set):
         ti = get_args(t)[0]
-        return orig([_cast(xi, ti) for xi in x])
+        return orig([cast(xi, ti) for xi in x])
     elif orig in (Dict, dict):
-        # Same story with dict
         kt, vt = get_args(t)
-        return Namespace({k: _cast(xi, vt) for k, xi in x.items()})
+        return {k: cast(xi, vt) for k, xi in x.items()}
     elif orig in (Literal,):
         # For Literals, check if the value is one of the allowed values.
         if x not in get_args(t):
@@ -203,39 +214,15 @@ def _cast(x, t):
         raise NotImplementedError()
 
 
-def _fix_types(x, t):
-    """Align x with type t. If x is a dataclass, recursively fix types of its fields."""
-
-    if hasattr(x, "__dataclass_fields__"):
-        for name, field in x.__dataclass_fields__.items():
-            value = getattr(x, name)
-            value_t = field.type
-            setattr(x, name, _fix_types(value, value_t))
-        return x
-    else:
-        return _cast(x, t)
-
-
-T = TypeVar("T")
-
-
-def to_class(data: dict, cls: Type[T]) -> T:
-    """Parse data into a class. The data may be obtained from e.g. YAML file, and cls must be a dataclass. One can use $(...) expressions for evaluation (like in Bash). Moreover, one can use non-builtin classes in the cls dataclass, which will get converted via the constructor from a base type."""
-
-    res = dacite.from_dict(cls, data, dacite.Config(check_types=False))
-    res = _fix_types(res, cls)
-
-    return res
-
-
-def update_(d1: dict, *ds: dict):
+def update_(dst: dict, *src: dict):
     """Merge one or more dicts in place."""
-    for d in ds:
+    for d in src:
         for k, v in d.items():
-            if isinstance(v, dict) and k in d1:
-                update_(d1[k], v)
+            if isinstance(v, dict) and k in dst:
+                update_(dst[k], v)
             else:
-                d1[k] = v
+                dst[k] = v
+    return dst
 
 
 def merge(*dicts: dict):
@@ -245,12 +232,12 @@ def merge(*dicts: dict):
     return merged
 
 
-def normalize(d: dict):
-    """Normalize a dict, turning any key of form <k1>.<k2>...<kn>: v into k1: {k2: ... kn: v}."""
+def fix_compound_keys(d: dict) -> dict:
+    """Replace keys of form <k1>.<k2>... to <k1>: {<k2>: ...}."""
     res = {}
     for k, v in d.items():
         if isinstance(v, dict):
-            v = normalize(v)
+            v = fix_compound_keys(v)
         if "." in k:
             cur = res
             parts = [*k.split(".")]
@@ -271,63 +258,166 @@ def normalize(d: dict):
     return res
 
 
-def to_dict(ds: list[dict]):
-    """Combine raw dicts to a normalized and resolved config dict."""
-
-    cfg = {}
-    for d in ds:
-        cfg = merge(cfg, normalize(d))
-    cfg = resolve_exprs(cfg)
-    return cfg
+T = TypeVar("T")
 
 
-def nested_index(d: dict, k: str):
-    ki = k.split(".")
-    cur = d
-    for ki_ in ki[:-1]:
-        cur = cur[ki_]
-    return cur[ki[-1]]
+def compose(dicts: list[dict], cls: Type[T] | None = None) -> T:
+    """Compose a config class or dict from a list of raw dicts.
 
+    In the process, we:
+    1. Merge the dicts.
+    2. Convert compound keys (like, say, 'opt.lr' to opt: {lr: ... });
+    3. Resolve expressions, such as ${..opt.lr} or $(1/np.log(2)).
+    4. Convert the final dict to class, if provided.
+    """
 
-def from_dicts(dicts: list[dict], cls: Type[T] | None = None) -> T | dict:
-    """Create config class from a list of dicts."""
-    data = to_dict(dicts)
+    d = merge(*dicts)
+    d = fix_compound_keys(d)
+    d = replace_str_by_expr(d)
+    d = resolve_exprs(d)
     if cls is not None:
-        data = to_class(data, cls)
-    return data
+        d = cast(d, cls)
+    return d
 
 
-def from_args(
-    cls: Type[T] = None,
-    defaults: Path = None,
-    presets: Path = None,
-) -> T | dict:
-    """Read config from command line arguments."""
+def _attr_docstrings(t):
+    """Get attribute docstrings for a dataclass."""
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-c", "--config", nargs="*")
-    if presets is not None:
-        parser.add_argument("-p", "--presets", nargs="*")
+    # Get source for t and remove indent
+    t_src: str = inspect.getsource(t)
+    lines = t_src.splitlines()
+    indent = len(lines[0]) - len(lines[0].lstrip())
+    t_src = "\n".join([line[indent:] for line in lines])
 
-    args = parser.parse_args()
+    # Parse the source for t and extract class def
+    t_ast = ast.parse(t_src)
+    t_cls_def = next(node for node in ast.walk(t_ast) if isinstance(node, ast.ClassDef))
+
+    # Walk through the class def's body. When encountering an assign
+    # node, i.e. dataclass field, if it is followed by an ast.Expr, then
+    # that expr is the docstring.
+    var_name = None
+    docs = {}
+    for node in t_cls_def.body:
+        if isinstance(node, ast.AnnAssign):
+            var_name = node.target.id
+        elif isinstance(node, ast.Expr):
+            if var_name is not None and isinstance(node.value, ast.Constant):
+                docs[var_name] = node.value.s
+                var_name = None
+
+    return docs
+
+
+def get_dataclass(t):
+    if is_dataclass(t):
+        return t
+    else:
+        orig = get_origin(t)
+        args = get_args(t)
+        if orig in (Union, Optional, UnionType):
+            dts = [ti for ti in args if is_dataclass(ti)]
+            return dts[0] if len(dts) > 0 else None
+
+
+@overload
+def cli(
+    cls: None = None,
+    config_yml: Path | None = None,
+    presets_yml: Path | None = None,
+    args: list[str] | None = None,
+) -> dict:
+    ...
+
+
+@overload
+def cli(
+    cls: Type[T],
+    config_yml: Path | None = None,
+    presets_yml: Path | None = None,
+    args: list[str] | None = None,
+) -> T:
+    ...
+
+
+def cli(
+    cls: Type[T] | None = None,
+    config_yml: Path | None = None,
+    presets_yml: Path | None = None,
+    args: list[str] | None = None,
+):
+    p = argparse.ArgumentParser()
+    p.add_argument("-C", "--config-files", nargs="*", help="Default config files.")
+    p.add_argument("-P", "--preset-files", nargs="*", help="Preset files.")
+    p.add_argument("-p", "--preset", type=str, help="Preset to use.")
+
+    defs = {}
+    if config_yml is not None:
+        with open(config_yml, "r") as f:
+            defs = yaml.safe_load(f) or {}
+
+    def add_overrides(t, path=[], doc=None, defv=MISSING, cur=defs):
+        dt = get_dataclass(t)
+        if dt is not None:
+            docs = _attr_docstrings(dt)
+            for field in fields(dt):
+                field_defv = MISSING
+                if field.name in cur:
+                    field_defv = cur[field.name]
+                elif field.default != MISSING:
+                    field_defv = field.default
+                elif field.default_factory != MISSING:
+                    field_defv = field.default_factory()
+
+                add_overrides(
+                    field.type,
+                    [*path, field.name],
+                    docs.get(field.name),
+                    field_defv,
+                    defs.get(field.name, {}),
+                )
+        else:
+            opt = "--" + ".".join(path)
+            if defv != MISSING:
+                if doc is not None:
+                    doc = doc + "\n" + f"[default: {defv}]"
+                else:
+                    doc = f"[default: {defv}]"
+
+            p.add_argument(opt, metavar="...", default=MISSING, help=doc)
+
+    if cls is not None:
+        add_overrides(cls)
+
+    args = p.parse_args(args)
+
+    config_files = args.config_files or []
+    if config_yml is not None:
+        config_files = [config_yml, *config_files]
+    config_files = [Path(x) for x in config_files]
+
+    preset_files = args.preset_files or []
+    if presets_yml is not None:
+        preset_files = [presets_yml, *preset_files]
+    preset_files = [Path(x) for x in preset_files]
 
     dicts = []
+    for path in config_files:
+        with open(path, "r") as f:
+            dicts.append(yaml.safe_load(f) or {})
 
-    if defaults is not None:
-        with open(defaults, "r") as f:
-            data = yaml.safe_load(f) or {}
-            dicts.append(data)
+    if args.preset is not None:
+        presets = []
+        for path in preset_files:
+            with open(path, "r") as f:
+                presets.append(yaml.safe_load(f) or {})
+        presets = merge(*presets)
+        dicts.append(presets.get(args.preset, {}))
 
-    if args.config is not None:
-        with open(args.config, "r") as f:
-            data = yaml.safe_load(f) or {}
-            dicts.append(data)
+    opts = vars(args)
+    for k in ["config_files", "preset_files", "preset"]:
+        opts.pop(k)
+    opts = {k: v for k, v in opts.items() if v != MISSING}
+    dicts.append(opts)
 
-    if presets is not None:
-        if args.presets is not None:
-            with open(presets, "r") as f:
-                data = yaml.safe_load(f) or {}
-                for preset in args.presets:
-                    dicts.append(data.get(preset, {}))
-
-    return from_dicts(dicts, cls)
+    return compose(dicts, cls)

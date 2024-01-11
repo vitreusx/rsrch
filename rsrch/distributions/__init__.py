@@ -10,8 +10,8 @@ from .kl import kl_divergence, register_kl
 from .multihead_ohst import MultiheadOHST
 from .normal import Normal
 from .one_hot_categorical import OneHotCategorical, OneHotCategoricalST
-from .piecewise import Piecewise, Piecewise3
-from .squashed_normal import SquashedNormal
+from .piecewise import Piecewise, Piecewise3, Piecewise4
+from .tanh_normal import TanhNormal
 from .transformed import TransformedDistribution
 from .transforms import *
 from .trunc_normal import TruncNormal

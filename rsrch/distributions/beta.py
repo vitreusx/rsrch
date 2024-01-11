@@ -53,3 +53,9 @@ class Beta(Distribution, Tensorlike):
         )
         ent = self.log_B - t1 - t2 + t3
         return sum_rightmost(ent, len(self.event_shape))
+
+    def rsample(self, sample_shape=()):
+        shape = (*sample_shape, *self.batch_shape, *self.event_shape)
+        x = torch._standard_gamma(self.alpha.expand(shape))
+        y = torch._standard_gamma(self.beta.expand(shape))
+        return x / (x + y)

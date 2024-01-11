@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from rsrch.utils import _config
+from rsrch.utils import config
 
 from . import dreamerx, env, ppo, td3
 
@@ -14,7 +14,7 @@ class Config:
 
 
 def main():
-    cfg = _config.cli(
+    cfg = config.cli(
         Config,
         config_yml=Path(__file__).parent / "config.yml",
         presets_yml=Path(__file__).parent / "presets.yml",

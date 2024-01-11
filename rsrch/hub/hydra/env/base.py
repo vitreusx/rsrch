@@ -1,4 +1,3 @@
-from abc import ABC, abstractmethod
 from functools import cached_property
 from typing import Literal
 
@@ -12,7 +11,7 @@ from rsrch.rl.data._buffer import SliceBatch, SliceBuffer, Step, StepBatch, Step
 from rsrch.spaces.utils import from_gym, to_gym
 
 
-class Factory:
+class FactoryBase:
     def __init__(
         self,
         env: gym.Env,
@@ -26,14 +25,6 @@ class Factory:
         """Numpy space for env actions."""
         self.device = device
         self._stack = stack
-
-    @abstractmethod
-    def env(self, **kwargs) -> gym.Env:
-        ...
-
-    @abstractmethod
-    def vector_env(self, num_envs: int, **kwargs) -> gym.VectorEnv:
-        ...
 
     @cached_property
     def obs_space(self):

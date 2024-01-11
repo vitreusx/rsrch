@@ -6,7 +6,7 @@ import numpy as np
 from rsrch import spaces
 
 from ._allocator import Allocator
-from ._types import Seq, SliceBatch, Step, StepBatch
+from ._types import Seq, Step, StepBatch
 from .sampler import Sampler
 
 
@@ -16,7 +16,7 @@ class CyclicBuffer(Mapping[int, dict]):
     def __init__(
         self,
         maxlen: int,
-        spaces: dict,
+        spaces: dict[str, spaces.np.Space],
         sampler: Sampler | None = None,
     ):
         self._arrays = {key: space.empty([maxlen]) for key, space in spaces.items()}
@@ -460,6 +460,8 @@ class StepBuffer(Mapping):
 
 
 class OnlineBuffer(Mapping[int, Seq]):
+    """A buffer for on-policy algorithms, such as PPO."""
+
     def __init__(self):
         self.episodes = {}
         self._ep_ptr = 0

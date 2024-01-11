@@ -20,10 +20,10 @@ from .nets import *
 
 
 def main():
-    cfg = config.from_args(
+    cfg = config.cli(
         cls=config.Config,
-        defaults=Path(__file__).parent / "config.yml",
-        presets=Path(__file__).parent / "presets.yml",
+        config_yml=Path(__file__).parent / "config.yml",
+        presets_yml=Path(__file__).parent / "presets.yml",
     )
 
     device = cfg.infra.device
