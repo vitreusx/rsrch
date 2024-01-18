@@ -1,3 +1,4 @@
+from functools import partial
 from typing import Literal
 
 import numpy as np
@@ -170,3 +171,25 @@ class TruncNormal(nn.Module):
         rv = D.Normal(loc, scale, len(self._out_shape))
         rv = D.TruncNormal(rv, self.low, self.high)
         return rv
+
+
+class Beta(nn.Module):
+    def __init__(self, in_features: int, out_space: spaces.torch.Box):
+        super().__init__()
+        self.shape = out_space.shape
+        out_dim = int(np.prod(out_space.shape))
+        self.fc = nn.Linear(in_features, 2 * out_dim)
+        self.fc.apply(partial(layer_init, std=1e-2))
+        self.register_buffer("loc", out_space.low)
+        self.register_buffer("scale", out_space.high - out_space.low)
+
+    def forward(self, x: Tensor):
+        out: Tensor = self.fc(x)
+        alpha, beta = out.chunk(2, -1)
+        alpha, beta = 1.0 + alpha.exp(), 1.0 + beta.exp()
+        alpha, beta = alpha.reshape(-1, *self.shape), beta.reshape(-1, *self.shape)
+        return D.Affine(
+            D.Beta(alpha, beta, len(self.shape)),
+            self.loc,
+            self.scale,
+        )

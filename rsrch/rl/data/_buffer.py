@@ -19,10 +19,13 @@ class CyclicBuffer(Mapping[int, dict]):
         spaces: dict[str, spaces.np.Space],
         sampler: Sampler | None = None,
     ):
-        self._arrays = {key: space.empty([maxlen]) for key, space in spaces.items()}
         self._maxlen = maxlen
+        self._arrays = {key: self._array(space) for key, space in spaces.items()}
         self._elem_ids = range(0, 0)
         self.sampler = sampler
+
+    def _array(self, space: spaces.np.Space):
+        return np.empty([self._maxlen, *space.shape], dtype=space.dtype)
 
     def push(self, x: dict) -> int:
         while len(self._elem_ids) >= self._maxlen:
@@ -61,19 +64,22 @@ class SeqBuffer(Mapping[int, dict]):
     def __init__(
         self,
         max_size: int,
-        spaces: dict,
+        spaces: dict[str, spaces.np.Space],
         sampler: Sampler | None = None,
         overhead: float = 0.25,
     ):
-        capacity = int((1.0 + overhead) * max_size)
-        self._arrays = {key: space.empty([capacity]) for key, space in spaces.items()}
-        self._vm = Allocator(capacity)
+        self._cap = int((1.0 + overhead) * max_size)
+        self._arrays = {key: self._array(space) for key, space in spaces.items()}
+        self._vm = Allocator(self._cap)
         self._seq_len = {}
         self._seq_ids = range(0, 0)
         self.sampler = sampler
         self._free = max_size
         self.max_size = max_size
         self._init = 16
+
+    def _array(self, space: spaces.np.Space):
+        return np.empty([self._cap, *space.shape], dtype=space.dtype)
 
     def init_seq(self, data: dict) -> int:
         if self._free == 0:

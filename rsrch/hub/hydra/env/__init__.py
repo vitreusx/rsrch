@@ -1,28 +1,13 @@
 from typing import Literal, Protocol
 
+from rsrch import spaces
 from rsrch.rl.gym import Env, VectorEnv
 
-from . import atari, gym
+from . import atari, base, gym
 from .config import Config
 
 
-class Factory(Protocol):
-    def env(
-        self,
-        mode: Literal["train", "val"] = "val",
-        record: bool = False,
-    ) -> Env:
-        ...
-
-    def vector_env(
-        self,
-        num_envs: int,
-        mode: Literal["train", "val"] = "val",
-    ) -> VectorEnv:
-        ...
-
-
-def make_factory(cfg: Config, device=None) -> Factory:
+def make_factory(cfg: Config, device=None) -> base.FactoryBase:
     if cfg.type == "atari":
         return atari.Factory(cfg.atari, device)
     elif cfg.type == "gym":

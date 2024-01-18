@@ -35,6 +35,10 @@ class Affine(Distribution, Tensorlike):
         return self.loc + self.scale * self.base.mean
 
     @property
+    def mode(self):
+        return self.loc + self.scale * self.base.mode
+
+    @property
     def var(self):
         return self.scale.square() * self.base.var
 

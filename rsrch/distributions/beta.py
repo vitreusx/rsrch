@@ -33,6 +33,12 @@ class Beta(Distribution, Tensorlike):
         return self.alpha / (self.alpha + self.beta)
 
     @property
+    def mode(self):
+        p = (self.alpha - 1.0).clamp_min(0.0)
+        q = (self.beta - 1.0).clamp_min(0.0)
+        return p / (p + q + 1e-8)
+
+    @property
     def var(self):
         t1 = self.alpha * self.beta
         t2 = (self.alpha + self.beta).square()
@@ -40,6 +46,7 @@ class Beta(Distribution, Tensorlike):
         return t1 / (t2 * t3)
 
     def log_prob(self, value: Tensor):
+        value = value.clamp(1e-6, 1.0 - 1e-6)
         t1 = (self.alpha - 1.0) * value.log()
         t2 = (self.beta - 1.0) * (1.0 - value).log()
         logp = t1 + t2 - self.log_B
@@ -58,4 +65,4 @@ class Beta(Distribution, Tensorlike):
         shape = (*sample_shape, *self.batch_shape, *self.event_shape)
         x = torch._standard_gamma(self.alpha.expand(shape))
         y = torch._standard_gamma(self.beta.expand(shape))
-        return x / (x + y)
+        return x / (x + y + 1e-6)

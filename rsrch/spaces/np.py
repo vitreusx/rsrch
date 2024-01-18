@@ -18,9 +18,6 @@ class Space(NDArrayOperatorsMixin):
         else:
             self._seed, self._gen = seed, None
 
-    def empty(self, shape: tuple[int, ...] = ()):
-        return np.empty([*shape, *self.shape], dtype=self.dtype)
-
     @property
     def gen(self) -> np.random.Generator:
         if self._gen is None:

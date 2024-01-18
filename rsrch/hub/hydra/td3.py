@@ -7,22 +7,20 @@ from tempfile import TemporaryDirectory
 import numpy as np
 import torch
 import torch.nn.functional as F
-from moviepy.editor import ImageSequenceClip, VideoFileClip
+from moviepy.editor import ImageSequenceClip
 from PIL import Image
 from torch import Tensor, nn
 
-import rsrch.distributions as D
 from rsrch import spaces
 from rsrch.exp import tensorboard
 from rsrch.exp.pbar import ProgressBar
-from rsrch.exp.profiler2 import Profiler2
+from rsrch.exp.profiler import profiler
 from rsrch.rl import data, gym
 from rsrch.rl.data import rollout
 from rsrch.rl.utils import polyak
 from rsrch.utils import cron
 
 from . import env
-from .utils import GenAdvEst, TruncNormal2, over_seq
 
 
 @dataclass
@@ -184,7 +182,7 @@ def main():
     exp = tensorboard.Experiment("hydra", prefix=cfg.env_id)
     exp.register_step("env_step", lambda: env_step, default=True)
     pbar = ProgressBar(desc="Hydra", total=cfg.total_steps)
-    prof = Profiler2(exp.dir / "traces", device)
+    prof = profiler(exp.dir / "traces", device)
     vid_dir = exp.dir / "videos"
 
     act_scale = 0.5 * (env_f.act_space.high - env_f.act_space.low)
@@ -231,7 +229,7 @@ def main():
 
     # gen_adv_est = GenAdvEst(gamma=cfg.gamma, gae_lambda=cfg.gae_lambda)
 
-    with prof(name="Hydra") as _prof:
+    with prof:
         while env_step < cfg.total_steps:
             if should_val:
                 actor.eval()
@@ -276,6 +274,7 @@ def main():
                         tmpdir,
                         fps=rec_env.metadata.get("render_fps", 30),
                     )
+
                     dst = vid_dir / f"step={env_step}.mp4"
                     dst.parent.mkdir(parents=True, exist_ok=True)
                     vid.write_videofile(str(dst), verbose=False, logger=None)
@@ -301,7 +300,7 @@ def main():
                 env_step += 1
                 pbar.update(1)
                 if env_step >= cfg.warmup:
-                    _prof.step()
+                    prof.step()
 
             if env_step < cfg.warmup:
                 continue
@@ -311,6 +310,7 @@ def main():
                     idxes, _ = sampler.sample(cfg.batch_size)
                 elif isinstance(sampler, data.UniformSampler):
                     idxes = sampler.sample(cfg.batch_size)
+
                 # batch = env_f.fetch_slice_batch(buf, idxes)
                 batch = env_f.fetch_step_batch(buf, idxes)
 
@@ -351,7 +351,8 @@ def main():
                     max_loss = max(max_loss, np.amax(q_loss_))
 
                 wm_pred = wm(batch.obs, batch.act)
-                wm_loss = F.mse_loss(wm_pred, batch.next_obs)
+                wm_pred_q = q1(wm_pred, next_act)
+                wm_loss = F.mse_loss(wm_pred_q, next_q)
 
                 wm_opt.zero_grad(set_to_none=True)
                 wm_loss.backward()
