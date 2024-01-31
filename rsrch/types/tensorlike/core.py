@@ -416,3 +416,9 @@ class Tensorlike:
             tensor: Tensorlike = getattr(self, name)
             fields[name] = tensor.clone()
         return self._new(self.shape, fields)
+
+    def share_memory_(self):
+        for name in self.__tensors:
+            tensor: torch.Tensor = getattr(self, name)
+            tensor.share_memory_()
+        return self

@@ -12,7 +12,7 @@ from .normal import Normal
 from .one_hot_categorical import OneHotCategorical, OneHotCategoricalST
 from .piecewise import Piecewise, Piecewise3, Piecewise4
 from .tanh_normal import TanhNormal
-from .transformed import TransformedDistribution
+from .transformed import Transformed
 from .transforms import *
 from .trunc_normal import TruncNormal
 from .tuple import Tuple

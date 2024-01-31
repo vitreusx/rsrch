@@ -24,9 +24,11 @@ from typing import (
 
 import numpy as np
 from mako.template import Template
-from ruamel import yaml
+from ruamel.yaml import YAML
 
-__all__ = ["compose", "cli"]
+yaml = YAML(typ="safe", pure=True)
+
+__all__ = ["compose", "cli", "parser", "from_args"]
 
 
 class AttrDict(dict):
@@ -340,84 +342,123 @@ def cli(
     ...
 
 
+def parser(
+    cls: Type[T] | None = None,
+    config_yml: Path | None = None,
+    presets_yml: Path | None = None,
+):
+    p = argparse.ArgumentParser()
+
+    p.add_argument(
+        "-C",
+        "--config-files",
+        type=Path,
+        nargs="*",
+        default=[config_yml] if config_yml is not None else [],
+        help="Default config files.",
+    )
+    p.add_argument(
+        "-P",
+        "--preset-files",
+        type=Path,
+        nargs="*",
+        default=[presets_yml] if presets_yml is not None else [],
+        help="Preset files.",
+    )
+    p.add_argument(
+        "-p",
+        "--presets",
+        nargs="*",
+        default=[],
+        help="Presets to use.",
+    )
+
+    yaml = YAML(typ="safe", pure=True)
+
+    defs = {}
+    if config_yml is not None:
+        with open(config_yml, "r") as f:
+            defs = yaml.load(f) or {}
+
+    if cls is not None:
+
+        def add_overrides(t, path=[], doc=None, defv=MISSING, cur=defs):
+            dt = get_dataclass(t)
+            if dt is not None:
+                docs = _attr_docstrings(dt)
+                for field in fields(dt):
+                    field_defv = MISSING
+                    if field.name in cur:
+                        field_defv = cur[field.name]
+                    elif field.default != MISSING:
+                        field_defv = field.default
+                    elif field.default_factory != MISSING:
+                        field_defv = field.default_factory()
+
+                    add_overrides(
+                        field.type,
+                        [*path, field.name],
+                        docs.get(field.name),
+                        field_defv,
+                        defs.get(field.name, {}),
+                    )
+            else:
+                opt = "--" + ".".join(path)
+                if defv != MISSING:
+                    if doc is not None:
+                        doc = doc + "\n" + f"[default: {defv}]"
+                    else:
+                        doc = f"[default: {defv}]"
+
+                p.add_argument(opt, metavar="...", default=defv, help=doc)
+
+        add_overrides(cls)
+
+    return p
+
+
+def from_args(
+    args: argparse.Namespace,
+    cls: Type[T] | None = None,
+):
+    dicts = []
+    for path in args.config_files:
+        with open(path, "r") as f:
+            dicts.append(yaml.load(f) or {})
+
+    if len(args.presets) != 0:
+        presets = []
+        for path in args.preset_files:
+            with open(path, "r") as f:
+                presets.append(yaml.load(f) or {})
+        presets = merge(*presets)
+        for preset in args.presets:
+            dicts.append(presets.get(preset, {}))
+
+    if cls is not None:
+        opts = {}
+
+        def add_overrides(t, path=[]):
+            dt = get_dataclass(t)
+            if dt is not None:
+                for field in fields(dt):
+                    add_overrides(field.type, [*path, field.name])
+            else:
+                key = ".".join(path)
+                if getattr(args, key) != MISSING:
+                    opts[key] = getattr(args, key)
+
+        dicts.append(opts)
+
+    return compose(dicts, cls)
+
+
 def cli(
     cls: Type[T] | None = None,
     config_yml: Path | None = None,
     presets_yml: Path | None = None,
     args: list[str] | None = None,
 ):
-    p = argparse.ArgumentParser()
-    p.add_argument("-C", "--config-files", nargs="*", help="Default config files.")
-    p.add_argument("-P", "--preset-files", nargs="*", help="Preset files.")
-    p.add_argument("-p", "--preset", type=str, help="Preset to use.")
-
-    defs = {}
-    if config_yml is not None:
-        with open(config_yml, "r") as f:
-            defs = yaml.safe_load(f) or {}
-
-    def add_overrides(t, path=[], doc=None, defv=MISSING, cur=defs):
-        dt = get_dataclass(t)
-        if dt is not None:
-            docs = _attr_docstrings(dt)
-            for field in fields(dt):
-                field_defv = MISSING
-                if field.name in cur:
-                    field_defv = cur[field.name]
-                elif field.default != MISSING:
-                    field_defv = field.default
-                elif field.default_factory != MISSING:
-                    field_defv = field.default_factory()
-
-                add_overrides(
-                    field.type,
-                    [*path, field.name],
-                    docs.get(field.name),
-                    field_defv,
-                    defs.get(field.name, {}),
-                )
-        else:
-            opt = "--" + ".".join(path)
-            if defv != MISSING:
-                if doc is not None:
-                    doc = doc + "\n" + f"[default: {defv}]"
-                else:
-                    doc = f"[default: {defv}]"
-
-            p.add_argument(opt, metavar="...", default=MISSING, help=doc)
-
-    if cls is not None:
-        add_overrides(cls)
-
+    p = parser(cls, config_yml, presets_yml)
     args = p.parse_args(args)
-
-    config_files = args.config_files or []
-    if config_yml is not None:
-        config_files = [config_yml, *config_files]
-    config_files = [Path(x) for x in config_files]
-
-    preset_files = args.preset_files or []
-    if presets_yml is not None:
-        preset_files = [presets_yml, *preset_files]
-    preset_files = [Path(x) for x in preset_files]
-
-    dicts = []
-    for path in config_files:
-        with open(path, "r") as f:
-            dicts.append(yaml.safe_load(f) or {})
-
-    if args.preset is not None:
-        presets = []
-        for path in preset_files:
-            with open(path, "r") as f:
-                presets.append(yaml.safe_load(f) or {})
-        presets = merge(*presets)
-        dicts.append(presets.get(args.preset, {}))
-
-    opts = vars(args)
-    for k in ["config_files", "preset_files", "preset"]:
-        opts.pop(k)
-    opts = {k: v for k, v in opts.items() if v != MISSING}
-    dicts.append(opts)
-
-    return compose(dicts, cls)
+    return from_args(args, cls)

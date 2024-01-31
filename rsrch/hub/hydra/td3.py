@@ -1,5 +1,6 @@
 import random
 from dataclasses import dataclass
+from datetime import datetime
 from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -10,6 +11,7 @@ import torch.nn.functional as F
 from moviepy.editor import ImageSequenceClip
 from PIL import Image
 from torch import Tensor, nn
+from tqdm.auto import tqdm
 
 from rsrch import spaces
 from rsrch.exp import tensorboard
@@ -179,11 +181,17 @@ def main():
     ep_lens = [0 for _ in range(train_envs.num_envs)]
 
     env_step = 0
-    exp = tensorboard.Experiment("hydra", prefix=cfg.env_id)
+
+    exp = tensorboard.Experiment(
+        project="td3",
+        run=f"{cfg.env_id}__{datetime.now():%Y-%m-%d_%H-%M-%S}",
+    )
     exp.register_step("env_step", lambda: env_step, default=True)
-    pbar = ProgressBar(desc="Hydra", total=cfg.total_steps)
-    prof = profiler(exp.dir / "traces", device)
+    pbar = tqdm(desc="TD3", total=cfg.total_steps)
     vid_dir = exp.dir / "videos"
+
+    prof = profiler(exp.dir / "traces", device)
+    prof.__enter__()
 
     act_scale = 0.5 * (env_f.act_space.high - env_f.act_space.low)
 
@@ -212,6 +220,12 @@ def main():
 
     val_agent = ValAgent()
 
+    make_val_iter = lambda: rollout.episodes(
+        val_envs,
+        val_agent,
+        max_episodes=cfg.val_episodes,
+    )
+
     class RecAgent(gym.Agent):
         @torch.inference_mode()
         def policy(self, obs):
@@ -222,159 +236,160 @@ def main():
     rec_agent = RecAgent()
 
     should_val = cron.Every(lambda: env_step, cfg.val_every)
-    should_rec = cron.Every(lambda: env_step, cfg.rec_every)
+    # should_rec = cron.Every(lambda: env_step, cfg.rec_every)
+    should_rec = cron.Never()
     should_log_q = cron.Every(lambda: env_step, 128)
     should_log_a = cron.Every(lambda: env_step, 128)
     q_opt_iters, actor_opt_iters = 0, 0
 
     # gen_adv_est = GenAdvEst(gamma=cfg.gamma, gae_lambda=cfg.gae_lambda)
 
-    with prof:
-        while env_step < cfg.total_steps:
-            if should_val:
-                actor.eval()
-                val_eps = rollout.episodes(
-                    val_envs,
-                    val_agent,
-                    max_episodes=cfg.val_episodes,
-                )
-                val_rets = []
-                for _, ep in iter(val_eps):
-                    val_rets.append(sum(ep.reward))
-                exp.add_scalar("val/mean_ret", np.mean(val_rets))
-                actor.train()
+    while env_step < cfg.total_steps:
+        if should_val:
+            actor.eval()
 
-            if should_rec:
-                actor.eval()
+            val_iter = tqdm(
+                make_val_iter(),
+                total=cfg.val_episodes,
+                leave=False,
+                desc="Val",
+            )
 
-                with TemporaryDirectory() as tmpdir:
-                    frame_idx, ep_ret = 0, 0.0
-                    obs, info = rec_env.reset()
-                    rec_agent.reset(obs, info)
+            val_rets = []
+            for _, ep in val_iter:
+                val_rets.append(sum(ep.reward))
 
+            exp.add_scalar("val/mean_ret", np.mean(val_rets))
+            actor.train()
+
+        if should_rec:
+            actor.eval()
+
+            with TemporaryDirectory() as tmpdir:
+                frame_idx, ep_ret = 0, 0.0
+                obs, info = rec_env.reset()
+                rec_agent.reset(obs, info)
+
+                dest = Path(tmpdir) / f"{frame_idx:08d}.png"
+                Image.fromarray(rec_env.render()).save(dest)
+
+                while True:
+                    act = rec_agent.policy(obs)
+                    next_obs, rew, term, trunc, info = rec_env.step(act)
+                    rec_agent.step(act)
+                    rec_agent.observe(act, next_obs, rew, term, trunc, info)
+                    ep_ret += rew
+                    obs = next_obs
+
+                    frame_idx += 1
                     dest = Path(tmpdir) / f"{frame_idx:08d}.png"
                     Image.fromarray(rec_env.render()).save(dest)
 
-                    while True:
-                        act = rec_agent.policy(obs)
-                        next_obs, rew, term, trunc, info = rec_env.step(act)
-                        rec_agent.step(act)
-                        rec_agent.observe(act, next_obs, rew, term, trunc, info)
-                        ep_ret += rew
-                        obs = next_obs
+                    if term or trunc:
+                        break
 
-                        frame_idx += 1
-                        dest = Path(tmpdir) / f"{frame_idx:08d}.png"
-                        Image.fromarray(rec_env.render()).save(dest)
+                vid = ImageSequenceClip(
+                    tmpdir,
+                    fps=rec_env.metadata.get("render_fps", 30),
+                )
 
-                        if term or trunc:
-                            break
+                dst = vid_dir / f"step={env_step}.mp4"
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                vid.write_videofile(str(dst), verbose=False, logger=None)
 
-                    vid = ImageSequenceClip(
-                        tmpdir,
-                        fps=rec_env.metadata.get("render_fps", 30),
-                    )
+            actor.train()
 
-                    dst = vid_dir / f"step={env_step}.mp4"
-                    dst.parent.mkdir(parents=True, exist_ok=True)
-                    vid.write_videofile(str(dst), verbose=False, logger=None)
+        for _ in range(cfg.env_batch):
+            env_idx, step = next(env_iter)
+            ep_ids[env_idx], step_id = buf.push(ep_ids[env_idx], step)
+            if isinstance(sampler, data.PrioritizedSampler):
+                if max_loss is not None and step_id is not None:
+                    sampler.update([step_id], [max_loss])
 
-                actor.train()
+            ep_rets[env_idx] += step.reward
+            ep_lens[env_idx] += 1
 
-            for _ in range(cfg.env_batch):
-                env_idx, step = next(env_iter)
-                ep_ids[env_idx], step_id = buf.push(ep_ids[env_idx], step)
-                if isinstance(sampler, data.PrioritizedSampler):
-                    if max_loss is not None and step_id is not None:
-                        sampler.update([step_id], [max_loss])
+            if step.done:
+                exp.add_scalar("train/ep_ret", ep_rets[env_idx])
+                ep_rets[env_idx] = 0.0
+                exp.add_scalar("train/ep_len", ep_lens[env_idx])
+                ep_lens[env_idx] = 0
 
-                ep_rets[env_idx] += step.reward
-                ep_lens[env_idx] += 1
+            env_step += 1
+            pbar.update(1)
+            if env_step >= cfg.warmup:
+                prof.step()
 
-                if step.done:
-                    exp.add_scalar("train/ep_ret", ep_rets[env_idx])
-                    ep_rets[env_idx] = 0.0
-                    exp.add_scalar("train/ep_len", ep_lens[env_idx])
-                    ep_lens[env_idx] = 0
+        if env_step < cfg.warmup:
+            continue
 
-                env_step += 1
-                pbar.update(1)
-                if env_step >= cfg.warmup:
-                    prof.step()
+        for _ in range(cfg.opt_iters):
+            idxes, _ = sampler.sample(cfg.batch_size)
 
-            if env_step < cfg.warmup:
-                continue
+            # batch = env_f.fetch_slice_batch(buf, idxes)
+            batch = env_f.fetch_step_batch(buf, idxes)
 
-            for _ in range(cfg.opt_iters):
-                if isinstance(sampler, data.PrioritizedSampler):
-                    idxes, _ = sampler.sample(cfg.batch_size)
-                elif isinstance(sampler, data.UniformSampler):
-                    idxes = sampler.sample(cfg.batch_size)
+            with torch.no_grad():
+                next_act = actor_t(batch.next_obs)
+                noise = torch.randn_like(next_act) * cfg.policy_noise
+                noise = noise.clamp(-cfg.noise_clip, cfg.noise_clip)
+                noise = noise * act_scale
+                next_act = next_act + noise
+                next_act = next_act.clamp(env_f.act_space.low, env_f.act_space.high)
 
-                # batch = env_f.fetch_slice_batch(buf, idxes)
-                batch = env_f.fetch_step_batch(buf, idxes)
+                next_q1_t = q1_t(batch.next_obs, next_act)
+                next_q2_t = q2_t(batch.next_obs, next_act)
+                next_q = torch.min(next_q1_t, next_q2_t)
+                q_target = (
+                    batch.reward + cfg.gamma * (1.0 - batch.term.float()) * next_q
+                )
 
-                with torch.no_grad():
-                    next_act = actor_t(batch.next_obs)
-                    noise = torch.randn_like(next_act) * cfg.policy_noise
-                    noise = noise.clamp(-cfg.noise_clip, cfg.noise_clip)
-                    noise = noise * act_scale
-                    next_act = next_act + noise
-                    next_act = next_act.clamp(env_f.act_space.low, env_f.act_space.high)
+            q1_pred = q1(batch.obs, batch.act)
+            q1_loss = (q1_pred - q_target).square()
+            q2_pred = q2(batch.obs, batch.act)
+            q2_loss = (q2_pred - q_target).square()
+            q_loss = q1_loss + q2_loss
 
-                    next_q1_t = q1_t(batch.next_obs, next_act)
-                    next_q2_t = q2_t(batch.next_obs, next_act)
-                    next_q = torch.min(next_q1_t, next_q2_t)
-                    q_target = (
-                        batch.reward + cfg.gamma * (1.0 - batch.term.float()) * next_q
-                    )
+            q_opt.zero_grad(set_to_none=True)
+            q_loss.mean().backward()
+            q_opt.step()
+            q_opt_iters += 1
 
-                q1_pred = q1(batch.obs, batch.act)
-                q1_loss = (q1_pred - q_target).square()
-                q2_pred = q2(batch.obs, batch.act)
-                q2_loss = (q2_pred - q_target).square()
-                q_loss = q1_loss + q2_loss
+            if isinstance(sampler, data.PrioritizedSampler):
+                q_loss_ = q_loss.detach().cpu().numpy()
+                if max_loss is None:
+                    max_loss = np.amax(q_loss_)
+                    prio = max_loss * np.ones([len(buf)])
+                    sampler.update([*buf.keys()], prio)
 
-                q_opt.zero_grad(set_to_none=True)
-                q_loss.mean().backward()
-                q_opt.step()
-                q_opt_iters += 1
+                sampler.update(idxes, q_loss_)
+                max_loss = max(max_loss, np.amax(q_loss_))
 
-                if isinstance(sampler, data.PrioritizedSampler):
-                    q_loss_ = q_loss.detach().cpu().numpy()
-                    if max_loss is None:
-                        max_loss = np.amax(q_loss_)
-                        prio = max_loss * np.ones([len(buf)])
-                        sampler.update([*buf.keys()], prio)
+            wm_pred = wm(batch.obs, batch.act)
+            wm_pred_q = q1(wm_pred, next_act)
+            wm_loss = F.mse_loss(wm_pred_q, next_q)
 
-                    sampler.update(idxes, q_loss_)
-                    max_loss = max(max_loss, np.amax(q_loss_))
+            wm_opt.zero_grad(set_to_none=True)
+            wm_loss.backward()
 
-                wm_pred = wm(batch.obs, batch.act)
-                wm_pred_q = q1(wm_pred, next_act)
-                wm_loss = F.mse_loss(wm_pred_q, next_q)
+            if should_log_q:
+                exp.add_scalar("train/q1_pred", q1_pred.mean())
+                exp.add_scalar("train/q2_pred", q2_pred.mean())
+                exp.add_scalar("train/q1_loss", q1_loss.mean())
+                exp.add_scalar("train/q2_loss", q2_loss.mean())
+                exp.add_scalar("train/q_loss", q_loss.mean())
+                exp.add_scalar("train/wm_loss", wm_loss)
 
-                wm_opt.zero_grad(set_to_none=True)
-                wm_loss.backward()
+            if q_opt_iters * cfg.policy_opt_freq >= actor_opt_iters:
+                actor_loss = -q1(batch.obs, actor(batch.obs)).mean()
+                actor_opt.zero_grad(set_to_none=True)
+                actor_loss.backward()
+                actor_opt.step()
+                actor_opt_iters += 1
 
-                if should_log_q:
-                    exp.add_scalar("train/q1_pred", q1_pred.mean())
-                    exp.add_scalar("train/q2_pred", q2_pred.mean())
-                    exp.add_scalar("train/q1_loss", q1_loss.mean())
-                    exp.add_scalar("train/q2_loss", q2_loss.mean())
-                    exp.add_scalar("train/q_loss", q_loss.mean())
-                    exp.add_scalar("train/wm_loss", wm_loss)
+                actor_p.step()
+                q1_p.step()
+                q2_p.step()
 
-                if q_opt_iters * cfg.policy_opt_freq >= actor_opt_iters:
-                    actor_loss = -q1(batch.obs, actor(batch.obs)).mean()
-                    actor_opt.zero_grad(set_to_none=True)
-                    actor_loss.backward()
-                    actor_opt.step()
-                    actor_opt_iters += 1
-
-                    actor_p.step()
-                    q1_p.step()
-                    q2_p.step()
-
-                    if should_log_a:
-                        exp.add_scalar("train/actor_loss", actor_loss)
+                if should_log_a:
+                    exp.add_scalar("train/actor_loss", actor_loss)

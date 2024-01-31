@@ -142,6 +142,7 @@ def main():
     env_step = 0
     exp.register_step("env_step", lambda: env_step, default=True)
     prof = profiler(exp.dir / "traces", device)
+    prof.start()
 
     pbar = tqdm(desc="SAC", total=cfg.total_steps)
     should_val = cron.Every(lambda: env_step, period=cfg.val_every)

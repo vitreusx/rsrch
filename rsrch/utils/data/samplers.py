@@ -2,7 +2,7 @@ from typing import Sized
 
 import numpy as np
 
-from rsrch.types.rq_tree import RangeQueryTree
+from rsrch.types.rq_tree import rq_tree
 
 
 class InfiniteSampler:
@@ -28,7 +28,7 @@ class PrioritizedSampler:
         self.ds = ds
         if max_size is None:
             max_size = len(self.ds)
-        self._priorities = RangeQueryTree(max_size)
+        self._priorities = rq_tree(max_size)
 
     def update(self, idx, prio):
         self._priorities[idx] = prio

@@ -3,7 +3,7 @@ import operator as ops
 import numpy as np
 
 
-class RangeQueryTree:
+class rq_tree:
     """A (simplified) range-query tree. We maintain an array :math:`[A_1, \ldots, A_n]`, for which we can (1) query :math:`A_i`, (2) set :math:`A_i := v`, (3) perform equivalent of :func:`np.searchsorted` on :math:`[A_1, A_1 \\oplus A_2, \\ldots, A_1 \\oplus \\ldots \\oplus A_n]` over a specified monoid :math:`M = (\\oplus, 0_{\\oplus})`."""
 
     def __init__(
@@ -36,15 +36,19 @@ class RangeQueryTree:
         self._array_beg = self._nleaves - 1
         self.array = self.tree[self._array_beg : self._array_beg + self.size]
 
-        self.tree.fill(self._zero)
-        if init is not None:
-            self.array.fill(init)
-            for idx in reversed(range(self._array_beg)):
-                left_v, right_v = self.tree[2 * idx + 1], self.tree[2 * idx + 2]
-                self.tree[idx] = self.reduce_fn(left_v, right_v)
+        self._init = init
+        self.clear()
 
     def __len__(self):
         return self.size
+
+    def clear(self):
+        self.tree.fill(self._zero)
+        if self._init is not None:
+            self.array.fill(self._init)
+            for idx in reversed(range(self._array_beg)):
+                left_v, right_v = self.tree[2 * idx + 1], self.tree[2 * idx + 2]
+                self.tree[idx] = self.reduce_fn(left_v, right_v)
 
     @property
     def total(self):
@@ -87,4 +91,4 @@ class RangeQueryTree:
         return node - self._array_beg
 
     def __repr__(self):
-        return f"RangeQueryTree({self.array[:self.size]})"
+        return f"rq_tree({self.array[:self.size]})"

@@ -103,7 +103,6 @@ class FactoryBase:
             obs_space=self.env_obs_space,
             act_space=self.env_act_space,
             sampler=sampler,
-            stack_size=self._stack,
         )
 
     def fetch_step_batch(
@@ -114,13 +113,24 @@ class FactoryBase:
         """Given a step buffer and a list of idxes, fetch a step batch and
         transform it to tensor form. The observations are properly stacked."""
 
-        batch: data.StepBatch = buffer[idxes]
+        batch = [buffer[i] for i in idxes]
 
-        obs = self.move_obs(np.stack(batch.obs))
-        next_obs = self.move_obs(np.stack(batch.next_obs))
-        act = self.move_act(np.stack(batch.act))
-        rew = torch.as_tensor(batch.reward, dtype=torch.float32, device=self.device)
-        term = torch.as_tensor(batch.term, dtype=torch.bool, device=self.device)
+        obs = np.stack([x.obs for x in batch])
+        obs = self.move_obs(obs)
+        next_obs = np.stack([x.next_obs for x in batch])
+        next_obs = self.move_obs(next_obs)
+        act = np.stack([x.act for x in batch])
+        act = self.move_act(act)
+        rew = torch.as_tensor(
+            [x.reward for x in batch],
+            dtype=torch.float32,
+            device=self.device,
+        )
+        term = torch.as_tensor(
+            [x.term for x in batch],
+            dtype=torch.bool,
+            device=self.device,
+        )
 
         batch = StepBatch(obs, act, next_obs, rew, term)
         return batch

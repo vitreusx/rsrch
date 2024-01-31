@@ -4,7 +4,7 @@ from typing import Literal
 
 from rsrch.utils import config
 
-from . import dreamerx, env, ppo, redq, sac, td3
+from . import dreamer, env, mbpo, ppo, redq, sac, td3
 
 
 @dataclass

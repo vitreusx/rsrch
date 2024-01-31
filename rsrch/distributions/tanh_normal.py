@@ -6,10 +6,10 @@ from rsrch import spaces
 
 from . import transforms as T
 from .normal import Normal
-from .transformed import TransformedDistribution
+from .transformed import Transformed
 
 
-class TanhNormal(TransformedDistribution):
+class TanhNormal(Transformed):
     def __init__(
         self,
         loc: Number | Tensor,

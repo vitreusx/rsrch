@@ -2,25 +2,30 @@ from typing import Protocol, Sequence
 
 import numpy as np
 
-from rsrch.types.rq_tree import RangeQueryTree
+from rsrch.types.rq_tree import rq_tree
 
 __all__ = ["UniformSampler", "PrioritizedSampler"]
 
 
-class Sampler(Protocol):
+class CyclicSampler(Protocol):
+    """An interface for a sampler from a cyclic buffer."""
+
     def append(self):
         ...
 
     def popleft(self):
         ...
 
-    def sample(self, n):
+    def sample(self, n: int) -> tuple[np.ndarray, dict]:
+        ...
+
+    def reset(self):
         ...
 
 
 class UniformSampler:
     def __init__(self):
-        self._beg = self._end = 0
+        self.reset()
 
     def append(self):
         self._end += 1
@@ -29,21 +34,27 @@ class UniformSampler:
         self._beg += 1
 
     def sample(self, n):
-        return np.random.randint(self._beg, self._end, size=(n,))
+        return np.random.randint(self._beg, self._end, size=(n,)), {}
+
+    def reset(self):
+        self._beg = self._end = 0
 
 
 class PrioritizedSampler:
     def __init__(self, max_size: int, alpha=1.0, beta=1.0, eps=1e-8, batch_max=True):
         self.max_size = max_size
-        self._beg = self._end = 0
         self.alpha = alpha
         self.beta = beta
         self.eps = eps
         self.batch_max = batch_max
-        self._priorities = RangeQueryTree(max_size)
-        self._max = RangeQueryTree(max_size, max, -np.inf)
+        self.reset()
+
+    def reset(self):
+        self._beg = self._end = 0
+        self._priorities = rq_tree(self.max_size)
+        self._max = rq_tree(self.max_size, max, -np.inf)
         if not self.batch_max:
-            self._min = RangeQueryTree(max_size, min, np.inf)
+            self._min = rq_tree(self.max_size, min, np.inf)
 
     def append(self):
         idx = self._end % self.max_size
@@ -83,4 +94,4 @@ class PrioritizedSampler:
         # This maps [0..max_size-1] to [..., end-1, beg, beg+1, ...] where the
         # position of beg is beg % max_size
         ids = self._beg + (idxes - (self._beg % self.max_size)) % self.max_size
-        return ids, weights
+        return ids, {"weights": weights}

@@ -112,7 +112,7 @@ class ActorHead(nn.Module):
                 t = 0.5 * (log_std.tanh() + 1)
                 log_std = min_ + (max_ - min_) * t
 
-            return D.TransformedDistribution(
+            return D.Transformed(
                 D.Normal(mean, log_std.exp(), len(self._act_space.shape)),
                 T.TanhTransform(eps=3e-8),
                 T.AffineTransform(self.act_loc, self.act_scale),

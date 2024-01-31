@@ -1,37 +1,73 @@
+from collections import deque
 from copy import deepcopy
-from typing import Any, Iterable, Mapping
+from typing import Any, Mapping, Protocol
 
 import numpy as np
+import torch
 
 from rsrch import spaces
 
-from ._allocator import Allocator
-from ._types import Seq, Step, StepBatch
-from .sampler import Sampler
+from ._types import Seq, Step
+from .sampler import CyclicSampler
+
+
+def make_array(space, shape: tuple[int, ...]):
+    if isinstance(space, spaces.np.Space):
+        return np.empty([*shape, *space.shape], space.dtype)
+    elif isinstance(space, spaces.torch.Space):
+        return torch.empty(
+            [*shape, *space.shape],
+            dtype=space.dtype,
+            device=space.device,
+        )
+    else:
+        raise NotImplementedError()
+
+
+class Buffer(Protocol):
+    """Buffer interface."""
+
+    sampler: CyclicSampler
+    ids: range
+
+    def __getitem__(self, id: int) -> Any:
+        ...
 
 
 class CyclicBuffer(Mapping[int, dict]):
-    """A cyclic buffer."""
+    """A cyclic item buffer. Stores dicts of items in an underlying buffer.
+    Items are assigned consecutive integer IDs (starting from 0.) When the
+    number of items exceeds capacity, items are removed in the order of insertion."""
 
     def __init__(
         self,
         maxlen: int,
         spaces: dict[str, spaces.np.Space],
-        sampler: Sampler | None = None,
+        sampler: CyclicSampler | None = None,
+        array_fn=make_array,
     ):
         self._maxlen = maxlen
-        self._arrays = {key: self._array(space) for key, space in spaces.items()}
-        self._elem_ids = range(0, 0)
+        self._min_id, self._max_id = 0, 0
         self.sampler = sampler
 
-    def _array(self, space: spaces.np.Space):
-        return np.empty([self._maxlen, *space.shape], dtype=space.dtype)
+        self._arrays = {}
+        for name, space in spaces.items():
+            self._arrays[name] = array_fn(space, [self._maxlen])
+
+    @property
+    def ids(self):
+        return range(self._min_id, self._max_id)
+
+    def reset(self):
+        self._min_id, self._max_id = 0, 0
+        self.sampler.reset()
 
     def push(self, x: dict) -> int:
-        while len(self._elem_ids) >= self._maxlen:
+        """Add an item to the buffer. Returns ID of the item."""
+        while len(self) >= self._maxlen:
             self.popleft()
 
-        step_id = self._elem_ids.stop
+        step_id = self._max_id
         for key, val in x.items():
             arr = self._arrays[key]
             arr[step_id % self._maxlen] = val
@@ -39,133 +75,86 @@ class CyclicBuffer(Mapping[int, dict]):
         if self.sampler is not None:
             self.sampler.append()
 
-        self._elem_ids = range(self._elem_ids.start, self._elem_ids.stop + 1)
+        self._max_id += 1
 
         return step_id
 
     def popleft(self):
-        self._elem_ids = range(self._elem_ids.start + 1, self._elem_ids.stop)
+        self._min_id += 1
         if self.sampler is not None:
             self.sampler.popleft()
 
     def __iter__(self):
-        return iter(self._elem_ids)
+        return iter(range(self._min_id, self._max_id))
 
     def __len__(self):
-        return len(self._elem_ids)
+        return self._max_id - self._min_id
 
-    def __getitem__(self, id):
+    def __getitem__(self, id: int):
         return {key: arr[id % self._maxlen] for key, arr in self._arrays.items()}
 
 
 class SeqBuffer(Mapping[int, dict]):
-    """A (cyclic) sequence buffer."""
-
     def __init__(
         self,
         max_size: int,
-        spaces: dict[str, spaces.np.Space],
-        sampler: Sampler | None = None,
-        overhead: float = 0.25,
+        spaces: dict[str, Any],
+        sampler: CyclicSampler | None = None,
+        array_fn=make_array,
     ):
-        self._cap = int((1.0 + overhead) * max_size)
-        self._arrays = {key: self._array(space) for key, space in spaces.items()}
-        self._vm = Allocator(self._cap)
-        self._seq_len = {}
-        self._seq_ids = range(0, 0)
+        self._cap = max_size
+        self._min_id, self._max_id = 0, 0
         self.sampler = sampler
-        self._free = max_size
-        self.max_size = max_size
-        self._init = 16
 
-    def _array(self, space: spaces.np.Space):
-        return np.empty([self._cap, *space.shape], dtype=space.dtype)
+        self._arrays = {}
+        for key, space in spaces.items():
+            self._arrays[key] = array_fn(space, [self._cap])
 
-    def init_seq(self, data: dict) -> int:
-        if self._free == 0:
-            self._pop()
+        self._free = deque()
+        self._free.extend(range(self._cap))
 
-        seq_id = self._seq_ids.stop
-        self._seq_ids = range(self._seq_ids.start, self._seq_ids.stop + 1)
-        self._seq_len[seq_id] = 1
+        self._idxes = {}
 
-        blk = self._vm.malloc(seq_id, self._init)
-        if blk is None:
-            self._defrag()
-            blk = self._vm.malloc(seq_id, self._init)
+    def push(self, seq_id: int | None, data: dict, done=False):
+        while len(self._free) == 0:
+            self.popleft()
 
-        for key, val in data.items():
-            arr = self._arrays[key]
-            arr[blk.start] = val
+        if seq_id is None:
+            seq_id = self._max_id
+            self._max_id += 1
+            self._idxes[seq_id] = []
 
-        self._free -= 1
+        idx = self._free.popleft()
+        self._idxes[seq_id].append(idx)
+
+        for k, v in data.items():
+            self._arrays[k][idx] = v
+
+        if done:
+            self._idxes[seq_id] = np.asarray(self._idxes[seq_id])
+
         return seq_id
 
-    def _pop(self):
-        seq_id = self._seq_ids.start
-        self._seq_ids = range(self._seq_ids.start + 1, self._seq_ids.stop)
-        blk = self._vm[seq_id]
-        self._vm.free(seq_id)
-        self._free += blk.stop - blk.start
+    def popleft(self):
+        for idx in self._idxes[self._min_id]:
+            self._free.append(idx)
 
-    def _defrag(self):
-        moved = self._vm.defrag()
-        for _, src, dst in moved:
-            self._memmove(src, dst)
+        del self._idxes[self._min_id]
+        self._min_id += 1
 
-    def _memmove(self, src: slice, dst: slice):
-        for arr in self._arrays.values():
-            if src.stop > dst.start or dst.stop > src.start:
-                arr[dst] = deepcopy(arr[src])
-            else:
-                arr[dst] = arr[src]
+    @property
+    def ids(self):
+        return range(self._min_id, self._max_id)
 
-    def add_to_seq(self, seq_id: int, data: dict):
-        if self._free == 0:
-            self._pop()
-
-        blk = self._vm[seq_id]
-        seq_len = self._seq_len[seq_id]
-        if blk.stop - blk.start == seq_len:
-            new_cap = 2 * (blk.stop - blk.start)
-            self._init = max(self._init, new_cap)
-            new_blk = self._vm.realloc(seq_id, new_cap)
-            if blk is None:
-                self._defrag()
-                new_blk = self._vm.realloc(seq_id, new_cap)
-            if new_blk.start != blk.start:
-                self._memmove(
-                    slice(blk.start, blk.start + seq_len),
-                    slice(new_blk.start, new_blk.start + seq_len),
-                )
-
-        idx = blk.start + seq_len
-        for key, val in data.items():
-            arr = self._arrays[key]
-            arr[idx] = val
-
-        self._seq_len[seq_id] += 1
-        self._free -= 1
-
-    def lock_seq(self, seq_id: int):
-        seq_len = self._seq_len[seq_id]
-        self._vm.realloc(seq_id, seq_len)
-        del self._seq_len[seq_id]
-
-    def __iter__(self):
-        return iter(self._seq_ids)
-
-    def __len__(self):
-        return iter(self._seq_ids)
+    def reset(self):
+        self._min_id, self._max_id = 0, 0
+        self.sampler.reset()
+        self._free.clear()
+        self._free.extend(range(self._cap))
 
     def __getitem__(self, seq_id: int):
-        blk = self._vm[seq_id]
-        return {key: arr[blk] for key, arr in self._arrays.items()}
-
-    def clear(self):
-        self._vm.clear()
-        self._seq_len = {}
-        self._free = self.max_size
+        idxes = np.asarray(self._idxes[seq_id])
+        return {k: a[idxes] for k, a in self._arrays.items()}
 
 
 class EpisodeBuffer(Mapping[int, Seq]):
@@ -174,25 +163,34 @@ class EpisodeBuffer(Mapping[int, Seq]):
     def __init__(
         self,
         max_size: int,
-        obs_space: spaces.np.Space,
-        act_space: spaces.np.Space,
-        sampler: Sampler | None = None,
+        obs_space: Any,
+        act_space: Any,
+        sampler: CyclicSampler | None = None,
         stack_size: int | None = None,
+        array_fn=make_array,
     ):
         self.stack_size = stack_size
         if stack_size is not None:
             obs_space = obs_space[0]
 
         self._seq_buf = SeqBuffer(
-            max_size,
-            {
+            max_size=max_size,
+            spaces={
                 "obs": obs_space,
                 "act": act_space,
                 "reward": spaces.np.Box((), dtype=np.float32),
                 "term": spaces.np.Box((), dtype=bool),
             },
-            sampler,
+            sampler=sampler,
+            array_fn=array_fn,
         )
+
+    @property
+    def ids(self):
+        return self._seq_buf.ids
+
+    def reset(self):
+        self._seq_buf.reset()
 
     def __len__(self):
         return len(self._seq_buf)
@@ -203,30 +201,27 @@ class EpisodeBuffer(Mapping[int, Seq]):
     def on_reset(self, obs):
         if self.stack_size is not None:
             frames = [*obs]
-            seq_id = self._seq_buf.init_seq({"obs": frames[0], "term": False})
+            seq_id = self._seq_buf.push(None, {"obs": frames[0], "term": False})
             for frame in frames[1:]:
-                self._seq_buf.add_to_seq(seq_id, {"obs": frame, "term": False})
+                self._seq_buf.push(seq_id, {"obs": frame, "term": False})
         else:
-            seq_id = self._seq_buf.init_seq({"obs": obs, "term": False})
+            seq_id = self._seq_buf.push(None, {"obs": obs, "term": False})
         return seq_id
 
     def on_step(self, seq_id: int, act, next_obs, reward, term, trunc):
         if self.stack_size is not None:
             next_obs = next_obs[-1]
 
-        self._seq_buf.add_to_seq(
-            seq_id,
-            {
+        return self._seq_buf.push(
+            seq_id=seq_id,
+            data={
                 "obs": next_obs,
                 "act": act,
                 "reward": reward,
                 "term": term,
             },
+            done=term or trunc,
         )
-
-        if term:
-            seq_id = None
-        return seq_id
 
     def push(self, seq_id: int | None, step: Step):
         if seq_id is None:
@@ -238,7 +233,10 @@ class EpisodeBuffer(Mapping[int, Seq]):
     def __getitem__(self, id: int):
         seq_d = self._seq_buf[id]
         return Seq(
-            seq_d["obs"], seq_d["act"][1:], seq_d["reward"][1:], seq_d["term"][-1]
+            obs=seq_d["obs"],
+            act=seq_d["act"][1:],
+            reward=seq_d["reward"][1:],
+            term=seq_d["term"][-1],
         )
 
 
@@ -249,38 +247,50 @@ class SliceBuffer(Mapping[int, Seq]):
         self,
         max_size: int,
         slice_size: int,
-        obs_space: spaces.np.Space,
-        act_space: spaces.np.Space,
-        sampler: Sampler | None = None,
+        obs_space: Any,
+        act_space: Any,
+        sampler: CyclicSampler | None = None,
         stack_size: int | None = None,
+        array_fn=make_array,
     ):
         self.stack_size = stack_size
+        self.slice_size = slice_size
         if stack_size is not None:
             obs_space = obs_space[0]
 
         self._seq_buf = SeqBuffer(
-            max_size,
-            {
+            max_size=max_size,
+            spaces={
                 "obs": obs_space,
                 "act": act_space,
                 "reward": spaces.np.Box((), dtype=np.float32),
                 "term": spaces.np.Box((), dtype=bool),
             },
+            array_fn=array_fn,
         )
 
         self._slice_buf = CyclicBuffer(
-            max_size,
-            {
+            max_size=max_size,
+            spaces={
                 "seq_id": spaces.np.Box((), dtype=np.int64),
                 "elem_idx": spaces.np.Box((), dtype=np.int64),
             },
-            sampler,
+            sampler=sampler,
+            array_fn=array_fn,
         )
 
+        self.reset()
+
+    @property
+    def ids(self):
+        return self._slice_buf.ids
+
+    def reset(self):
+        self._seq_buf.reset()
+        self._slice_buf.reset()
         self._seq_len = {}
         self._max_slice_id = {}
         self._min_seq_id = 0
-        self.slice_size = slice_size
 
     def __len__(self):
         return len(self._slice_buf)
@@ -291,39 +301,28 @@ class SliceBuffer(Mapping[int, Seq]):
     def on_reset(self, obs):
         if self.stack_size is not None:
             frames = [*obs]
-            seq_id = self._seq_buf.init_seq({"obs": frames[0], "term": False})
+            seq_id = self._seq_buf.push(None, {"obs": frames[0], "term": False})
             for frame in frames[1:]:
-                self._seq_buf.add_to_seq(seq_id, {"obs": frame, "term": False})
+                self._seq_buf.push(seq_id, {"obs": frame, "term": False})
         else:
-            seq_id = self._seq_buf.init_seq({"obs": obs, "term": False})
+            seq_id = self._seq_buf.push(None, {"obs": obs, "term": False})
         self._seq_len[seq_id] = 1
         self._purge_removed_slices()
         return seq_id
 
     def _purge_removed_slices(self):
-        removed_seq_ids = range(self._min_seq_id, self._seq_buf._seq_ids.start)
+        removed_seq_ids = range(self._min_seq_id, self._seq_buf.ids.start)
         for seq_id in removed_seq_ids:
             if seq_id not in self._max_slice_id:
                 continue
             max_slice_id = self._max_slice_id[seq_id]
-            while self._slice_buf._elem_ids.start <= max_slice_id:
+            while self._slice_buf.ids.start <= max_slice_id:
                 self._slice_buf.popleft()
-            # del self._max_slice_id[seq_id]
-        self._min_seq_id = self._seq_buf._seq_ids.start
+        self._min_seq_id = self._seq_buf.ids.start
 
     def on_step(self, seq_id: int, act, next_obs, reward, term, trunc):
         if self.stack_size is not None:
             next_obs = next_obs[-1]
-
-        self._seq_buf.add_to_seq(
-            seq_id,
-            {
-                "obs": next_obs,
-                "act": act,
-                "reward": reward,
-                "term": term,
-            },
-        )
 
         self._seq_len[seq_id] += 1
         slice_id = None
@@ -332,10 +331,16 @@ class SliceBuffer(Mapping[int, Seq]):
             slice_id = self._slice_buf.push({"seq_id": seq_id, "elem_idx": elem_idx})
             self._max_slice_id[seq_id] = slice_id
 
-        done = term or trunc
-        if done:
-            self._seq_buf.lock_seq(seq_id)
-            seq_id = None
+        seq_id = self._seq_buf.push(
+            seq_id=seq_id,
+            data={
+                "obs": next_obs,
+                "act": act,
+                "reward": reward,
+                "term": term,
+            },
+            done=term or trunc,
+        )
 
         self._purge_removed_slices()
         return seq_id, slice_id
@@ -343,8 +348,14 @@ class SliceBuffer(Mapping[int, Seq]):
     def push(self, seq_id: int | None, step: Step):
         if seq_id is None:
             seq_id = self.on_reset(step.obs)
+
         return self.on_step(
-            seq_id, step.act, step.next_obs, step.reward, step.term, step.trunc
+            seq_id,
+            step.act,
+            step.next_obs,
+            step.reward,
+            step.term,
+            step.trunc,
         )
 
     def __getitem__(self, id: int):
@@ -373,41 +384,31 @@ class SliceBuffer(Mapping[int, Seq]):
         return Seq(obs, act, reward, term)
 
 
-class StepBuffer(Mapping):
+class StepBuffer(Mapping[int, Step]):
     def __init__(
         self,
         max_size: int,
-        obs_space: spaces.np.Space,
-        act_space: spaces.np.Space,
-        sampler: Sampler | None = None,
-        stack_size: int | None = None,
+        obs_space: Any,
+        act_space: Any,
+        sampler: CyclicSampler | None = None,
+        array_fn=make_array,
     ):
-        obs_nbytes = int(np.prod(obs_space.shape)) * obs_space.dtype.itemsize
-        act_nbytes = int(np.prod(act_space.shape)) * act_space.dtype.itemsize
-        apx_nbytes = max_size * (2 * obs_nbytes + act_nbytes + 5)
+        self._buf = CyclicBuffer(
+            maxlen=max_size,
+            spaces={
+                "obs": obs_space,
+                "act": act_space,
+                "next_obs": obs_space,
+                "reward": spaces.np.Box((), dtype=np.float32),
+                "term": spaces.np.Box((), dtype=bool),
+            },
+            sampler=sampler,
+            array_fn=array_fn,
+        )
 
-        self._mem_opt = apx_nbytes > 1.0e9
-        if self._mem_opt:
-            self._buf = SliceBuffer(
-                max_size=max_size,
-                slice_size=2,
-                obs_space=obs_space,
-                act_space=act_space,
-                sampler=sampler,
-                stack_size=stack_size,
-            )
-        else:
-            self._buf = CyclicBuffer(
-                maxlen=max_size,
-                spaces={
-                    "obs": obs_space,
-                    "act": act_space,
-                    "next_obs": obs_space,
-                    "reward": spaces.np.Box((), dtype=np.float32),
-                    "term": spaces.np.Box((), dtype=bool),
-                },
-                sampler=sampler,
-            )
+    @property
+    def ids(self):
+        return self._buf.ids
 
     def __len__(self):
         return len(self._buf)
@@ -416,87 +417,27 @@ class StepBuffer(Mapping):
         return iter(self._buf)
 
     def push(self, seq_id: int, step: Step) -> tuple[int | None, int | None]:
-        if self._mem_opt:
-            seq_id, step_id = self._buf.push(seq_id, step)
-        else:
-            step_id = self._buf.push(
-                {
-                    "obs": step.obs,
-                    "act": step.act,
-                    "next_obs": step.next_obs,
-                    "reward": step.reward,
-                    "term": step.term,
-                }
-            )
-            if step.done:
-                seq_id = None
+        step_id = self._buf.push(
+            {
+                "obs": step.obs,
+                "act": step.act,
+                "next_obs": step.next_obs,
+                "reward": step.reward,
+                "term": step.term,
+            }
+        )
+
+        if step.done:
+            seq_id = None
+
         return seq_id, step_id
 
-    def __getitem__(self, id) -> Step | StepBatch:
-        id = np.asarray(id)
-        if self._mem_opt:
-            if len(id.shape) == 0:
-                seq: Seq = self._buf[id]
-                return Step(
-                    seq.obs[0],
-                    seq.act[0],
-                    seq.obs[1],
-                    seq.reward[0],
-                    seq.term[0],
-                )
-            else:
-                seqs = [self._buf[i] for i in id]
-                return StepBatch(
-                    np.stack([seq.obs[0] for seq in seqs]),
-                    np.stack([seq.act[0] for seq in seqs]),
-                    np.stack([seq.obs[1] for seq in seqs]),
-                    np.stack([seq.reward[0] for seq in seqs]),
-                    np.stack([seq.term[0] for seq in seqs]),
-                )
-        else:
-            step_t = Step if len(id.shape) == 0 else StepBatch
-            step_d: dict = self._buf[id]
-            return step_t(
-                step_d["obs"],
-                step_d["act"],
-                step_d["next_obs"],
-                step_d["reward"],
-                step_d["term"],
-            )
-
-
-class OnlineBuffer(Mapping[int, Seq]):
-    """A buffer for on-policy algorithms, such as PPO."""
-
-    def __init__(self):
-        self.episodes = {}
-        self._ep_ptr = 0
-
-    def reset(self):
-        self.episodes.clear()
-
-    def push(self, ep_id: int, step: Step):
-        if ep_id not in self.episodes:
-            ep_id = self._ep_ptr
-            self._ep_ptr += 1
-            self.episodes[ep_id] = Seq([step.obs], [], [], False)
-
-        ep: Seq = self.episodes[ep_id]
-        ep.obs.append(step.next_obs)
-        ep.act.append(step.act)
-        ep.reward.append(step.reward)
-        ep.term = ep.term or step.term
-
-        if step.term or step.trunc:
-            ep_id = None
-
-        return ep_id
-
-    def __iter__(self):
-        return iter(self.episodes)
-
-    def __len__(self):
-        return len(self.episodes)
-
-    def __getitem__(self, id: int) -> Seq:
-        return self.episodes[id]
+    def __getitem__(self, id: int) -> Step:
+        step_data: dict = self._buf[id]
+        return Step(
+            step_data["obs"],
+            step_data["act"],
+            step_data["next_obs"],
+            step_data["reward"],
+            step_data["term"],
+        )

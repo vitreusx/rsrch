@@ -9,7 +9,7 @@ from rsrch.rl import gym
 from rsrch.rl.gym.vector.utils import concatenate, create_empty_array
 
 from .core import ListSeq, Seq, Step
-from .sampler import Sampler
+from .sampler import CyclicSampler
 from .store import LayeredStore, NumpyStepDeque, RAMStepDeque
 
 __all__ = ["StepBuffer", "ChunkBuffer", "OnlineBuffer"]
@@ -19,7 +19,7 @@ class StepBuffer(Mapping[int, Step]):
     def __init__(
         self,
         step_cap: int,
-        sampler: Sampler = None,
+        sampler: CyclicSampler = None,
         store: Deque = None,
     ):
         self.step_cap = step_cap
@@ -63,7 +63,7 @@ class ChunkBuffer(Mapping[int, Seq]):
         capacity: int,
         obs_space: gym.Space,
         act_space: gym.Space,
-        sampler: Sampler = None,
+        sampler: CyclicSampler = None,
         store: MutableMapping = None,
         num_stack=None,
     ):

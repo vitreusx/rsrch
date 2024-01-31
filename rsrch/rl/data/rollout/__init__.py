@@ -4,13 +4,6 @@ from typing import Iterable
 import numpy as np
 
 from rsrch.rl import gym
-from rsrch.rl.gym.vector.utils import (
-    concatenate,
-    create_empty_array,
-    getitem,
-    split,
-    split_vec_info,
-)
 
 from .. import core
 from .events import *
@@ -95,7 +88,6 @@ def _(
     if reset:
         obs, info = env.reset()
         idxes = np.arange(env.num_envs)
-        info = split_vec_info(info, env.num_envs)
         ev = VecReset(idxes, obs, info)
         agent.reset(idxes, ev.obs, ev.info)
         yield ev
@@ -107,53 +99,47 @@ def _(
         yield Async()
         next_obs, reward, term, trunc, info = env.step_wait()
 
-        if "final_observation" in info:
-            done = info["_final_observation"]
-            final_obs = concatenate(
-                obs_space,
-                info["final_observation"][done],
-                out=create_empty_array(obs_space, done.sum()),
+        done = term | trunc
+
+        done_idxes = np.where(done)[0]
+        if len(done_idxes) > 0:
+            final_obs = np.stack(
+                [info_["final_observation"] for info_ in info[done_idxes]]
             )
-            final_info = info["final_info"][done]
-        else:
-            done = ~all_true
+            final_info = np.stack([info_["final_info"] for info_ in info[done_idxes]])
 
-        info = split_vec_info(info, env.num_envs)
-        done_idxes, cont_idxes = np.where(done)[0], np.where(~done)[0]
-
-        i = done_idxes
-        if len(i) > 0:
             ev = VecStep(
-                idxes=i,
-                act=getitem(act_space, i, act, env.num_envs),
+                idxes=done_idxes,
+                act=act[done_idxes],
                 next_obs=final_obs,
-                reward=reward[i],
-                term=term[i],
-                trunc=trunc[i],
+                reward=reward[done_idxes],
+                term=term[done_idxes],
+                trunc=trunc[done_idxes],
                 info=final_info,
             )
             agent.observe(ev.idxes, ev.next_obs, ev.term, ev.trunc, ev.info)
             yield ev
 
             ev = VecReset(
-                idxes=i,
-                obs=getitem(obs_space, i, next_obs, env.num_envs),
-                info=info[i],
+                idxes=done_idxes,
+                obs=next_obs[done_idxes],
+                info=info[done_idxes],
             )
             agent.reset(ev.idxes, ev.obs, ev.info)
             yield ev
-            ep_idx += len(i)
 
-        i = cont_idxes
-        if len(i) > 0:
+            ep_idx += len(done_idxes)
+
+        cont_idxes = np.where(~done)[0]
+        if len(cont_idxes) > 0:
             ev = VecStep(
-                idxes=i,
-                act=getitem(act_space, i, act, env.num_envs),
-                next_obs=getitem(obs_space, i, next_obs, env.num_envs),
-                reward=reward[i],
-                term=term[i],
-                trunc=trunc[i],
-                info=info[i],
+                idxes=cont_idxes,
+                act=act[cont_idxes],
+                next_obs=next_obs[cont_idxes],
+                reward=reward[cont_idxes],
+                term=term[cont_idxes],
+                trunc=trunc[cont_idxes],
+                info=info[cont_idxes],
             )
             agent.observe(ev.idxes, ev.next_obs, ev.term, ev.trunc, ev.info)
             yield ev
@@ -220,27 +206,24 @@ def _(
         obs = [obs_space.sample() for _ in range(env.num_envs)]
     else:
         obs, _ = init
-        obs = [*split(obs_space, obs, env.num_envs)]
+        obs = [*obs]
 
     for ev in events(env, agent, max_steps, max_episodes, reset, init):
         if isinstance(ev, VecReset):
-            reset_obs = split(obs_space, ev.obs, len(ev.idxes))
             for i, env_i in enumerate(ev.idxes):
-                obs[env_i] = reset_obs[i]
+                obs[env_i] = ev.obs[i]
         elif isinstance(ev, VecStep):
-            act = split(act_space, ev.act, len(ev.idxes))
-            next_obs = split(obs_space, ev.next_obs, len(ev.idxes))
             for i, env_i in enumerate(ev.idxes):
                 yield env_i, core.Step(
                     obs[env_i],
-                    act[i],
-                    next_obs[i],
+                    ev.act[i],
+                    ev.next_obs[i],
                     ev.reward[i],
                     ev.term[i],
                     ev.trunc[i],
                     ev.info[i],
                 )
-                obs[env_i] = next_obs[i]
+                obs[env_i] = ev.next_obs[i]
 
 
 @singledispatch
@@ -263,22 +246,17 @@ def _(env: gym.Env, agent: gym.Agent, max_steps=None, max_episodes=None):
 
 @episodes.register
 def _(env: gym.VectorEnv, agent: gym.VecAgent, max_steps=None, max_episodes=None):
-    act_space = env.single_action_space
-    obs_space = env.single_observation_space
     ep = {env_idx: None for env_idx in range(env.num_envs)}
 
     for ev in events(env, agent, max_steps, max_episodes):
         if isinstance(ev, VecReset):
-            obs = split(obs_space, ev.obs, len(ev.idxes))
             for i, env_i in enumerate(ev.idxes):
-                ep[env_i] = core.ListSeq.initial(obs[i], ev.info[i])
+                ep[env_i] = core.ListSeq.initial(ev.obs[i], ev.info[i])
         elif isinstance(ev, VecStep):
-            act = split(act_space, ev.act, len(ev.idxes))
-            next_obs = split(obs_space, ev.next_obs, len(ev.idxes))
             for i, env_i in enumerate(ev.idxes):
                 ep[env_i].add(
-                    act[i],
-                    next_obs[i],
+                    ev.act[i],
+                    ev.next_obs[i],
                     ev.reward[i],
                     ev.term[i],
                     ev.trunc[i],

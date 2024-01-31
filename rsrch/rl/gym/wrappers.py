@@ -1,12 +1,12 @@
 import numpy as np
-from gymnasium import Wrapper
+from gymnasium.core import ActionWrapper, ObservationWrapper, RewardWrapper, Wrapper
 from gymnasium.wrappers import *
 
 from .envs import Env
 from .spaces import *
 
 
-class NoopResetEnv(Wrapper[np.ndarray, int, np.ndarray, int]):
+class NoopResetEnv(Wrapper):
     """
     Sample initial states by taking random number of no-ops on reset.
     No-op is assumed to be action 0.
@@ -38,7 +38,7 @@ class NoopResetEnv(Wrapper[np.ndarray, int, np.ndarray, int]):
         return obs, info
 
 
-class FireResetEnv(Wrapper[np.ndarray, int, np.ndarray, int]):
+class FireResetEnv(Wrapper):
     """
     Take action on reset for environments that are fixed until firing.
 
@@ -61,7 +61,7 @@ class FireResetEnv(Wrapper[np.ndarray, int, np.ndarray, int]):
         return obs, info
 
 
-class EpisodicLifeEnv(Wrapper[np.ndarray, int, np.ndarray, int]):
+class EpisodicLifeEnv(Wrapper):
     """
     Make end-of-life == end-of-episode, but only reset on true game over.
     Done by DeepMind for the DQN and co. since it helps value estimation.
@@ -112,7 +112,7 @@ class EpisodicLifeEnv(Wrapper[np.ndarray, int, np.ndarray, int]):
         return obs, info
 
 
-class MaxAndSkipEnv(Wrapper[np.ndarray, int, np.ndarray, int]):
+class MaxAndSkipEnv(Wrapper):
     """
     Return only every ``skip``-th frame (frameskipping)
     and return the max between the two last frames.

@@ -21,9 +21,9 @@ mujoco = "<=2.3.3"
 ptflops = "^0.7"
 h5py = "^3.8.0"
 sympy = "^1.12"
-torch = "^2.1"
-torchvision = "^0.16"
-gymnasium = { version = "^0.28.1", extras = ["accept-rom-license", "all"] }
+torch = {version = "2.1.*", platform = "linux", source = "torch"}
+torchvision = {version = "0.16.*", platform = "linux", source = "torch"}
+gymnasium = { version = "0.26.*", extras = ["accept-rom-license", "all"] }
 poethepoet = "^0.21.0"
 wandb = "^0.15.5"
 plotly = "^5.15.0"
@@ -38,42 +38,41 @@ pylint = "^2.17.4"
 isort = ">=5"
 poetry-plugin-export = "^1.6.0"
 ray = "^2.9.0"
+lightning = "^2.1.3"
+ruamel-yaml = "^0.18.5"
 
-[tool.poe.tasks.gpu-setup]
-help = "Set up the environment for use with GPUs."
+[[tool.poetry.source]]
+name = "torch"
+url = "https://download.pytorch.org/whl/cpu"
+priority = "explicit"
+
+[tool.poe.tasks.fix-torch]
+help = "Install CUDA version of torch*. Due to issues with torch's packaging, it cannot really be done directly in poetry."
 shell = """
-  export TORCH=$(\
-    poetry export -f requirements.txt \
-    | grep -E "^torch==[^ ]*" -o)
-  export TORCHVISION=$(\
-    poetry export -f requirements.txt \
-    | grep -E "^torchvision==[^ ]*" -o)
-  pip install -U ${TORCH}+${cuda} ${TORCHVISION}+${cuda} \
-    --index-url https://download.pytorch.org/whl/${cuda}
+for PKG in torch torchvision; do
+  VER=$(pip freeze \
+    | grep -E "^${PKG}==[^ ]*" -o \
+    | sed -E "s/${PKG}==([0-9\\.]*).*/\\1/")
+  if [ -n "${VER}" ]; then
+    pip install -U ${PKG}==${VER}+${tag} \
+      --index-url "https://download.pytorch.org/whl/${tag}"
+  fi
+done
 """
-args = [{ name = "cuda", default = "cu118" }]
+args = [{ name = "tag", default = "cu121" }]
 
 [tool.poe.tasks.fix-opencv]
 help = "Replace opencv-python with headless version."
 shell = """
-  export OPENCV=$(\
-    poetry export -f requirements.txt \
-    | grep -E "opencv-python==[^ ]*" -o \
-    | sed -E 's/opencv-python==(.*)/\\1/')
-  pip uninstall -y opencv-python
-  pip install -U opencv-python-headless==${OPENCV}
-"""
+VER=$(pip freeze \
+  | grep -E "opencv-python==[^ ]*" -o \
+  | sed -E 's/opencv-python==(.*)/\\1/')
 
-[tool.poe.tasks.wandb]
-help = "Start or stop a local Weights and Biases server."
-shell = """
-  if [ "$(docker ps -a | grep wandb-local)" ]; then
-    wandb server stop
-  else
-    wandb server start -p ${port}
-  fi
+if [ -n "${VER}" ]; then
+  pip uninstall -y opencv-python opencv-python-headless
+  pip install -U opencv-python-headless==${VER}
+fi
 """
-args = [{ name = "port", default = "8081" }]
 
 [build-system]
 requires = ["poetry-core>=1.5"]

@@ -1,7 +1,6 @@
 from typing import List, Protocol
 
 import torch
-from tensordict import TensorDict, tensorclass
 from torch import Tensor
 
 from rsrch.types.tensorlike import Tensorlike
@@ -11,8 +10,8 @@ from .transforms import Transform
 from .utils import sum_rightmost
 
 
-class TransformedDistribution(Distribution, Tensorlike):
-    base: TensorDict
+class Transformed(Distribution, Tensorlike):
+    base: Tensorlike
     event_shape: torch.Size
 
     def __init__(self, base: Distribution, *transforms: Transform):

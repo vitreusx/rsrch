@@ -10,18 +10,22 @@ from moviepy.editor import VideoClip
 from torch import Tensor
 from torch.utils.tensorboard import SummaryWriter
 
-from rsrch.utils import sanitize
+from rsrch.utils.path import sanitize
 
 
 class Experiment:
-    def __init__(self, project: str, prefix=None):
-        now = f"{datetime.now():%Y-%m-%d_%H-%M-%S}"
-        if prefix is None:
-            name = now
-        else:
-            name = f"{prefix}__{now}"
+    """Tensorboard-powered experiment manager."""
 
-        self.dir = sanitize(Path(f"runs/{project}/{name}"))
+    def __init__(self, project: str, run: str | None = None):
+        """Create the experiment.
+        :param project: Project name. The experiment files will be placed in runs/*project* directory.
+        :param run: Run identifier. If not provided, current date is used.
+        """
+
+        if run is None:
+            run = f"{datetime.now():%Y-%m-%d_%H-%M-%S}"
+
+        self.dir = sanitize(Path(f"runs/{project}/{run}"))
         self.dir.mkdir(parents=True, exist_ok=True)
 
         self._writer = SummaryWriter(

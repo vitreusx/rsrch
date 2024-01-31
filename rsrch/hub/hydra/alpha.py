@@ -15,7 +15,7 @@ from .utils import Optim
 @dataclass
 class Config:
     adaptive: bool
-    opt: Optim
+    opt: Optim | None = None
     value: float | None = None
     target_ent: float | None = None
     min_value: float | None = 1e-6
