@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor
 
+from rsrch.nn.utils import straight_through
 from rsrch.types.tensorlike import Tensorlike
 
 from .categorical import Categorical
@@ -69,22 +70,7 @@ def _(p: OneHotCategorical, q: OneHotCategorical):
     return t.sum(-1)
 
 
-class StraightThrough(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, value, grad_target):
-        return value
-
-    @staticmethod
-    def backward(ctx, out_grad):
-        return None, out_grad
-
-
 class OneHotCategoricalST(OneHotCategorical):
     def rsample(self, sample_shape: torch.Size = torch.Size()):
         samples = self.sample(sample_shape)
-        _param = (
-            self.index_rv._logits
-            if self.index_rv._logits is not None
-            else self.index_rv._probs
-        )
-        return StraightThrough.apply(samples, _param)
+        return straight_through(samples, self.index_rv._param)

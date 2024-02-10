@@ -1,7 +1,6 @@
 from .base import *  # isort: skip
-from . import agents, envs, spaces, vector, wrappers
+from . import agents, envs, vector, wrappers
 from .agents import Agent
-from .spaces import TensorSpace
 from .vector import Agent as VecAgent
 from .vector import VectorEnv
 

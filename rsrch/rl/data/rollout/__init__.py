@@ -4,8 +4,9 @@ from typing import Iterable
 import numpy as np
 
 from rsrch.rl import gym
+from rsrch.rl.gym.vector.wrappers import VectorListInfo
 
-from .. import core
+from .. import types
 from .events import *
 
 
@@ -87,6 +88,9 @@ def _(
 
     if reset:
         obs, info = env.reset()
+        if isinstance(info, dict):
+            info = VectorListInfo.convert(info, env.num_envs)
+
         idxes = np.arange(env.num_envs)
         ev = VecReset(idxes, obs, info)
         agent.reset(idxes, ev.obs, ev.info)
@@ -98,6 +102,9 @@ def _(
         agent.step(act)
         yield Async()
         next_obs, reward, term, trunc, info = env.step_wait()
+
+        if isinstance(info, dict):
+            info = VectorListInfo.convert(info, env.num_envs)
 
         done = term | trunc
 
@@ -178,7 +185,7 @@ def _(
         if isinstance(ev, Reset):
             obs = ev.obs
         elif isinstance(ev, Step):
-            yield core.Step(
+            yield types.Step(
                 obs,
                 ev.act,
                 ev.next_obs,
@@ -199,10 +206,8 @@ def _(
     reset=True,
     init=None,
 ):
-    act_space = env.single_action_space
-    obs_space = env.single_observation_space
-
     if init is None:
+        obs_space = env.single_observation_space
         obs = [obs_space.sample() for _ in range(env.num_envs)]
     else:
         obs, _ = init
@@ -214,7 +219,7 @@ def _(
                 obs[env_i] = ev.obs[i]
         elif isinstance(ev, VecStep):
             for i, env_i in enumerate(ev.idxes):
-                yield env_i, core.Step(
+                yield env_i, types.Step(
                     obs[env_i],
                     ev.act[i],
                     ev.next_obs[i],
@@ -236,9 +241,13 @@ def _(env: gym.Env, agent: gym.Agent, max_steps=None, max_episodes=None):
     ep = None
     for ev in events(env, agent, max_steps, max_episodes):
         if isinstance(ev, Reset):
-            ep = core.ListSeq.initial(ev.obs, ev.info)
+            ep = types.Seq([ev.obs], [], [], False, [ev.info])
         elif isinstance(ev, Step):
-            ep.add(ev.act, ev.next_obs, ev.reward, ev.term, ev.trunc, ev.info)
+            ep.obs.append(ev.next_obs)
+            ep.act.append(ev.act)
+            ep.reward.append(ev.reward)
+            ep.term |= ev.term
+            ep.info.append(ev.info)
             if ev.term | ev.trunc:
                 yield ep
                 ep = None
@@ -246,22 +255,19 @@ def _(env: gym.Env, agent: gym.Agent, max_steps=None, max_episodes=None):
 
 @episodes.register
 def _(env: gym.VectorEnv, agent: gym.VecAgent, max_steps=None, max_episodes=None):
-    ep = {env_idx: None for env_idx in range(env.num_envs)}
-
+    ep: dict[int, types.Seq] = {env_idx: None for env_idx in range(env.num_envs)}
     for ev in events(env, agent, max_steps, max_episodes):
         if isinstance(ev, VecReset):
             for i, env_i in enumerate(ev.idxes):
-                ep[env_i] = core.ListSeq.initial(ev.obs[i], ev.info[i])
+                ep[env_i] = types.Seq([ev.obs[i]], [], [], False, [ev.info[i]])
         elif isinstance(ev, VecStep):
             for i, env_i in enumerate(ev.idxes):
-                ep[env_i].add(
-                    ev.act[i],
-                    ev.next_obs[i],
-                    ev.reward[i],
-                    ev.term[i],
-                    ev.trunc[i],
-                    ev.info[i],
-                )
+                cur_ep = ep[env_i]
+                cur_ep.obs.append(ev.next_obs[i])
+                cur_ep.act.append(ev.act[i])
+                cur_ep.reward.append(ev.reward[i])
+                cur_ep.term |= ev.term[i]
+                cur_ep.info.append(ev.info[i])
                 if ev.term[i] | ev.trunc[i]:
-                    yield env_i, ep[env_i]
+                    yield env_i, cur_ep
                     ep[env_i] = None

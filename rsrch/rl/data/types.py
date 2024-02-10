@@ -49,6 +49,21 @@ class StepBatch(Generic[ObsType, ActType]):
     trunc: Optional[Sequence[bool]] = None
     info: Optional[Sequence[dict]] = None
 
+    def __len__(self):
+        return len(self.obs)
+
+    def __iter__(self):
+        for idx in range(len(self)):
+            yield Step(
+                obs=self.obs[idx],
+                act=self.act[idx],
+                next_obs=self.next_obs[idx],
+                reward=self.reward[idx],
+                term=self.term[idx],
+                trunc=self.trunc[idx] if self.trunc is not None else None,
+                info=self.info[idx] if self.info is not None else None,
+            )
+
 
 @dataclass
 class Seq:

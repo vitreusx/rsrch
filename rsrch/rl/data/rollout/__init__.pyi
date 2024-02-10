@@ -1,6 +1,8 @@
-from typing import overload, Iterable
+from typing import Iterable, overload
+
 from rsrch.rl import gym
-from .. import core
+
+from .. import types
 from .events import *
 
 @overload
@@ -29,7 +31,7 @@ def steps(
     max_episodes=None,
     reset=True,
     init=None,
-) -> Iterable[core.Step]: ...
+) -> Iterable[types.Step]: ...
 @overload
 def steps(
     env: gym.VectorEnv,
@@ -38,12 +40,12 @@ def steps(
     max_episodes=None,
     reset=True,
     init=None,
-) -> Iterable[tuple[int, core.Step]]: ...
+) -> Iterable[tuple[int, types.Step]]: ...
 @overload
 def episodes(
     env: gym.Env, agent: gym.Agent, max_steps=None, max_episodes=None
-) -> Iterable[core.Seq]: ...
+) -> Iterable[types.Seq]: ...
 @overload
 def episodes(
     env: gym.VectorEnv, agent: gym.VecAgent, max_steps=None, max_episodes=None
-) -> Iterable[tuple[int, core.Seq]]: ...
+) -> Iterable[tuple[int, types.Seq]]: ...

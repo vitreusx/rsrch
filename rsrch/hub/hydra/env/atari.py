@@ -4,8 +4,12 @@ from typing import Any, Literal
 import envpool
 import numpy as np
 import torch
+from torch import Tensor
 
+from rsrch import spaces
 from rsrch.rl import gym
+from rsrch.rl.data.buffer import SliceBuffer
+from rsrch.spaces.utils import from_gym
 
 from . import base
 from ._envpool import VecEnvPool
@@ -15,76 +19,113 @@ from ._envpool import VecEnvPool
 class Config:
     env_id: str
     """Environment name"""
-    screen_size: int | tuple[int, int]
+    screen_size: int | tuple[int, int] = 84
     """Screen size. Either a single number or a pair (width, height)."""
-    frame_skip: int
+    frame_skip: int = 4
     """Environment frame skip - the emulator performs action k times and returns
     the last one, so one only sees every kth frame."""
-    obs_type: Literal["rgb", "grayscale", "ram"]
+    obs_type: Literal["rgb", "grayscale", "ram"] = "grayscale"
     """Observation type. One of 'rgb', 'grayscale' and 'ram'."""
-    noop_max: int
+    noop_max: int = 30
     """No-op max. (?)"""
-    fire_reset: bool
+    fire_reset: bool = True
     """Fire reset. (?)"""
-    term_on_life_loss: bool
+    term_on_life_loss: bool = False
     """Whether to stop the episode on life loss."""
-    time_limit: int | None
+    time_limit: int | None = 108e3
     """Time limit."""
-    stack: int | None
+    stack: int | None = 4
     """Whether to return stacked observations."""
 
 
-class FixShape(gym.ObservationWrapper):
-    def __init__(self, env: gym.Env, stack_num: int | None):
-        super().__init__(env)
-        self._stack_num = stack_num
-        assert isinstance(env.observation_space, gym.spaces.Box)
-        low = self.observation(env.observation_space.low)
-        high = self.observation(env.observation_space.high)
-        self.observation_space = gym.spaces.Box(
-            low, high, low.shape, low.dtype, self.observation_space._np_random
-        )
+# class FixShape(gym.ObservationWrapper):
+#     def __init__(self, env: gym.Env, stack_num: int | None):
+#         super().__init__(env)
+#         self._stack_num = stack_num
+#         assert isinstance(env.observation_space, gym.spaces.Box)
+#         low = self.observation(env.observation_space.low)
+#         high = self.observation(env.observation_space.high)
+#         self.observation_space = gym.spaces.Box(
+#             low, high, low.shape, low.dtype, self.observation_space._np_random
+#         )
 
-    def observation(self, obs: np.ndarray) -> np.ndarray:
-        if self._stack_num is not None:
-            obs = np.transpose(obs, (0, 3, 1, 2))
-        else:
-            obs = np.transpose(obs, (2, 0, 1))
-        return obs
+#     def observation(self, obs: np.ndarray) -> np.ndarray:
+#         if self._stack_num is not None:
+#             obs = np.transpose(obs, (0, 3, 1, 2))
+#         else:
+#             obs = np.transpose(obs, (2, 0, 1))
+#         return obs
 
 
-class FixShapeEP(gym.vector.wrappers.ObservationWrapper):
+# class FixShapeEP(gym.vector.wrappers.ObservationWrapper):
+#     def __init__(self, env: gym.VectorEnv, stack_num: int):
+#         super().__init__(env)
+#         self._stack_num = stack_num
+
+#         assert isinstance(self.observation_space, gym.spaces.Box)
+#         low_v = self.observation(self.observation_space.low)
+#         high_v = self.observation(self.observation_space.high)
+#         self.observation_space = gym.spaces.Box(
+#             low_v, high_v, low_v.shape, low_v.dtype, self.observation_space._np_random
+#         )
+#         self.single_observation_space = gym.spaces.Box(
+#             low_v[0],
+#             high_v[0],
+#             low_v.shape[1:],
+#             low_v.dtype,
+#             self.single_observation_space._np_random,
+#         )
+
+#     def observation(self, obs: np.ndarray) -> np.ndarray:
+#         obs = obs.reshape(len(obs), self._stack_num, -1, *obs.shape[2:])
+#         return obs
+
+
+class Unstack(gym.vector.wrappers.ObservationWrapper):
     def __init__(self, env: gym.VectorEnv, stack_num: int):
         super().__init__(env)
-        self._stack_num = stack_num
+        self.stack_num = stack_num
 
         assert isinstance(self.observation_space, gym.spaces.Box)
-        low_v = self.observation(self.observation_space.low)
-        high_v = self.observation(self.observation_space.high)
-        self.observation_space = gym.spaces.Box(
-            low_v, high_v, low_v.shape, low_v.dtype, self.observation_space._np_random
-        )
+        new_low = self.observation(self.observation_space.low)
+        new_high = self.observation(self.observation_space.high)
+        self.observation_space = gym.spaces.Box(new_low, new_high, dtype=new_low.dtype)
         self.single_observation_space = gym.spaces.Box(
-            low_v[0],
-            high_v[0],
-            low_v.shape[1:],
-            low_v.dtype,
-            self.single_observation_space._np_random,
+            new_low[0], new_high[0], dtype=new_low.dtype
         )
 
     def observation(self, obs: np.ndarray) -> np.ndarray:
-        obs = obs.reshape(len(obs), self._stack_num, -1, *obs.shape[2:])
-        return obs
+        new_shape = [*obs.shape[:-3], self.stack_num, -1, *obs.shape[-2:]]
+        return obs.reshape(new_shape)
 
 
-class Factory(base.FactoryBase):
+class Factory(base.Factory):
     def __init__(
         self,
         cfg: Config,
         device: torch.device,
     ):
         self.cfg = cfg
-        super().__init__(self.env(mode="train"), device, self.cfg.stack)
+        self.device = device
+        env = self.env()
+        if cfg.obs_type == "ram":
+            env_obs_space = from_gym(env.observation_space)
+            obs_space = spaces.torch.as_tensor(obs_space)
+        else:
+            env_obs_space = from_gym(env.observation_space)
+            assert isinstance(env_obs_space, spaces.np.Box)
+            env_obs_space = spaces.np.Image(env_obs_space.shape, channel_last=False)
+            if cfg.stack is not None:
+                num_stack, num_channels, height, width = env_obs_space.shape
+                shape = [num_stack * num_channels, height, width]
+            else:
+                shape = env_obs_space.shape
+            obs_space = spaces.torch.Image(shape, dtype=torch.float32)
+
+        env_act_space = from_gym(env.action_space)
+        act_space = spaces.torch.as_tensor(env_act_space)
+
+        super().__init__(env_obs_space, obs_space, env_act_space, act_space)
 
     def env(self, mode="val", record=False):
         if not record:
@@ -92,29 +133,37 @@ class Factory(base.FactoryBase):
             if env is not None:
                 return gym.envs.FromVectorEnv(env)
 
-        env = gym.make(
-            self.cfg.env_id,
-            frameskip=1,
-            render_mode="rgb_array" if record else None,
-        )
-
         episodic = self.cfg.term_on_life_loss and mode == "train"
-        proc_args = dict(
-            env=env,
-            frame_skip=self.cfg.frame_skip,
-            noop_max=self.cfg.noop_max,
-            terminal_on_life_loss=episodic,
-        )
 
         if self.cfg.obs_type in ("rgb", "grayscale"):
-            proc_args.update(
+            env = gym.make(
+                self.cfg.env_id,
+                frameskip=1,
+                render_mode="rgb_array" if record else None,
+                obs_type=self.cfg.obs_type,
+            )
+
+            env = gym.wrappers.AtariPreprocessing(
+                env=env,
+                frame_skip=self.cfg.frame_skip,
+                noop_max=self.cfg.noop_max,
+                terminal_on_life_loss=episodic,
                 screen_size=self.cfg.screen_size,
                 grayscale_obs=self.cfg.obs_type == "grayscale",
                 grayscale_newaxis=True,
                 scale_obs=False,
             )
+        else:
+            env = gym.make(
+                self.cfg.env_id,
+                frameskip=self.cfg.frame_skip,
+                render_mode="rgb_array" if record else None,
+                obs_type=self.cfg.obs_type,
+            )
 
-        env = gym.wrappers.AtariPreprocessing(**proc_args)
+            env = gym.wrappers.NoopResetEnv(env, self.cfg.noop_max)
+            if episodic:
+                env = gym.wrappers.EpisodicLifeEnv(env)
 
         if self.cfg.fire_reset:
             if "FIRE" in env.unwrapped.get_action_meanings():
@@ -125,7 +174,6 @@ class Factory(base.FactoryBase):
 
         if self.cfg.stack is not None:
             env = gym.wrappers.FrameStack(env, self.cfg.stack)
-        env = FixShape(env, self.cfg.stack)
 
         return env
 
@@ -189,6 +237,36 @@ class Factory(base.FactoryBase):
         )
 
         if self.cfg.stack is not None:
-            env = FixShapeEP(env, self.cfg.stack)
+            env = Unstack(env, self.cfg.stack)
 
         return env
+
+    def move_obs(self, obs: np.ndarray) -> torch.Tensor:
+        obs = torch.as_tensor(obs, device=self.device)
+        if self.cfg.obs_type != "ram":
+            if self.cfg.stack is not None:
+                obs = torch.flatten(obs, -4, -3)
+            obs = obs / 255.0
+        return obs
+
+    def move_act(
+        self,
+        act: np.ndarray | Tensor,
+        to: Literal["net", "env"] = "net",
+    ) -> torch.Tensor:
+        if to == "net":
+            return torch.as_tensor(act, device=self.device)
+        else:
+            return act.detach().cpu().numpy()
+
+    def slice_buffer(self, capacity: int, slice_len: int, sampler=None) -> SliceBuffer:
+        """Create a slice buffer."""
+
+        return SliceBuffer(
+            max_size=capacity,
+            slice_len=slice_len,
+            obs_space=self.env_obs_space,
+            act_space=self.env_act_space,
+            sampler=sampler,
+            stack_size=self.cfg.stack,
+        )

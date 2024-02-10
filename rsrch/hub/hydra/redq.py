@@ -209,3 +209,7 @@ def main():
             actor_opt.zero_grad(set_to_none=True)
             actor_loss.backward()
             actor_opt.step()
+
+
+if __name__ == "__main__":
+    main()

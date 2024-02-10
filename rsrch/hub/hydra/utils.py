@@ -5,10 +5,10 @@ from typing import Literal
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch import Tensor, nn
+from torch import Tensor
 
 import rsrch.distributions as D
-from rsrch import spaces
+from rsrch import nn, spaces
 from rsrch.rl.utils import polyak
 
 
@@ -39,6 +39,9 @@ class Optim:
     def make(self):
         return partial(torch.optim.Adam, lr=self.lr, eps=self.eps)
 
+    def __call__(self, *args, **kwargs):
+        return self.make()(*args, **kwargs)
+
 
 @dataclass
 class Polyak:
@@ -67,7 +70,7 @@ def gae_adv_est(r: Tensor, v: Tensor, gamma: float, gae_lambda: float):
 
 
 def layer_init(layer, std: float = torch.nn.init.calculate_gain("relu"), bias=0.0):
-    if isinstance(layer, (nn.Linear, nn.Conv2d)):
+    if isinstance(layer, (nn.Linear, nn.ensemble.Linear, nn.Conv2d)):
         nn.init.orthogonal_(layer.weight, std)
         nn.init.constant_(layer.bias, bias)
     return layer

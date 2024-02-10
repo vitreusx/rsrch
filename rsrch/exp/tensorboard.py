@@ -25,7 +25,7 @@ class Experiment:
         if run is None:
             run = f"{datetime.now():%Y-%m-%d_%H-%M-%S}"
 
-        self.dir = sanitize(Path(f"runs/{project}/{run}"))
+        self.dir = sanitize("runs", project, run)
         self.dir.mkdir(parents=True, exist_ok=True)
 
         self._writer = SummaryWriter(

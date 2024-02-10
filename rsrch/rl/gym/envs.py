@@ -1,8 +1,7 @@
 import torch.distributions as D
 from gymnasium.envs import *
 
-from .base import Env
-from .spaces import Space
+from .base import Env, Space
 from .vector.base import VectorEnv
 
 

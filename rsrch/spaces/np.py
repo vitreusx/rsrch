@@ -27,22 +27,6 @@ class Space(NDArrayOperatorsMixin):
     def __repr__(self):
         return f"Space({self.shape!r}, {self.dtype})"
 
-    def __array__(self, dtype=None):
-        return np.empty(self.shape, dtype or self.dtype)
-
-    def __array_ufunc__(self, ufunc, method, *args, **kwargs):
-        if method == "__call__":
-            args_ = [x.__array__() if isinstance(x, Space) else x for x in args]
-            res: np.ndarray = ufunc(*args_, **kwargs)
-            return self.__class__(res.shape, res.dtype)
-        else:
-            return NotImplemented
-
-    def __array_function__(self, func, types, args, kwargs):
-        args_ = [x.__array__() if isinstance(x, Space) else x for x in args]
-        res: np.ndarray = func(*args_, **kwargs)
-        return self.__class__(res.shape, res.dtype)
-
 
 class Box(Space):
     def __init__(
@@ -112,50 +96,9 @@ class Box(Space):
         high_r = high_x if np.all(self.high == high_x) else self.high
         return f"Box({low_r!r}, {high_r!r}, {self.shape!r}, {self.dtype})"
 
-    def __array__(self, dtype=None):
-        return self.low.copy()
-
-    def __getitem__(self, idx):
-        low = self.low[idx]
-        high = self.high[idx]
-        return Box(low.shape, low, high, low.dtype)
-
-    def __array_ufunc__(self, ufunc, method, *args, **kwargs):
-        if method == "__call__":
-            low_args, high_args = [], []
-            for x in args:
-                if isinstance(x, Box):
-                    low_args.append(x.low)
-                    high_args.append(x.high)
-                else:
-                    low_args.append(x)
-                    high_args.append(x)
-
-            low_res = ufunc(*low_args, **kwargs)
-            high_res = ufunc(*high_args, **kwargs)
-            low = np.minimum(low_res, high_res)
-            high = np.maximum(low_res, high_res)
-
-            return self.__class__(low.shape, low, high, low.dtype)
-        else:
-            return NotImplemented
-
-    def __array_function__(self, func, types, args, kwargs):
-        low_args, high_args = [], []
-        for x in args:
-            if isinstance(x, Box):
-                low_args.append(x.low)
-                high_args.append(x.high)
-            else:
-                low_args.append(x)
-                high_args.append(x)
-
-        low_res = func(*low_args, **kwargs)
-        high_res = func(*high_args, **kwargs)
-        low = np.minimum(low_res, high_res)
-        high = np.maximum(low_res, high_res)
-
-        return self.__class__(low.shape, low, high, low.dtype)
+    def __getitem__(self, index):
+        low, high = self.low[index], self.high[index]
+        return Box(shape=low.shape, low=low, high=high, dtype=low.dtype)
 
 
 class Discrete(Box):
@@ -176,17 +119,11 @@ class Discrete(Box):
     def __repr__(self):
         return f"Discrete({self.n!r}, {self.dtype})"
 
-    def __array_ufunc__(self, ufunc, method, *args, **kwargs):
-        return NotImplemented
-
-    def __array_function__(self, func, types, args, kwargs):
-        return NotImplemented
-
 
 class Image(Box):
     def __init__(
         self,
-        shape: tuple[int, int, int],
+        shape: tuple[int, ...],
         channel_last=True,
         dtype: np.dtype = np.uint8,
         seed: np.random.Generator | None = None,
@@ -199,16 +136,15 @@ class Image(Box):
 
         self.channel_last = channel_last
         if channel_last:
-            self.height, self.width, self.num_channels = shape
+            self.height, self.width, self.num_channels = shape[-3:]
         else:
-            self.num_channels, self.height, self.width = shape
+            self.num_channels, self.height, self.width = shape[-3:]
         self.size = self.width, self.height
 
     def __repr__(self):
         return f"Image({self.shape!r}, {self.dtype})"
 
-    def __array_ufunc__(self, ufunc, method, *args, **kwargs):
-        return NotImplemented
-
-    def __array_function__(self, func, types, args, kwargs):
-        return NotImplemented
+    def __getitem__(self, index):
+        shape = self.low[index].shape
+        assert len(shape) >= 3
+        return Image(shape=shape, channel_last=self.channel_last, dtype=self.dtype)

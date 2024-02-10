@@ -16,7 +16,7 @@ class CyclicSampler(Protocol):
     def popleft(self):
         ...
 
-    def sample(self, n: int) -> tuple[np.ndarray, dict]:
+    def sample(self, n: int):
         ...
 
     def reset(self):
@@ -34,64 +34,50 @@ class UniformSampler:
         self._beg += 1
 
     def sample(self, n):
-        return np.random.randint(self._beg, self._end, size=(n,)), {}
+        return np.random.randint(self._beg, self._end, size=(n,))
 
     def reset(self):
         self._beg = self._end = 0
 
 
 class PrioritizedSampler:
-    def __init__(self, max_size: int, alpha=1.0, beta=1.0, eps=1e-8, batch_max=True):
+    def __init__(self, max_size: int):
         self.max_size = max_size
-        self.alpha = alpha
-        self.beta = beta
-        self.eps = eps
-        self.batch_max = batch_max
         self.reset()
 
     def reset(self):
         self._beg = self._end = 0
-        self._priorities = rq_tree(self.max_size)
-        self._max = rq_tree(self.max_size, max, -np.inf)
-        if not self.batch_max:
-            self._min = rq_tree(self.max_size, min, np.inf)
+        self._P = rq_tree(self.max_size)
+        self._max = rq_tree(self.max_size, reduce_fn=np.maximum, zero=-np.inf)
 
     def append(self):
         idx = self._end % self.max_size
-        max_prio = 1.0 if self._beg >= self._end else self._max.total
-        self._priorities[idx] = max_prio
-        self._max[idx] = max_prio
-        if not self.batch_max:
-            self._min[idx] = max_prio
+        self._P[idx] = 0.0
+        self._max[idx] = 0.0
         self._end += 1
 
     def popleft(self):
         idx = self._beg % self.max_size
-        self._priorities[idx] = 0.0
-        self._max[idx] = self._max._zero
-        if not self.batch_max:
-            self._min[idx] = self._min._zero
+        self._P[idx] = 0.0
+        self._max[idx] = 0.0
         self._beg += 1
 
-    def update(self, ids: Sequence[int], prio_values: Sequence[float]):
-        ids, prio_values = np.asarray(ids), np.asarray(prio_values)
-        prio_values = prio_values**self.alpha + self.eps
-        idxes = ids % self.max_size
-        self._priorities[idxes] = prio_values
-        self._max[idxes] = prio_values
-        if not self.batch_max:
-            self._min[idxes] = prio_values
+    def update(self, ids: int | np.ndarray, prio: float | np.ndarray):
+        idxes = np.asarray(ids) % self.max_size
+        self._P[idxes] = prio
+        self._max[idxes] = prio
 
     def sample(self, n: int):
-        unif = self._priorities.total * np.random.rand(n)
-        idxes = self._priorities.searchsorted(unif)
-        if self.batch_max:
-            weights = self._priorities[idxes] ** -self.beta
-            weights = weights / max(weights)
-        else:
-            weights = (self._min.total / self._priorities[idxes]) ** self.beta
+        unif = self._P.total * np.random.rand(n)
+        idxes = self._P.searchsorted(unif)
 
         # This maps [0..max_size-1] to [..., end-1, beg, beg+1, ...] where the
         # position of beg is beg % max_size
         ids = self._beg + (idxes - (self._beg % self.max_size)) % self.max_size
-        return ids, {"weights": weights}
+
+        # Importance sampling coefficients
+        # E_{x \sim P}[f(x)] = E_{x \sim Q}[P(x)/Q(x) f(x)]
+        # Here P(x)=1/N, Q(x) = self._P[x]/(\sum_y self._P[y])
+        is_coef = self._P.total / (self._P[idxes] * len(self._P))
+
+        return ids, is_coef

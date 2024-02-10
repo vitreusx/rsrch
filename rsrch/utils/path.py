@@ -2,11 +2,12 @@ import re
 from pathlib import Path
 
 
-def sanitize(p: Path):
+def sanitize(*parts: str | Path):
     """Sanitized a given path, replacing prohibited characters by dashes."""
 
-    parts = []
-    for part in p.parts:
-        part = re.sub(r"[/\\?%*:|\"<>\x7F\x00-\x1F]", "-", part)
-        parts.append(part)
-    return Path(*parts)
+    _parts = []
+    for part in parts:
+        for p in part.parts if isinstance(part, Path) else [part]:
+            p = re.sub(r"[/\\?%*:|\"<>\x7F\x00-\x1F]", "-", p)
+            _parts.append(p)
+    return Path(*_parts)

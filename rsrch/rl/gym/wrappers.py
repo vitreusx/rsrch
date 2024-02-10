@@ -3,7 +3,6 @@ from gymnasium.core import ActionWrapper, ObservationWrapper, RewardWrapper, Wra
 from gymnasium.wrappers import *
 
 from .envs import Env
-from .spaces import *
 
 
 class NoopResetEnv(Wrapper):
@@ -172,17 +171,3 @@ class ClipRewardEnv(TransformReward):
 
     def __init__(self, env: Env) -> None:
         super().__init__(env, np.sign)
-
-
-class MarkAsImage(Wrapper):
-    """
-    Converts the observation space to from Box to Image.
-    """
-
-    def __init__(self, env: Env, normalized=None, channels_last=True):
-        super().__init__(env)
-        obs_space = env.observation_space
-        assert isinstance(obs_space, Box)
-        if normalized is None:
-            normalized = np.issubdtype(obs_space.dtype, np.floating)
-        self.observation_space = Image(obs_space.shape, normalized, channels_last)

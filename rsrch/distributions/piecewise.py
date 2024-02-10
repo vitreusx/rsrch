@@ -7,7 +7,6 @@ from torch import Size, Tensor
 from torch._C import Size
 
 from rsrch import spaces
-from rsrch.nn.utils import ST
 from rsrch.types import Tensorlike
 
 from .categorical import Categorical

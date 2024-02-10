@@ -1,4 +1,5 @@
 import operator as ops
+from typing import Any
 
 import numpy as np
 
@@ -52,26 +53,45 @@ class rq_tree:
 
     @property
     def total(self):
+        """Reduction of entire array (for example, max element for max, or sum for ops.add.)"""
         return self.tree[0]
 
     def __getitem__(self, idx):
         return self.array[idx]
 
-    def __setitem__(self, idx, value):
-        if isinstance(idx, np.ndarray):
-            value = np.asarray(value)
-            value = np.broadcast_to(value, idx.shape)
-            for idx_, value_ in zip(idx.ravel(), value.ravel()):
-                self[idx_] = value_
+    def __setitem__(self, idx: int | np.ndarray, value: Any | np.ndarray):
+        if not isinstance(idx, np.ndarray):
+            self[np.asarray(idx)] = value
             return
+
+        if len(idx.shape) == 0:
+            idx = idx[None]
 
         self.array[idx] = value
 
-        node = self._array_beg + idx
-        while node > 0:
-            node = (node - 1) // 2
-            left_v, right_v = self.tree[2 * node + 1], self.tree[2 * node + 2]
-            self.tree[node] = self.reduce_fn(left_v, right_v)
+        cur = self._array_beg + idx
+        while len(cur) > 1 or cur[0] == 0:
+            cur = np.unique((cur - 1) // 2)
+            if len(cur) == 1 and cur[0] == 0:
+                break
+
+            left_v, right_v = self.tree[2 * cur + 1], self.tree[2 * cur + 2]
+            self.tree[cur] = self.reduce_fn(left_v, right_v)
+
+        # if isinstance(idx, np.ndarray):
+        #     value = np.asarray(value)
+        #     value = np.broadcast_to(value, idx.shape)
+        #     for idx_, value_ in zip(idx.ravel(), value.ravel()):
+        #         self[idx_] = value_
+        #     return
+
+        # self.array[idx] = value
+
+        # node = self._array_beg + idx
+        # while node > 0:
+        #     node = (node - 1) // 2
+        #     left_v, right_v = self.tree[2 * node + 1], self.tree[2 * node + 2]
+        #     self.tree[node] = self.reduce_fn(left_v, right_v)
 
     def searchsorted(self, value):
         if isinstance(value, np.ndarray):

@@ -1,6 +1,7 @@
 import argparse
 import ast
 import inspect
+import io
 import math
 import re
 from dataclasses import MISSING, fields, is_dataclass
@@ -28,7 +29,7 @@ from ruamel.yaml import YAML
 
 yaml = YAML(typ="safe", pure=True)
 
-__all__ = ["compose", "cli", "parser", "from_args"]
+__all__ = ["compose", "cli", "parser", "from_args", "parse"]
 
 
 class AttrDict(dict):
@@ -178,18 +179,21 @@ def cast(x, t):
         args = {}
         for field in fields(t):
             if field.name in x:
-                args[field.name] = cast(x[field.name], field.type)
+                field_t = field.type
+                if isinstance(field_t, str):
+                    field_t = eval(field_t)
+                args[field.name] = cast(x[field.name], field_t)
         try:
             return t(**args)
         except:
             raise ValueError()
     elif orig is None:
-        return x if isinstance(t, type) and isinstance(x, t) else t(x)
+        return x if t == get_origin(t) and isinstance(x, t) else t(x)
     elif orig in (Union, Optional, UnionType):
         # Note: get_args(Optional[t]) == (t, None)
         # Check if any of the variant types matches the value exactly
         for ti in get_args(t):
-            if isinstance(ti, type) and isinstance(x, ti):
+            if ti == get_origin(ti) and isinstance(x, ti):
                 return x
         # Otherwise, try to interpret the value as each of the variant types
         # and yield the first one to succeed.
@@ -280,6 +284,12 @@ def compose(dicts: list[dict], cls: Type[T] | None = None) -> T:
     if cls is not None:
         d = cast(d, cls)
     return d
+
+
+def parse(s: str, cls: Type[T]) -> T:
+    """Parse a string into a config object of a given class."""
+    d = yaml.load(io.StringIO(s))
+    return compose([d], cls)
 
 
 def _attr_docstrings(t):

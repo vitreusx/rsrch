@@ -2,7 +2,7 @@ import os
 import sys
 
 import gymnasium
-from gymnasium import error, logger
+from gymnasium import error, logger, spaces
 from gymnasium.core import (
     ActionWrapper,
     Env,
@@ -13,4 +13,4 @@ from gymnasium.core import (
 from gymnasium.envs import make, register, spec
 from gymnasium.spaces import Space
 
-from . import agents, envs, spaces, vector, wrappers
+from . import agents, envs, vector, wrappers

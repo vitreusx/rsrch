@@ -1,7 +1,10 @@
 import math
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import Tensor, nn
+
+from .rewrite import rewrite_module_
 
 
 class NoisyLinear(nn.Module):
@@ -24,11 +27,13 @@ class NoisyLinear(nn.Module):
 
         self.weight = nn.Parameter(torch.empty(out_features, in_features))
         self.noisy_weight = nn.Parameter(torch.empty_like(self.weight))
+        self.weight_eps: Tensor
         self.register_buffer("weight_eps", torch.empty_like(self.weight))
 
         if bias:
             self.bias = nn.Parameter(torch.empty(out_features))
             self.noisy_bias = nn.Parameter(torch.empty(out_features))
+            self.bias_eps: Tensor
             self.register_buffer("bias_eps", torch.empty_like(self.bias))
 
         self.init_weights()
@@ -82,3 +87,31 @@ class NoisyLinear(nn.Module):
             return F.linear(x, w, b)
         else:
             return F.linear(x, w)
+
+
+def replace_with_noisy_(
+    module: nn.Module,
+    sigma0: float,
+    factorized=True,
+    autoreset=True,
+):
+    """Replace nn.Linear layers"""
+
+    def _replace(_: str, mod: nn.Module):
+        if isinstance(mod, nn.Linear):
+            noisy = NoisyLinear(
+                mod.in_features,
+                mod.out_features,
+                bias=mod.bias is not None,
+                sigma0=sigma0,
+                factorized=factorized,
+                autoreset=autoreset,
+            )
+            noisy.weight.data.copy_(mod.weight.data)
+            if mod.bias is not None:
+                noisy.bias.data.copy_(mod.bias.data)
+            return noisy
+        else:
+            return mod
+
+    return rewrite_module_(module, _replace, recursive=True)

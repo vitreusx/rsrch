@@ -233,9 +233,7 @@ def main():
                     prio = q_loss = ValueDist.proj_kl_div(pred, target)
                 elif isinstance(target, Tensor):
                     prio = (pred - target).abs()
-                    q_loss = prio.square()
-                else:
-                    raise NotImplementedError(type(target))
+                    q_loss = (pred - target).square()
 
                 if isinstance(sampler, data.PrioritizedSampler):
                     q_loss = weights.type_as(q_loss) * q_loss

@@ -29,15 +29,15 @@ from . import env
 class Config:
     seed: int = 1
     device: str = "cuda"
-    env_id: str = "Ant-v4"
+    env_id: str = "Walker2d-v4"
     total_steps: int = int(1e6)
     train_envs: int = 1
-    buffer_cap: int = int(128e3)
+    buffer_cap: int = int(500e3)
     warmup: int = int(16e3)
     env_batch: int = 1
-    batch_size: int = 32
-    num_steps: int = 16
-    opt_iters: int = 1
+    batch_size: int = 64
+    num_steps: int = 8
+    opt_iters: int = 2
     policy_opt_freq: float = 0.5
     expl_noise: float = 0.1
     policy_noise: float = 0.2
@@ -173,7 +173,7 @@ def main():
         buf = env_f.step_buffer(cfg.buffer_cap, sampler)
     else:
         buf = env_f.slice_buffer(
-            cfg.buffer_cap, num_steps=cfg.num_steps, sampler=sampler
+            cfg.buffer_cap, slice_len=cfg.num_steps, sampler=sampler
         )
 
     ep_ids = [None for _ in range(train_envs.num_envs)]
@@ -393,3 +393,7 @@ def main():
 
                 if should_log_a:
                     exp.add_scalar("train/actor_loss", actor_loss)
+
+
+if __name__ == "__main__":
+    main()

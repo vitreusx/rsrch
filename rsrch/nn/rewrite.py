@@ -1,10 +1,25 @@
+from typing import Protocol
+
 from torch import nn
 
 
-def rewrite_module(module: nn.Module, func, recursive=True, fqdn=None):
-    mod = func(fqdn, module)
+class RewriteFn(Protocol):
+    def __call__(self, fqname: str, module: nn.Module) -> nn.Module:
+        """Rewrite (non-recursively) a module.
+        :param fqname: Fully-qualified module name.
+        :param module: Module to rewrite.
+        :return: Rewritten module."""
+
+
+def rewrite_module_(
+    module: nn.Module,
+    func: RewriteFn,
+    recursive=True,
+    fqname: str | None = None,
+):
+    mod: nn.Module = func(fqname, module)
     if recursive:
         for name, child in module.named_children():
-            fqdn_ = name if fqdn is None else f"{fqdn}.{name}"
-            mod.add_module(name, rewrite_module(child, func, True, fqdn_))
+            child_fqname = name if fqname is None else f"{fqname}.{name}"
+            mod.add_module(name, rewrite_module_(child, func, True, child_fqname))
     return mod

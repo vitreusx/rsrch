@@ -1,10 +1,10 @@
 {
   "configurations": [
     {
-      "name": "Hydra",
+      "name": "Rainbow",
       "type": "python",
       "request": "launch",
-      "module": "rsrch.hub.hydra",
+      "module": "rsrch.hub.hydra.rainbow",
       "pythonArgs": ["-O"],
       "env": {
         // "CUDA_LAUNCH_BLOCKING": "1", 
@@ -14,139 +14,44 @@
       "justMyCode": false
     },
     {
-      "name": "V5",
+      "name": "TD3",
       "type": "python",
       "request": "launch",
-      "module": "rsrch.hub.v5",
+      "module": "rsrch.hub.hydra.td3",
       "pythonArgs": ["-O"],
-      // "env": {"CUDA_LAUNCH_BLOCKING": "1"},
-      "justMyCode": false
-    },
-    {
-      "name": "PETS v2",
-      "type": "python",
-      "request": "launch",
-      "module": "rsrch.hub.pets_v2",
-      "pythonArgs": ["-O"],
-      "args": ["-p", "${input:pets_v2_preset}"],
-      "justMyCode": false
-    },
-
-    {
-      "name": "PETS",
-      "type": "python",
-      "request": "launch",
-      "module": "rsrch.hub.pets",
-      "pythonArgs": ["-O"],
-      "args": ["-p", "${input:pets_preset}"],
       "env": {
-        "CUDA_LAUNCH_BLOCKING": "1"
+        // "CUDA_LAUNCH_BLOCKING": "1", 
+        "MUJOCO_GL": "osmesa",
+        "KINETO_LOG_LEVEL": "3", // ERROR
       },
       "justMyCode": false
     },
     {
-      "name": "V4",
+      "name": "MBPO",
       "type": "python",
       "request": "launch",
-      "module": "rsrch.hub.v4",
+      "module": "rsrch.hub.hydra.mbpo",
       "pythonArgs": ["-O"],
-      "args": ["-p", "${input:v4_preset}"],
+      "env": {
+        // "CUDA_LAUNCH_BLOCKING": "1", 
+        "MUJOCO_GL": "osmesa",
+        "KINETO_LOG_LEVEL": "3", // ERROR
+      },
       "justMyCode": false
     },
     {
-      "name": "Dreamer",
+      "name": "REDQ",
       "type": "python",
       "request": "launch",
-      "module": "rsrch.hub.dreamer",
+      "module": "rsrch.hub.hydra.redq",
       "pythonArgs": ["-O"],
-      "args": ["-p", "${input:dreamer_preset}"],
-      "justMyCode": false
-    },
-    {
-      "name": "Rainbow",
-      "type": "python",
-      "request": "launch",
-      "module": "rsrch.hub.rainbow",
-      "pythonArgs": ["-O"],
-      "args": ["-p", "${input:rainbow_preset}"],
-      "justMyCode": false
-    },
-    {
-      "name": "SAC",
-      "type": "python",
-      "request": "launch",
-      "module": "rsrch.hub.sac",
-      "pythonArgs": ["-O"],
-      "args": ["-p", "${input:sac_preset}"],
-      "justMyCode": false
-    },
-    {
-      "name": "PPO",
-      "type": "python",
-      "request": "launch",
-      "module": "rsrch.hub.ppo",
-      "pythonArgs": ["-O"],
-      "args": ["-p", "${input:ppo_preset}"],
-      "justMyCode": false
-    },
-    {
-      "name": "PPO (Alpha)",
-      "type": "python",
-      "request": "launch",
-      "module": "rsrch.hub.ppo_alpha",
-      "pythonArgs": ["-O"],
-      "args": ["-p", "${input:ppo_preset}"],
+      "env": {
+        // "CUDA_LAUNCH_BLOCKING": "1", 
+        "MUJOCO_GL": "osmesa",
+        "KINETO_LOG_LEVEL": "3", // ERROR
+      },
       "justMyCode": false
     }
   ],
-  "inputs": [
-    {
-      "id": "sac_preset",
-      "description": "SAC Preset",
-      "type": "promptString",
-      "default": "Alien-v5"
-    },
-    {
-      "id": "rainbow_preset",
-      "description": "Rainbow Preset",
-      "type": "promptString",
-      "default": "Alien-v5"
-    },
-    {
-      "id": "ppo_preset",
-      "description": "PPO Preset",
-      "type": "promptString",
-      "default": "Alien-v5"
-    },
-    {
-      "id": "dreamer_preset",
-      "description": "Dreamer Preset",
-      "type": "promptString",
-      "default": "CartPole-v1"
-    },
-    {
-      "id": "v4_preset",
-      "description": "V4 Preset",
-      "type": "promptString",
-      "default": "CartPole-v1"
-    },
-    {
-      "id": "pets_preset",
-      "description": "PETS Preset",
-      "type": "promptString",
-      "default": "CartPole-v1"
-    },
-    {
-      "id": "pets_v2_preset",
-      "description": "PETS v2 Preset",
-      "type": "promptString",
-      "default": "CartPole-v1"
-    },
-    {
-      "id": "v5_preset",
-      "description": "V5 Preset",
-      "type": "promptString",
-      "default": "CartPole-v1"
-    }
-  ]
+  "inputs": [ ]
 }

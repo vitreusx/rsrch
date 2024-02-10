@@ -7,7 +7,7 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "3.10.*"
-poetry = "^1.5"
+poetry = {git = "https://github.com/python-poetry/poetry", rev = "776fcb8"}
 ipykernel = "^6.22.0"
 ipywidgets = "^8.0.4"
 setuptools = "*"
@@ -23,7 +23,7 @@ h5py = "^3.8.0"
 sympy = "^1.12"
 torch = {version = "2.1.*", platform = "linux", source = "torch"}
 torchvision = {version = "0.16.*", platform = "linux", source = "torch"}
-gymnasium = { version = "0.26.*", extras = ["accept-rom-license", "all"] }
+gymnasium = {extras = ["accept-rom-license", "all"], version = "^0.29.1"}
 poethepoet = "^0.21.0"
 wandb = "^0.15.5"
 plotly = "^5.15.0"
@@ -43,23 +43,8 @@ ruamel-yaml = "^0.18.5"
 
 [[tool.poetry.source]]
 name = "torch"
-url = "https://download.pytorch.org/whl/cpu"
+url = "https://download.pytorch.org/whl/cu121"
 priority = "explicit"
-
-[tool.poe.tasks.fix-torch]
-help = "Install CUDA version of torch*. Due to issues with torch's packaging, it cannot really be done directly in poetry."
-shell = """
-for PKG in torch torchvision; do
-  VER=$(pip freeze \
-    | grep -E "^${PKG}==[^ ]*" -o \
-    | sed -E "s/${PKG}==([0-9\\.]*).*/\\1/")
-  if [ -n "${VER}" ]; then
-    pip install -U ${PKG}==${VER}+${tag} \
-      --index-url "https://download.pytorch.org/whl/${tag}"
-  fi
-done
-"""
-args = [{ name = "tag", default = "cu121" }]
 
 [tool.poe.tasks.fix-opencv]
 help = "Replace opencv-python with headless version."

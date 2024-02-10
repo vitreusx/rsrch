@@ -3,6 +3,8 @@ from numbers import Number
 import torch
 from torch import Tensor
 
+from . import np as spaces_np
+
 
 class Space:
     def __init__(
@@ -27,20 +29,6 @@ class Space:
 
     def empty(self, shape: tuple[int, ...] = ()):
         return torch.empty([*shape, *self.shape], dtype=self.dtype, device=self.device)
-
-    @classmethod
-    def __torch_function__(cls, func, types, args=(), kwargs=None):
-        kwargs = {} if kwargs is None else kwargs
-        args_ = []
-        for arg in args:
-            if isinstance(arg, Space):
-                args_.append(torch.empty(arg.shape, arg.dtype, arg.device))
-            else:
-                args_.append(arg)
-
-        kwargs = {} if kwargs is None else kwargs
-        res: Tensor = func(*args, **kwargs)
-        return Space(res.shape, res.dtype, res.device)
 
     def __repr__(self):
         return f"Space({self.shape!r}, {self.dtype}, {self.device})"
@@ -117,23 +105,15 @@ class Box(Space):
             f"Box({low_r!r}, {high_r!r}, {self.shape!r}, {self.dtype}, {self.device})"
         )
 
-    @classmethod
-    def __torch_function__(cls, func, types, args=(), kwargs=None):
-        low_args, high_args = [], []
-        for arg in args:
-            if isinstance(arg, Box):
-                low_args.append(arg.low)
-                high_args.append(arg.high)
-            else:
-                low_args.append(arg)
-                high_args.append(arg)
-
-        kwargs = {} if kwargs is None else kwargs
-        low_res: Tensor = func(*low_args, **kwargs)
-        high_res: Tensor = func(*high_args, **kwargs)
-        low = torch.minimum(low_res, high_res)
-        high = torch.maximum(low_res, high_res)
-        return Box(low.shape, low, high, low.dtype, low.device)
+    def __getitem__(self, index):
+        low, high = self.low[index], self.high[index]
+        return Box(
+            shape=low.shape,
+            low=low,
+            high=high,
+            dtype=self.dtype,
+            device=self.device,
+        )
 
 
 class Discrete(Space):
@@ -156,10 +136,6 @@ class Discrete(Space):
 
     def __repr__(self):
         return f"Discrete({self.n!r}, {self.dtype}, {self.device})"
-
-    @classmethod
-    def __torch_function__(cls, func, types, args=(), kwargs=None):
-        return NotImplemented
 
 
 class Image(Box):
@@ -190,6 +166,29 @@ class Image(Box):
     def __repr__(self):
         return f"Image({self.shape!r}, {self.dtype}, {self.device})"
 
-    @classmethod
-    def __torch_function__(cls, func, types, args=(), kwargs=None):
-        return NotImplemented
+    def __getitem__(self, index):
+        shape = self.low[index].shape
+        assert len(shape) >= 3
+        return Image(
+            shape=shape,
+            dtype=self.dtype,
+            device=self.device,
+            channel_first=self.channel_first,
+        )
+
+
+def as_tensor(space: spaces_np.Space, device: torch.device | None = None):
+    if type(space) == spaces_np.Box:
+        return Box(
+            shape=space.shape,
+            low=torch.as_tensor(space.low, device=device),
+            high=torch.as_tensor(space.high, device=device),
+        )
+    elif type(space) == spaces_np.Discrete:
+        return Discrete(space.n, device=device)
+    elif type(space) == spaces_np.Image:
+        return Image(
+            shape=space.shape,
+            device=device,
+            channel_first=not space.channel_last,
+        )
