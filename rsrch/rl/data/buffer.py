@@ -1,4 +1,4 @@
-from collections import deque
+from collections import defaultdict, deque
 from copy import deepcopy
 from typing import Any, Mapping, Protocol
 
@@ -94,6 +94,38 @@ class CyclicBuffer(Mapping[int, dict]):
         return {key: arr[id % self._maxlen] for key, arr in self._arrays.items()}
 
 
+class Allocator:
+    def __init__(self, size: int):
+        self._voids = [[0, size]]
+        self._free_id = 0
+        self._allocs = {}
+
+    def try_alloc(self, req_size: int):
+        for idx, (beg, end) in enumerate(self._voids):
+            if end - beg < req_size:
+                continue
+            self._voids[idx] = beg + req_size, end
+            alloc_id = self._free_id
+            self._free_id += 1
+            self._allocs[alloc_id] = beg, beg + req_size
+            return alloc_id, beg, beg + req_size
+
+    def free(self, alloc_id: int):
+        self._voids.append(self._allocs[alloc_id])
+        del self._allocs[alloc_id]
+        self._voids.sort()
+        merged, cur_beg, cur_end = [], 0, 0
+        for beg, end in self._voids:
+            if cur_end == beg:
+                cur_end = end
+            else:
+                merged.append((cur_beg, cur_end))
+                cur_beg, cur_end = beg, end
+        if cur_beg < cur_end:
+            merged.append((cur_beg, cur_end))
+        self._voids = merged
+
+
 class SeqBuffer(Mapping[int, dict]):
     def __init__(
         self,
@@ -110,38 +142,54 @@ class SeqBuffer(Mapping[int, dict]):
         for key, space in spaces.items():
             self._arrays[key] = array_ctor(space, [self._cap])
 
-        self._free = deque()
-        self._free.extend(range(self._cap))
+        self._alloc = Allocator(self._cap)
+        self._seq_to_alloc = {}
 
-        self._idxes = {}
+        self._active = {}
 
     def push(self, seq_id: int | None, data: dict, done=False):
-        while len(self._free) == 0:
-            self.popleft()
-
         if seq_id is None:
             seq_id = self._max_id
             self._max_id += 1
-            self._idxes[seq_id] = []
+            self._active[seq_id] = defaultdict(lambda: [])
 
-        idx = self._free.popleft()
-        self._idxes[seq_id].append(idx)
-
+        seq = self._active[seq_id]
+        added = {k: False for k in self._arrays}
         for k, v in data.items():
-            self._arrays[k][idx] = v
+            seq[k].append(v)
+            added[k] = True
+        for k, v in added.items():
+            if not v:
+                seq[k].append(None)
 
         if done:
-            self._idxes[seq_id] = np.asarray(self._idxes[seq_id])
+            req_size = len(next(iter(seq.values())))
+            beg, end = self._allocate(seq_id, req_size)
+            for k, v_seq in seq.items():
+                for ptr, v in zip(range(beg, end), v_seq):
+                    if v is None:
+                        continue
+                    self._arrays[k][ptr] = v
             seq_id = None
 
         return seq_id
 
-    def popleft(self):
-        for idx in self._idxes[self._min_id]:
-            self._free.append(idx)
+    def _allocate(self, seq_id: int, req_size: int):
+        while True:
+            res = self._alloc.try_alloc(req_size)
+            if res is not None:
+                _, beg, end = res
+                self._seq_to_alloc[seq_id] = res
+                return beg, end
+            else:
+                self.popleft()
 
-        del self._idxes[self._min_id]
+    def popleft(self):
+        seq_id = self._min_id
         self._min_id += 1
+        alloc_id, _, _ = self._seq_to_alloc[seq_id]
+        self._alloc.free(alloc_id)
+        del self._seq_to_alloc[seq_id]
 
     @property
     def ids(self):
@@ -156,12 +204,16 @@ class SeqBuffer(Mapping[int, dict]):
     def reset(self):
         self._min_id, self._max_id = 0, 0
         self.sampler.reset()
-        self._free.clear()
-        self._free.extend(range(self._cap))
+        self._alloc = Allocator(self._cap)
+        self._seq_to_alloc = {}
+        self._active = {}
 
     def __getitem__(self, seq_id: int):
-        idxes = np.asarray(self._idxes[seq_id])
-        return {k: a[idxes] for k, a in self._arrays.items()}
+        if seq_id in self._active:
+            return self._active[seq_id]
+        else:
+            _, beg, end = self._seq_to_alloc[seq_id]
+            return {k: a[beg:end] for k, a in self._arrays.items()}
 
 
 class EpisodeBuffer(Mapping[int, Seq]):
@@ -261,7 +313,7 @@ class SliceBuffer(Mapping[int, Seq]):
         array_ctor=default_array_ctor,
     ):
         self.stack_size = stack_size
-        self.slice_len = slice_len
+        self.slice_len = slice_len + 1
         if stack_size is not None:
             obs_space = obs_space[0]
 
@@ -372,25 +424,29 @@ class SliceBuffer(Mapping[int, Seq]):
     def __getitem__(self, id: int):
         slice_d = self._slice_buf[id]
         seq_id, elem_idx = slice_d["seq_id"], slice_d["elem_idx"]
+        seq = self._seq_buf[seq_id]
+
+        asarray = lambda x: np.stack(x) if isinstance(x, list) else x
+
+        if self.stack_size is not None:
+            subslice = slice(elem_idx, elem_idx + self.slice_len + self.stack_size - 1)
+            subseq = asarray(seq["obs"][subslice])
+            idxes = np.mgrid[: self.slice_len, : self.stack_size].sum(0)
+            obs = subseq[idxes]
+        else:
+            obs = asarray(seq["obs"][elem_idx : elem_idx + self.slice_len])
 
         if self.stack_size is not None:
             idxes = slice(
                 elem_idx + self.stack_size,
                 elem_idx + self.stack_size + self.slice_len - 1,
             )
-            obs_idxes = np.add.outer(
-                np.arange(elem_idx, elem_idx + self.slice_len),
-                np.arange(0, self.stack_size),
-            )
         else:
             idxes = slice(elem_idx + 1, elem_idx + self.slice_len)
-            obs_idxes = slice(elem_idx, elem_idx + self.slice_len)
 
-        seq = self._seq_buf[seq_id]
-        obs = seq["obs"][obs_idxes]
-        act = seq["act"][idxes]
-        reward = seq["reward"][idxes]
-        term = seq["term"][idxes.stop - 1]
+        act = asarray(seq["act"][idxes])
+        reward = asarray(seq["reward"][idxes])
+        term = asarray(seq["term"][idxes.stop - 1])
 
         return Seq(obs, act, reward, term)
 

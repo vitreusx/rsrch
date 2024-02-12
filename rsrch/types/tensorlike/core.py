@@ -446,8 +446,10 @@ class Tensorlike:
             else:
                 event_dim = len(tensor.shape) - len(self.shape)
                 new_index = index.reshape(*index.shape, *(1 for _ in range(event_dim)))
+                new_index = new_index.expand(
+                    *index.shape, *tensor.shape[len(self.shape) :]
+                )
                 new = tensor.gather(dim, new_index, sparse_grad=sparse_grad)
-                new = new.reshape(index.shape)
 
             fields[name] = new
 

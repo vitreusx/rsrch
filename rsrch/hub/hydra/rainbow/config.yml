@@ -7,33 +7,35 @@ env:
     frame_skip: 4
     obs_type: grayscale
     noop_max: 30
-    fire_reset: True
-    term_on_life_loss: True
+    fire_reset: true
+    term_on_life_loss: true
     time_limit: 108e3
     stack: 4
 distq:
-  enabled: True
+  enabled: true
   num_atoms: 51
   v_min: -10.0
   v_max: +10.0
 nets:
-  enc_type: nature
+  encoder: impala[small]
   hidden_dim: 256
-  dueling: True
+  dueling: true
   polyak: {every: 32e3}
+  spectral_norm: true
 data:
-  buf_cap: 1e6
+  buf_cap: 500e3
   slice_len: 4
 total_steps: 10e6
 num_envs: 8
-noisy:
-  enabled: True
+expl:
+  noisy: false
   sigma0: 0.5
   factorized: true
+  eps: 0.1
 aug:
   rew_clip: [-1.0, 1.0]
 prioritized:
-  enabled: True
+  enabled: false
   prio_exp: 0.5
   is_coef_exp: linear(0.4, 1.0, ${total_steps})
 warmup: 5e3 # 25e3
@@ -41,6 +43,7 @@ val:
   sched: {every: 32e3}
   episodes: 32
 opt:
+  dtype: float32
   sched: {every: 32}
   batch_size: 256
   optimizer:
@@ -50,4 +53,3 @@ opt:
   grad_clip: 10.0
 log: {every: 128}
 gamma: 0.99
-dtype: float32

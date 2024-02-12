@@ -60,23 +60,20 @@ class rq_tree:
         return self.array[idx]
 
     def __setitem__(self, idx: int | np.ndarray, value: Any | np.ndarray):
-        if not isinstance(idx, np.ndarray):
-            self[np.asarray(idx)] = value
-            return
-
-        if len(idx.shape) == 0:
-            idx = idx[None]
-
-        self.array[idx] = value
-
-        cur = self._array_beg + idx
-        while len(cur) > 1 or cur[0] == 0:
-            cur = np.unique((cur - 1) // 2)
-            if len(cur) == 1 and cur[0] == 0:
-                break
-
-            left_v, right_v = self.tree[2 * cur + 1], self.tree[2 * cur + 2]
-            self.tree[cur] = self.reduce_fn(left_v, right_v)
+        if isinstance(idx, np.ndarray):
+            idx, value = idx.ravel(), np.asarray(value).ravel()
+            idx, value = np.broadcast_arrays(idx, value)
+            for idx_, val_ in zip(idx, value):
+                self[idx_] = val_
+        else:
+            self.array[idx] = value
+            cur = self._array_beg + idx
+            while True:
+                cur = (cur - 1) // 2
+                left_v, right_v = self.tree[2 * cur + 1], self.tree[2 * cur + 2]
+                self.tree[cur] = self.reduce_fn(left_v, right_v)
+                if cur == 0:
+                    break
 
         # if isinstance(idx, np.ndarray):
         #     value = np.asarray(value)

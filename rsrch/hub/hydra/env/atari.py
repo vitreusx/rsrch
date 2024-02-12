@@ -38,49 +38,6 @@ class Config:
     """Whether to return stacked observations."""
 
 
-# class FixShape(gym.ObservationWrapper):
-#     def __init__(self, env: gym.Env, stack_num: int | None):
-#         super().__init__(env)
-#         self._stack_num = stack_num
-#         assert isinstance(env.observation_space, gym.spaces.Box)
-#         low = self.observation(env.observation_space.low)
-#         high = self.observation(env.observation_space.high)
-#         self.observation_space = gym.spaces.Box(
-#             low, high, low.shape, low.dtype, self.observation_space._np_random
-#         )
-
-#     def observation(self, obs: np.ndarray) -> np.ndarray:
-#         if self._stack_num is not None:
-#             obs = np.transpose(obs, (0, 3, 1, 2))
-#         else:
-#             obs = np.transpose(obs, (2, 0, 1))
-#         return obs
-
-
-# class FixShapeEP(gym.vector.wrappers.ObservationWrapper):
-#     def __init__(self, env: gym.VectorEnv, stack_num: int):
-#         super().__init__(env)
-#         self._stack_num = stack_num
-
-#         assert isinstance(self.observation_space, gym.spaces.Box)
-#         low_v = self.observation(self.observation_space.low)
-#         high_v = self.observation(self.observation_space.high)
-#         self.observation_space = gym.spaces.Box(
-#             low_v, high_v, low_v.shape, low_v.dtype, self.observation_space._np_random
-#         )
-#         self.single_observation_space = gym.spaces.Box(
-#             low_v[0],
-#             high_v[0],
-#             low_v.shape[1:],
-#             low_v.dtype,
-#             self.single_observation_space._np_random,
-#         )
-
-#     def observation(self, obs: np.ndarray) -> np.ndarray:
-#         obs = obs.reshape(len(obs), self._stack_num, -1, *obs.shape[2:])
-#         return obs
-
-
 class Unstack(gym.vector.wrappers.ObservationWrapper):
     def __init__(self, env: gym.VectorEnv, stack_num: int):
         super().__init__(env)

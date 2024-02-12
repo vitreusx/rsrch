@@ -97,7 +97,7 @@ def replace_with_noisy_(
 ):
     """Replace nn.Linear layers"""
 
-    def _replace(_: str, mod: nn.Module):
+    def _replace(mod: nn.Module):
         if isinstance(mod, nn.Linear):
             noisy = NoisyLinear(
                 mod.in_features,

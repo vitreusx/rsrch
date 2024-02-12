@@ -1,9 +1,12 @@
+from functools import partial
+
 import torch
 from torch import Tensor, nn
 
 import rsrch.distributions as D
 from rsrch import spaces
 
+from ..utils import layer_init
 from . import distq
 from .distq import ValueDist
 
@@ -89,12 +92,16 @@ class QHead(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, num_atoms),
         )
+        self.v_head.apply(partial(layer_init, std=1e-2))
 
         self.adv_head = nn.Sequential(
             nn.Linear(in_features, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, num_actions * num_atoms),
         )
+        self.adv_head.apply(partial(layer_init, std=1e-2))
+
+        ...
 
     def forward(self, feat: Tensor) -> Tensor | ValueDist:
         v: Tensor = self.v_head(feat)

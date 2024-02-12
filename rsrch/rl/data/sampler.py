@@ -67,6 +67,9 @@ class PrioritizedSampler:
         self._P[idxes] = prio
         self._max[idxes] = prio
 
+    def __setitem__(self, ids, prio):
+        self.update(ids, prio)
+
     def sample(self, n: int):
         unif = self._P.total * np.random.rand(n)
         idxes = self._P.searchsorted(unif)

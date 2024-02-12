@@ -75,20 +75,40 @@ class ValueDist(Tensorlike, D.Distribution):
     def __rmul__(self, other):
         return self * other
 
-    def argmax(self, dim=None, keepdim=False):
-        return self.mean.argmax(dim=dim, keepdim=keepdim)
+    # @staticmethod
+    # def proj_kl_div(p: ValueDist, q: ValueDist):
+    #     supp_p = p.support.broadcast_to(*p.shape, p.N)  # [*B, N_p]
+    #     supp_q = q.support.broadcast_to(*q.shape, q.N)  # [*B, N_q]
+    #     supp_p = supp_p.clamp(q.v_min[..., None], q.v_max[..., None])
+    #     dz_q = (q.v_max - q.v_min) / (q.N - 1)
+    #     dz_q = dz_q[..., None, None]
+    #     supp_p, supp_q = supp_p[..., None, :], supp_q[..., None]
+    #     t = (1 - (supp_p - supp_q).abs() / dz_q).clamp(0, 1)  # [*B, N_q, N_p]
+    #     proj_probs = (t * p.ind_rv.probs[..., None, :]).sum(-1)  # [*B, N_q]
+    #     proj_ind_rv = D.Categorical(probs=proj_probs)
+    #     return D.kl_divergence(proj_ind_rv, q.ind_rv)
 
     @staticmethod
     def proj_kl_div(p: ValueDist, q: ValueDist):
-        supp_p = p.support.broadcast_to(*p.shape, p.N)  # [*B, N_p]
-        supp_q = q.support.broadcast_to(*q.shape, q.N)  # [*B, N_q]
-        supp_p = supp_p.clamp(q.v_min[..., None], q.v_max[..., None])
-        dz_q = (q.v_max - q.v_min) / (q.N - 1)
-        dz_q = dz_q[..., None, None]
-        supp_p, supp_q = supp_p[..., None, :], supp_q[..., None]
-        t = (1 - (supp_p - supp_q).abs() / dz_q).clamp(0, 1)  # [*B, N_q, N_p]
-        proj_probs = (t * p.ind_rv.probs[..., None, :]).sum(-1)  # [*B, N_q]
-        proj_ind_rv = D.Categorical(probs=proj_probs)
+        sup = (
+            (p.support - q.v_min.unsqueeze(-1))
+            / (q.v_max - q.v_min).unsqueeze(-1)
+            * (q.N - 1)
+        )
+        sup.nan_to_num_(nan=0)
+        sup = sup.clamp(0, q.N - 1)
+        sup_f, sup_c = sup.floor(), sup.ceil()
+        coef_f = sup - sup_f
+        coef_c = 1.0 - coef_f
+        p_probs = p.ind_rv.probs
+        proj = torch.zeros(
+            size=[*q.shape, q.N],
+            requires_grad=p_probs.requires_grad,
+            device=p_probs.device,
+        )
+        proj = proj.scatter_add(-1, sup_f.long(), coef_f * p_probs)
+        proj = proj.scatter_add(-1, sup_c.long(), coef_c * p_probs)
+        proj_ind_rv = D.Categorical(probs=proj)
         return D.kl_divergence(proj_ind_rv, q.ind_rv)
 
 

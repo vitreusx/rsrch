@@ -39,9 +39,10 @@ class ObservationWrapper(VectorEnvWrapper):
         if "final_observation" in info:
             mask, final_obs = info["_final_observation"], info["final_observation"]
             idxes = np.where(mask)[0]
-            t = np.stack([*final_obs[idxes]])
+            final_obs = np.stack([*final_obs[idxes]])
+            final_obs = self.observation(final_obs)
             for i, env_i in enumerate(idxes):
-                info["final_observation"][env_i] = t[i]
+                info["final_observation"][env_i] = final_obs[i]
         return next_obs, reward, term, trunc, info
 
 

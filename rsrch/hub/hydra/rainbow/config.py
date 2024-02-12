@@ -11,10 +11,11 @@ from . import distq
 
 @dataclass
 class Nets:
-    enc_type: Literal["nature"]
+    encoder: str
     hidden_dim: int
     dueling: bool
     polyak: dict
+    spectral_norm: bool
 
 
 @dataclass
@@ -24,10 +25,11 @@ class Data:
 
 
 @dataclass
-class Noisy:
-    enabled: bool
+class Expl:
+    noisy: bool
     sigma0: float
     factorized: bool
+    eps: schedule
 
 
 @dataclass
@@ -54,19 +56,19 @@ class Opt:
     batch_size: int
     optimizer: Optim
     grad_clip: float | None
+    dtype: Literal["float32", "bfloat16"]
 
 
 @dataclass
 class Config:
     device: str
-    dtype: Literal["float32", "bfloat16"]
     env: env.Config
     distq: distq.Config
     nets: Nets
     data: Data
     total_steps: int
     num_envs: int
-    noisy: Noisy
+    expl: Expl
     aug: Aug
     prioritized: Prioritized
     warmup: int

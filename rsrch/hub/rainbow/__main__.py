@@ -7,8 +7,7 @@ from torch import nn
 from tqdm.auto import tqdm
 
 from rsrch.exp import tensorboard
-from rsrch.exp.profiler import Profiler
-from rsrch.nn.rewrite import rewrite_module
+from rsrch.nn.rewrite import rewrite_module_
 from rsrch.rl import data, gym
 from rsrch.rl.data import rollout
 from rsrch.rl.utils import polyak
@@ -77,23 +76,23 @@ def main():
         if cfg.encoder.spectral_norm != "none":
             assert cfg.encoder.spectral_norm == "all"
 
-            def apply_sn_res(name, mod):
+            def apply_sn_res(mod):
                 if isinstance(mod, nn.Conv2d):
                     mod = nn.utils.spectral_norm(mod)
                 return mod
 
-            def apply_sn(name, mod):
+            def apply_sn(mod):
                 if isinstance(mod, ImpalaResidual):
-                    mod = rewrite_module(mod, apply_sn_res)
+                    mod = rewrite_module_(mod, apply_sn_res)
 
                 return mod
 
-            rewrite_module(enc, apply_sn)
+            rewrite_module_(enc, apply_sn)
 
         enc = enc.to(device)
         return enc
 
-    def apply_noisy(name, mod):
+    def apply_noisy(mod):
         if isinstance(mod, nn.Linear):
             mod = NoisyLinear(
                 in_features=mod.in_features,
@@ -108,7 +107,7 @@ def main():
         num_actions = val_env.action_space.n
         head = QHead(enc.out_features, num_actions, cfg.dist)
         if cfg.noisy_nets.enabled:
-            rewrite_module(head, apply_noisy)
+            rewrite_module_(head, apply_noisy)
         return nn.Sequential(enc, head)
 
     q = make_q().to(device)
@@ -156,13 +155,6 @@ def main():
     exp = tensorboard.Experiment("rainbow")
     exp.register_step("env_step", lambda: env_step, default=True)
     pbar = tqdm(total=cfg.sched.num_frames, dynamic_ncols=True)
-
-    prof = Profiler(
-        cfg=cfg.profiler,
-        device=device,
-        step_fn=lambda: env_step,
-        trace_path=exp.dir / "trace.json",
-    )
 
     def val_epoch():
         val_returns = []
@@ -267,8 +259,6 @@ def main():
         collect_exp()
         if len(buffer) >= cfg.buffer.prefill:
             opt_step()
-
-        prof.update()
 
 
 if __name__ == "__main__":
