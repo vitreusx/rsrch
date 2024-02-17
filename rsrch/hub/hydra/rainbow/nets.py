@@ -1,3 +1,4 @@
+import re
 from functools import partial
 
 import torch
@@ -5,9 +6,11 @@ from torch import Tensor, nn
 
 import rsrch.distributions as D
 from rsrch import spaces
+from rsrch.nn import noisy
+from rsrch.nn.rewrite import rewrite_module_
 
-from ..utils import layer_init
-from . import distq
+from ..utils import infer_ctx, layer_init
+from . import config, distq
 from .distq import ValueDist
 
 
@@ -25,7 +28,7 @@ class NatureEncoder(nn.Sequential):
 
 
 class ImpalaSmall(nn.Sequential):
-    def __init__(self, in_channels):
+    def __init__(self, in_channels: int):
         super().__init__(
             nn.Conv2d(in_channels, 16, 8, 4),
             nn.ReLU(),
@@ -118,3 +121,63 @@ class QHead(nn.Module):
             )
         else:
             return v.flatten(1) + adv - adv.mean(-1, keepdim=True)
+
+
+def Encoder(cfg: config.Config, obs_space: spaces.torch.Image):
+    in_channels = obs_space.num_channels
+
+    NATURE_RE = r"nature"
+    if m := re.match(NATURE_RE, cfg.nets.encoder):
+        return NatureEncoder(in_channels)
+
+    IMPALA_RE = r"impala\[(?P<variant>small|(large,(?P<size>[0-9]*)))\]"
+    if m := re.match(IMPALA_RE, cfg.nets.encoder):
+        if m["variant"] == "small":
+            enc = ImpalaSmall(in_channels)
+        else:
+            enc = ImpalaLarge(in_channels, int(m["size"]))
+
+        if cfg.nets.spectral_norm:
+
+            def apply_sn_res(mod):
+                if isinstance(mod, nn.Conv2d):
+                    mod = nn.utils.spectral_norm(mod)
+                return mod
+
+            def apply_sn(mod):
+                if isinstance(mod, ImpalaResidual):
+                    mod = rewrite_module_(mod, apply_sn_res)
+                return mod
+
+            enc = rewrite_module_(enc, apply_sn)
+
+        return enc
+
+
+class Q(nn.Sequential):
+    def __init__(
+        self,
+        cfg: config.Config,
+        obs_space: spaces.torch.Image,
+        act_space: spaces.torch.Discrete,
+    ):
+        enc = Encoder(cfg, obs_space)
+        with infer_ctx(enc):
+            dummy = obs_space.sample()[None].cpu()
+            num_features = enc(dummy)[0].shape[0]
+
+        head = QHead(
+            num_features,
+            cfg.nets.hidden_dim,
+            act_space.n,
+            cfg.distq,
+        )
+
+        if cfg.expl.noisy:
+            noisy.replace_(
+                module=head,
+                sigma0=cfg.expl.sigma0,
+                factorized=cfg.expl.factorized,
+            )
+
+        super().__init__(enc, head)

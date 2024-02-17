@@ -170,6 +170,7 @@ class SeqBuffer(Mapping[int, dict]):
                     if v is None:
                         continue
                     self._arrays[k][ptr] = v
+            del self._active[seq_id]
             seq_id = None
 
         return seq_id

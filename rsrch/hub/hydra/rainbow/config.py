@@ -22,6 +22,8 @@ class Nets:
 class Data:
     buf_cap: int
     slice_len: int
+    parallel: bool
+    prefetch_factor: int
 
 
 @dataclass

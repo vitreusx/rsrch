@@ -1,0 +1,17 @@
+faster:
+  expl:
+    noisy: false
+    eps: 0.1
+    # eps: linear(1.0, 0.05, ${total_steps})
+  prioritized:
+    enabled: false
+debug:
+  warmup: 2e3
+  val.sched: {never: true}
+  data.buf_cap: 100e3
+der:
+  warmup: 1.6e3
+  data.slice_len: 20
+  opt:
+    sched: {every: 1}
+    batch_size: 32

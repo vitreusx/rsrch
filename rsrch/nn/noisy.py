@@ -89,13 +89,13 @@ class NoisyLinear(nn.Module):
             return F.linear(x, w)
 
 
-def replace_with_noisy_(
+def replace_(
     module: nn.Module,
     sigma0: float,
     factorized=True,
     autoreset=True,
 ):
-    """Replace nn.Linear layers"""
+    """Replace nn.Linear layers with NoisyLinear layers."""
 
     def _replace(mod: nn.Module):
         if isinstance(mod, nn.Linear):

@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import cache, partial, singledispatchmethod, wraps
 from typing import Literal
@@ -188,3 +189,14 @@ def symlog(x: Tensor) -> Tensor:
 
 def symexp(x: Tensor) -> Tensor:
     return torch.copysign(x.abs().exp() - 1.0, x)
+
+
+@contextmanager
+def infer_ctx(*modules: nn.Module):
+    prev = [module.training for module in modules]
+    for module in modules:
+        module.eval()
+    with torch.inference_mode():
+        yield
+    for module, prev_ in zip(modules, prev):
+        module.train(prev_)

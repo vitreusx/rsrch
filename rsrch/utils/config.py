@@ -332,48 +332,23 @@ def get_dataclass(t):
             return dts[0] if len(dts) > 0 else None
 
 
-@overload
-def cli(
-    cls: None = None,
-    config_yml: Path | None = None,
-    presets_yml: Path | None = None,
-    args: list[str] | None = None,
-) -> dict:
-    ...
-
-
-@overload
-def cli(
-    cls: Type[T],
-    config_yml: Path | None = None,
-    presets_yml: Path | None = None,
-    args: list[str] | None = None,
-) -> T:
-    ...
-
-
 def parser(
     cls: Type[T] | None = None,
-    config_yml: Path | None = None,
-    presets_yml: Path | None = None,
+    config_file: Path | None = None,
 ):
     p = argparse.ArgumentParser()
 
     p.add_argument(
         "-C",
-        "--config-files",
+        "--config-file",
         type=Path,
-        nargs="*",
-        default=[config_yml] if config_yml is not None else [],
-        help="Default config files.",
+        help="Master config file.",
     )
     p.add_argument(
         "-P",
-        "--preset-files",
+        "--preset-file",
         type=Path,
-        nargs="*",
-        default=[presets_yml] if presets_yml is not None else [],
-        help="Preset files.",
+        help="Preset file.",
     )
     p.add_argument(
         "-p",
@@ -385,12 +360,11 @@ def parser(
 
     yaml = YAML(typ="safe", pure=True)
 
-    defs = {}
-    if config_yml is not None:
-        with open(config_yml, "r") as f:
-            defs = yaml.load(f) or {}
-
     if cls is not None:
+        defs = {}
+        if config_file is not None:
+            with open(config_file, "r") as f:
+                defs = yaml.load(f) or {}
 
         def add_overrides(t, path=[], doc=None, defv=MISSING, cur=defs):
             dt = get_dataclass(t)
@@ -427,22 +401,44 @@ def parser(
     return p
 
 
+@overload
+def from_args(
+    cls: Type[T],
+    args: argparse.Namespace,
+    config_file: Path | None = None,
+    presets_file: Path | None = None,
+) -> T:
+    ...
+
+
+@overload
 def from_args(
     args: argparse.Namespace,
-    cls: Type[T] | None = None,
+    cls: None,
+    config_file: Path | None = None,
+    presets_file: Path | None = None,
+) -> dict:
+    ...
+
+
+def from_args(
+    cls: Type[T] | None,
+    args: argparse.Namespace,
+    config_file: Path | None = None,
+    presets_file: Path | None = None,
 ):
     dicts = []
-    for path in args.config_files:
+
+    path = getattr(args, "config_file", None) or config_file
+    if path is not None:
         with open(path, "r") as f:
             dicts.append(yaml.load(f) or {})
 
-    if len(args.presets) != 0:
-        presets = []
-        for path in args.preset_files:
-            with open(path, "r") as f:
-                presets.append(yaml.load(f) or {})
-        presets = merge(*presets)
-        for preset in args.presets:
+    path = getattr(args, "presets_file", None) or presets_file
+    if path is not None:
+        with open(path, "r") as f:
+            presets = yaml.load(f) or {}
+        for preset in getattr(args, "presets", []):
             dicts.append(presets.get(preset, {}))
 
     if cls is not None:
@@ -463,12 +459,32 @@ def from_args(
     return compose(dicts, cls)
 
 
+@overload
 def cli(
-    cls: Type[T] | None = None,
-    config_yml: Path | None = None,
-    presets_yml: Path | None = None,
+    cls: None,
+    config_file: Path | None = None,
+    presets_file: Path | None = None,
+    args: list[str] | None = None,
+) -> dict:
+    ...
+
+
+@overload
+def cli(
+    cls: Type[T],
+    config_file: Path | None = None,
+    presets_file: Path | None = None,
+    args: list[str] | None = None,
+) -> T:
+    ...
+
+
+def cli(
+    cls: Type[T] | None,
+    config_file: Path | None = None,
+    presets_file: Path | None = None,
     args: list[str] | None = None,
 ):
-    p = parser(cls, config_yml, presets_yml)
+    p = parser(cls, config_file)
     args = p.parse_args(args)
-    return from_args(args, cls)
+    return from_args(cls, args, config_file, presets_file)
