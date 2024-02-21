@@ -18,11 +18,13 @@ class Factory(ABC):
         obs_space: spaces.torch.Space,
         env_act_space: spaces.np.Space,
         act_space: spaces.torch.Space,
+        frame_skip: int,
     ):
         self.env_obs_space = env_obs_space
         self.obs_space = obs_space
         self.env_act_space = env_act_space
         self.act_space = act_space
+        self.frame_skip = frame_skip
 
     @abstractmethod
     def env(self, mode: str, record: bool = False):

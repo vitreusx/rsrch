@@ -82,7 +82,13 @@ class Factory(base.Factory):
         env_act_space = from_gym(env.action_space)
         act_space = spaces.torch.as_tensor(env_act_space)
 
-        super().__init__(env_obs_space, obs_space, env_act_space, act_space)
+        super().__init__(
+            env_obs_space,
+            obs_space,
+            env_act_space,
+            act_space,
+            frame_skip=cfg.frame_skip,
+        )
 
     def env(self, mode="val", record=False):
         if not record:

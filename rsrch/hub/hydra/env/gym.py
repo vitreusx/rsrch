@@ -37,8 +37,7 @@ class Factory(base.Factory):
             obs_space,
             env_act_space,
             act_space,
-            device,
-            stack=None,
+            frame_skip=1,
         )
 
     def env(self, mode="val", record=False):

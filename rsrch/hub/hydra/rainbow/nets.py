@@ -73,7 +73,6 @@ class ImpalaLarge(nn.Sequential):
             nn.AdaptiveMaxPool2d((8, 8)),
             nn.Flatten(),
         )
-        self.out_features = 2048 * model_size
 
 
 class QHead(nn.Module):
@@ -95,23 +94,20 @@ class QHead(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, num_atoms),
         )
-        self.v_head.apply(partial(layer_init, std=1e-2))
 
         self.adv_head = nn.Sequential(
             nn.Linear(in_features, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, num_actions * num_atoms),
         )
-        self.adv_head.apply(partial(layer_init, std=1e-2))
 
         ...
 
-    def forward(self, feat: Tensor) -> Tensor | ValueDist:
-        v: Tensor = self.v_head(feat)
-        adv: Tensor = self.adv_head(feat)
-
+    def forward(self, feat: Tensor, adv_only=False) -> Tensor | ValueDist:
         if self.dist_cfg.enabled:
+            v: Tensor = self.v_head(feat)
             v = v.reshape(len(v), 1, self.dist_cfg.num_atoms)
+            adv: Tensor = self.adv_head(feat)
             adv = adv.reshape(len(adv), self.num_actions, self.dist_cfg.num_atoms)
             logits = v + adv - adv.mean(-2, keepdim=True)
             return ValueDist(
@@ -120,7 +116,12 @@ class QHead(nn.Module):
                 v_max=self.dist_cfg.v_max,
             )
         else:
-            return v.flatten(1) + adv - adv.mean(-1, keepdim=True)
+            adv: Tensor = self.adv_head(feat)
+            if adv_only:
+                return adv
+            else:
+                v: Tensor = self.v_head(feat)
+                return v.flatten(1) + adv - adv.mean(-1, keepdim=True)
 
 
 def Encoder(cfg: config.Config, obs_space: spaces.torch.Image):

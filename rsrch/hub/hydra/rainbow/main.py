@@ -18,6 +18,7 @@ from tqdm.auto import tqdm
 from rsrch import spaces
 from rsrch.exp import tensorboard
 from rsrch.exp.profiler import profiler
+from rsrch.nn import noisy
 from rsrch.rl import data, gym
 from rsrch.rl.data import rollout
 from rsrch.rl.utils import polyak
@@ -29,15 +30,20 @@ from . import config, nets
 from .distq import ValueDist
 
 
-class Agent(gym.vector.Agent, nn.Module):
-    def __init__(self, env_f: env.Factory, qf: nets.Q):
+class QAgent(gym.vector.Agent, nn.Module):
+    def __init__(self, env_f: env.Factory, qf: nets.Q, val=False):
         nn.Module.__init__(self)
         self.qf = qf
         self.env_f = env_f
+        self.val = val
 
     def policy(self, obs: np.ndarray):
         with infer_ctx(self.qf):
             obs = self.env_f.move_obs(obs)
+            if self.val:
+                noisy.zero_noise_(self.qf)
+            else:
+                noisy.reset_noise_(self.qf)
             q: ValueDist | Tensor = self.qf(obs)
             if isinstance(q, ValueDist):
                 act = q.mean.argmax(-1)
@@ -46,28 +52,21 @@ class Agent(gym.vector.Agent, nn.Module):
             return self.env_f.move_act(act, to="env")
 
 
-class EnvProc(mp.Process):
-    def __init__(
-        self,
-        cfg: config.Config,
-        qf: nets.Q,
-        batch_queue: mp.Queue,
-        comm: Connection,
-    ):
-        super().__init__()
+class DataWorker:
+    @staticmethod
+    def target(rpc_conn: Connection, *args, **kwargs):
+        worker = DataWorker(*args, **kwargs)
+        print(next(worker.qf.parameters()))
+        while True:
+            cmd, args, kwargs = rpc_conn.recv()
+            retval = getattr(worker, cmd)(*args, **kwargs)
+            rpc_conn.send(retval)
+
+    def __init__(self, cfg: config.Config, qf: nets.Q, batch_queue):
         self.cfg = cfg
         self.qf = qf
         self.batch_queue = batch_queue
-        self.comm = comm
 
-    def run(self):
-        self.init()
-        while True:
-            cmd, args, kwargs = self.comm.recv()
-            retval = getattr(self, cmd)(*args, **kwargs)
-            self.comm.send(retval)
-
-    def init(self):
         self.device = torch.device(self.cfg.device)
         self.env_f = env.make_factory(self.cfg.env, self.device)
 
@@ -89,14 +88,20 @@ class EnvProc(mp.Process):
         self.envs = self.env_f.vector_env(self.cfg.num_envs, mode="train")
         self.env_step = 0
         self.agent = gym.vector.agents.EpsAgent(
-            opt=Agent(self.env_f, self.qf),
+            opt=QAgent(self.env_f, self.qf),
             rand=gym.vector.agents.RandomAgent(self.envs),
-            eps=self.cfg.expl.eps(self.env_step),
+            eps=self._agent_eps(),
         )
 
         self.env_iter = iter(rollout.steps(self.envs, self.agent))
         self.ep_ids = defaultdict(lambda: None)
         self.ep_rets = defaultdict(lambda: 0.0)
+
+    def _agent_eps(self):
+        if self.env_step < self.cfg.warmup:
+            return 1.0
+        else:
+            return self.cfg.expl.eps(self.env_step)
 
     def fetch_start(self):
         self.fetch_thr.start()
@@ -127,10 +132,9 @@ class EnvProc(mp.Process):
 
         if isinstance(self.sampler, data.PrioritizedSampler):
             if slice_id is not None:
-                if len(self.env_buf) == 0:
-                    max_prio = 1.0e3
-                else:
-                    max_prio = self.sampler._max.total
+                max_prio = self.sampler._max.total
+                if max_prio == 0.0:
+                    max_prio = 1.0
                 self.sampler[slice_id] = max_prio
 
         ep_rets = None
@@ -139,16 +143,21 @@ class EnvProc(mp.Process):
             ep_rets = self.ep_rets[env_idx]
             del self.ep_rets[env_idx]
 
-        self.env_step += 1
-        self.agent.eps = self.cfg.expl.eps(self.env_step)
+        self.env_step += self.env_f.frame_skip
+        self.agent.eps = self._agent_eps()
         return ep_rets
 
+    def update_prio(self, idxes, prio):
+        prio_exp = self.cfg.prioritized.prio_exp(self.env_step)
+        prio = prio.float().detach().cpu().numpy() ** prio_exp
+        self.sampler.update(idxes, prio)
 
-class Proxy:
-    def __init__(self, proc: mp.Process, conn: Connection):
-        self.proc = proc
+
+class RPC:
+    def __init__(self, worker: mp.Process | Thread, conn: Connection):
+        self.worker = worker
         self.conn = conn
-        proc.start()
+        worker.start()
 
     def __getattr__(self, __name):
         def _func(*args, **kwargs):
@@ -159,7 +168,8 @@ class Proxy:
 
 
 def main():
-    presets = ["faster"]
+    presets = ["working"]
+    # presets = ["faster", "der"]
 
     cfg = config.from_args(
         config.Config,
@@ -168,8 +178,24 @@ def main():
         presets_file=Path(__file__).parent / "presets.yml",
     )
 
+    opt_step, env_step, agent_step = 0, 0, 0
+
+    def make_sched(cfg):
+        every, unit = cfg["every"]
+        step_fn = {
+            "opt_step": lambda: opt_step,
+            "env_step": lambda: env_step,
+            "agent_step": lambda: agent_step,
+        }[unit]
+        return cron.Every2(
+            step_fn=step_fn,
+            every=every,
+            iters=cfg.get("iters", 1),
+            never=cfg.get("never", False),
+        )
+
     device = torch.device(cfg.device)
-    mp.set_start_method("spawn")
+    mp.set_start_method("spawn", force=True)
 
     env_id = getattr(cfg.env, cfg.env.type).env_id
     exp = tensorboard.Experiment(
@@ -186,6 +212,8 @@ def main():
 
     def make_qf():
         qf = nets.Q(cfg, env_f.obs_space, env_f.act_space)
+        if cfg.expl.noisy:
+            noisy.replace_(qf, cfg.expl.sigma0)
         qf = qf.to(device)
         qf = qf.share_memory()
         return qf
@@ -194,72 +222,39 @@ def main():
     qf_opt = cfg.opt.optimizer(qf.parameters())
 
     polyak.sync(qf, qf_t)
-    qf_polyak = polyak.Polyak(qf, qf_t, **cfg.nets.polyak)
+    # qf_polyak = polyak.Polyak(qf, qf_t, **cfg.nets.polyak)
+    should_update = make_sched(cfg.nets.polyak)
 
-    device = torch.device(cfg.device)
-    env_f = env.make_factory(cfg.env, device)
-
-    if cfg.prioritized.enabled:
-        sampler = data.PrioritizedSampler(max_size=cfg.data.buf_cap)
+    if cfg.data.parallel:
+        raise RuntimeError(
+            """For some arcane reason, sharing CUDA tensors on WSL does NOT work.
+            Thus, it is disabled altogether."""
+        )
+        batch_queue = mp.Queue(maxsize=cfg.data.prefetch_factor)
+        master, slave = mp.Pipe(duplex=True)
+        args = (cfg, qf, batch_queue)
+        proc = mp.Process(target=DataWorker.target, args=(slave, *args))
+        data_: DataWorker = RPC(proc, master)
     else:
-        sampler = data.UniformSampler()
+        batch_queue = queue.Queue(maxsize=cfg.data.prefetch_factor)
+        args = (cfg, qf, batch_queue)
+        data_ = DataWorker(*args)
 
-    env_buf = env_f.slice_buffer(
-        cfg.data.buf_cap,
-        cfg.data.slice_len,
-        sampler=sampler,
-    )
-
-    train_envs = env_f.vector_env(cfg.num_envs, mode="train")
-    env_step = 0
-    train_agent = gym.vector.agents.EpsAgent(
-        opt=Agent(env_f, qf),
-        rand=gym.vector.agents.RandomAgent(train_envs),
-        eps=cfg.expl.eps(env_step),
-    )
-
-    train_iter = iter(rollout.steps(train_envs, train_agent))
-    ep_ids = defaultdict(lambda: None)
-    ep_rets = defaultdict(lambda: 0.0)
-
-    env_step = 0
+    env_step, opt_step = 0, 0
     exp.register_step("env_step", lambda: env_step, default=True)
 
     def take_env_step():
-        nonlocal env_step
-        env_idx, step = next(train_iter)
-        ep_ids[env_idx], slice_id = env_buf.push(ep_ids[env_idx], step)
-        ep_rets[env_idx] += step.reward
+        ep_ret = data_.take_env_step()
+        if ep_ret is not None:
+            exp.add_scalar("train/ep_ret", ep_ret)
 
-        if step.done:
-            exp.add_scalar("train/ep_ret", ep_rets[env_idx])
-            del ep_ids[env_idx]
-            del ep_rets[env_idx]
-
-        if isinstance(sampler, data.PrioritizedSampler):
-            if slice_id is not None:
-                if len(env_buf) == 0:
-                    max_prio = 1.0e3
-                else:
-                    max_prio = sampler._max.total
-                sampler[slice_id] = max_prio
-
-        env_step += 1
-        pbar.update()
-        qf_polyak.step()
-
-    # train_envs = env_f.vector_env(cfg.num_envs, mode="train")
-    # train_agent = gym.vector.agents.EpsAgent(
-    #     opt=Agent(qf),
-    #     rand=gym.vector.agents.RandomAgent(train_envs),
-    #     eps=cfg.expl.eps(env_step),
-    # )
-    # train_iter = iter(rollout.steps(train_envs, train_agent))
-    # ep_ids = defaultdict(lambda: None)
-    # ep_rets = defaultdict(lambda: 0.0)
+        nonlocal env_step, agent_step
+        env_step += env_f.frame_skip
+        agent_step += 1
+        pbar.update(env_f.frame_skip)
 
     val_envs = env_f.vector_env(cfg.num_envs, mode="val")
-    val_agent = Agent(env_f, qf)
+    val_agent = QAgent(env_f, qf, val=True)
     make_val_iter = lambda: iter(
         rollout.episodes(
             val_envs,
@@ -279,9 +274,9 @@ def main():
     global tqdm
     tqdm = partial(tqdm, dynamic_ncols=True)
 
-    should_val = cron.Every2(lambda: env_step, **cfg.val.sched)
-    should_opt = cron.Every2(lambda: env_step, **cfg.opt.sched)
-    should_log = cron.Every2(lambda: env_step, **cfg.log)
+    should_val = make_sched(cfg.val.sched)
+    should_opt = make_sched(cfg.opt.sched)
+    should_log = make_sched(cfg.log)
 
     gammas = torch.tensor([cfg.gamma**i for i in range(cfg.data.slice_len)])
     gammas = gammas.to(device)
@@ -291,10 +286,11 @@ def main():
     while env_step < cfg.warmup:
         take_env_step()
 
-    pbar = tqdm(desc="Train", total=cfg.total_steps, initial=env_step)
-    while env_step < cfg.total_steps:
-        # Val epoch
-        while should_val:
+    data_.fetch_start()
+
+    pbar = tqdm(desc="Train", total=cfg.total_env_steps, initial=env_step)
+    while env_step < cfg.total_env_steps:
+        if should_val:
             val_iter = tqdm(
                 make_val_iter(),
                 desc="Val",
@@ -302,42 +298,51 @@ def main():
                 leave=False,
             )
 
+            noisy.zero_noise_(qf)
             rets = [sum(ep.reward) for _, ep in val_iter]
             exp.add_scalar("val/mean_ret", np.mean(rets))
 
         with prof.region("env_step"):
-            # Env step
             take_env_step()
+
+        while should_update:
+            polyak.update(qf, qf_t, cfg.nets.polyak["tau"])
 
         # Opt step
         while should_opt:
             with prof.region("opt_step"):
-                if isinstance(sampler, data.PrioritizedSampler):
-                    idxes, is_coefs = sampler.sample(cfg.opt.batch_size)
-                    batch = env_f.fetch_slice_batch(env_buf, idxes)
+                if cfg.prioritized.enabled:
+                    idxes, is_coefs, batch = batch_queue.get()
                 else:
-                    idxes = sampler.sample(cfg.opt.batch_size)
-                    batch = env_f.fetch_slice_batch(env_buf, idxes)
+                    idxes, batch = batch_queue.get()
 
                 if cfg.aug.rew_clip is not None:
                     batch.reward.clamp_(*cfg.aug.rew_clip)
 
                 with torch.no_grad():
                     with autocast():
-                        next_q = qf_t(batch.obs[-1])
+                        if cfg.double_dqn:
+                            noisy.reset_noise_(qf)
+                            next_q = qf(batch.obs[-1])
+                        else:
+                            noisy.reset_noise_(qf_t)
+                            next_q = qf_t(batch.obs[-1])
+
                         if isinstance(next_q, ValueDist):
                             act = next_q.mean.argmax(-1)
                             target = next_q.gather(-1, act[..., None]).squeeze(-1)
                         else:
                             target = next_q.max(-1).values
+
                         target = (1.0 - batch.term.float()) * target
                         returns = (batch.reward * gammas.unsqueeze(-1)).sum(0)
                         target = returns + final_gamma * target
 
                 with autocast():
-                    pred = (
-                        qf(batch.obs[0]).gather(-1, batch.act[0][..., None]).squeeze(-1)
-                    )
+                    noisy.reset_noise_(qf)
+                    qv = qf(batch.obs[0])
+                    pred = qv.gather(-1, batch.act[0][..., None]).squeeze(-1)
+
                     if isinstance(target, ValueDist):
                         prio = q_losses = ValueDist.proj_kl_div(pred, target)
                     else:
@@ -346,6 +351,7 @@ def main():
 
                     if cfg.prioritized.enabled:
                         is_coef_exp = cfg.prioritized.is_coef_exp(env_step)
+                        is_coefs = torch.as_tensor(is_coefs, device=device)
                         q_losses = (is_coefs**is_coef_exp) * q_losses
 
                     loss = q_losses.mean()
@@ -359,6 +365,8 @@ def main():
                 scaler.step(qf_opt)
                 scaler.update()
 
+                opt_step += 1
+
                 if should_log:
                     exp.add_scalar("train/loss", loss)
                     if isinstance(pred, ValueDist):
@@ -366,11 +374,5 @@ def main():
                     else:
                         exp.add_scalar("train/mean_q_pred", pred.mean())
 
-                if isinstance(sampler, data.PrioritizedSampler):
-                    prio_exp = cfg.prioritized.prio_exp(env_step)
-                    prio = prio.float().detach().cpu().numpy() ** prio_exp
-                    sampler.update(idxes, prio)
-
-
-# if __name__ == "__main__":
-#     main()
+                if cfg.prioritized.enabled:
+                    data_.update_prio(idxes, prio)

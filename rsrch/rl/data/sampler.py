@@ -81,6 +81,6 @@ class PrioritizedSampler:
         # Importance sampling coefficients
         # E_{x \sim P}[f(x)] = E_{x \sim Q}[P(x)/Q(x) f(x)]
         # Here P(x)=1/N, Q(x) = self._P[x]/(\sum_y self._P[y])
-        is_coef = self._P.total / (self._P[idxes] * len(self._P))
+        is_coef = self._P.total / (self._P[idxes] * (self._end - self._beg))
 
         return ids, is_coef

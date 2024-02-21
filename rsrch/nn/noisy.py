@@ -15,7 +15,6 @@ class NoisyLinear(nn.Module):
         sigma0: float,
         bias=True,
         factorized=True,
-        autoreset=True,
     ):
         super().__init__()
         self.in_features = in_features
@@ -23,7 +22,6 @@ class NoisyLinear(nn.Module):
         self._sigma0 = sigma0
         self._bias = bias
         self._factorized = factorized
-        self._autoreset = autoreset
 
         self.weight = nn.Parameter(torch.empty(out_features, in_features))
         self.noisy_weight = nn.Parameter(torch.empty_like(self.weight))
@@ -75,12 +73,6 @@ class NoisyLinear(nn.Module):
             self.bias_eps.zero_()
 
     def forward(self, x):
-        if self._autoreset:
-            if self.training:
-                self.reset_noise_()
-            else:
-                self.zero_noise_()
-
         w = self.weight + self.noisy_weight * self.weight_eps
         if self._bias:
             b = self.bias + self.noisy_bias * self.bias_eps
@@ -89,11 +81,20 @@ class NoisyLinear(nn.Module):
             return F.linear(x, w)
 
 
+def reset_noise_(module: nn.Module):
+    if isinstance(module, NoisyLinear):
+        module.reset_noise_()
+
+
+def zero_noise_(module: nn.Module):
+    if isinstance(module, NoisyLinear):
+        module.zero_noise_()
+
+
 def replace_(
     module: nn.Module,
     sigma0: float,
     factorized=True,
-    autoreset=True,
 ):
     """Replace nn.Linear layers with NoisyLinear layers."""
 
@@ -105,7 +106,6 @@ def replace_(
                 bias=mod.bias is not None,
                 sigma0=sigma0,
                 factorized=factorized,
-                autoreset=autoreset,
             )
             noisy.weight.data.copy_(mod.weight.data)
             if mod.bias is not None:

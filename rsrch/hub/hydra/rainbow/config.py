@@ -68,7 +68,7 @@ class Config:
     distq: distq.Config
     nets: Nets
     data: Data
-    total_steps: int
+    total_env_steps: int
     num_envs: int
     expl: Expl
     aug: Aug
@@ -78,3 +78,4 @@ class Config:
     opt: Opt
     gamma: float
     log: dict
+    double_dqn: bool

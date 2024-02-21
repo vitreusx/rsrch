@@ -1,4 +1,7 @@
 import math
+from numbers import Number
+
+import numpy as np
 
 
 class constant:
@@ -31,6 +34,18 @@ class exp:
 
     def __call__(self, t):
         return self.final + (self.init - self.final) * math.exp(-self.rate * t)
+
+
+class piecewise:
+    def __init__(self, *args):
+        self.values, self.pivots = [*args[::2]], np.asarray(args[1::2])
+        for idx, val in enumerate(self.values):
+            if isinstance(val, Number):
+                self.values[idx] = constant(val)
+
+    def __call__(self, t):
+        idx = np.searchsorted(self.pivots, t)
+        return self.values[idx](t)
 
 
 class schedule:
