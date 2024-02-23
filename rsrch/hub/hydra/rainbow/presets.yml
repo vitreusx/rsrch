@@ -13,6 +13,8 @@ working:
     batch_size: 256
   distq:
     enabled: false
+  data:
+    parallel: true
 debug:
   warmup: 2e3
   val.sched: {never: true}

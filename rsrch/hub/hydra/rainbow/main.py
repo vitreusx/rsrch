@@ -1,13 +1,12 @@
 import argparse
 import queue
-import re
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from functools import partial
 from multiprocessing.connection import Connection
 from pathlib import Path
 from threading import Lock, Thread
-from typing import Generic, TypeVar
 
 import numpy as np
 import torch
@@ -55,12 +54,12 @@ class QAgent(gym.vector.Agent, nn.Module):
 class DataWorker:
     @staticmethod
     def target(rpc_conn: Connection, *args, **kwargs):
+        rpc_conn.recv()  # Sync message
         worker = DataWorker(*args, **kwargs)
-        print(next(worker.qf.parameters()))
         while True:
-            cmd, args, kwargs = rpc_conn.recv()
+            idx, cmd, args, kwargs = rpc_conn.recv()
             retval = getattr(worker, cmd)(*args, **kwargs)
-            rpc_conn.send(retval)
+            rpc_conn.send((idx, retval))
 
     def __init__(self, cfg: config.Config, qf: nets.Q, batch_queue):
         self.cfg = cfg
@@ -158,13 +157,47 @@ class RPC:
         self.worker = worker
         self.conn = conn
         worker.start()
+        self._cache = {}
+        self._req_idx, self._futures = 0, {}
 
-    def __getattr__(self, __name):
-        def _func(*args, **kwargs):
-            self.conn.send((__name, args, kwargs))
-            return self.conn.recv()
+    def __getattr__(self, name):
+        if name not in self._cache:
 
-        return _func
+            class _func:
+                def __init__(f):
+                    f.name = name
+
+                def __call__(f, *args, **kwargs):
+                    fut = f.future(*args, **kwargs)
+                    return fut.result()
+
+                def future(f, *args, **kwargs):
+                    req_idx = self._req_idx
+                    self._req_idx += 1
+                    self.conn.send((req_idx, f.name, args, kwargs))
+
+                    class _future:
+                        def __init__(fut):
+                            fut.req_idx = req_idx
+
+                        def result(fut):
+                            if fut.req_idx in self._cache:
+                                retval = self._cache[req_idx]
+                                del self._cache[req_idx]
+                                return retval
+
+                            while True:
+                                resp_idx, retval = self.conn.recv()
+                                if resp_idx == fut.req_idx:
+                                    return retval
+                                else:
+                                    self._cache[resp_idx] = retval
+
+                    return _future()
+
+            self._cache[name] = _func()
+
+        return self._cache[name]
 
 
 def main():
@@ -221,30 +254,31 @@ def main():
     qf, qf_t = make_qf(), make_qf()
     qf_opt = cfg.opt.optimizer(qf.parameters())
 
-    polyak.sync(qf, qf_t)
-    # qf_polyak = polyak.Polyak(qf, qf_t, **cfg.nets.polyak)
-    should_update = make_sched(cfg.nets.polyak)
-
     if cfg.data.parallel:
-        raise RuntimeError(
-            """For some arcane reason, sharing CUDA tensors on WSL does NOT work.
-            Thus, it is disabled altogether."""
-        )
         batch_queue = mp.Queue(maxsize=cfg.data.prefetch_factor)
         master, slave = mp.Pipe(duplex=True)
         args = (cfg, qf, batch_queue)
         proc = mp.Process(target=DataWorker.target, args=(slave, *args))
         data_: DataWorker = RPC(proc, master)
+        # For some reason, the network's parameters appear as though they were
+        # zero-initialized in the child process. This can be fixed by reinitializing
+        # the network.
+        polyak.sync(make_qf(), qf)
+        # Send the sync message
+        master.send(())
     else:
         batch_queue = queue.Queue(maxsize=cfg.data.prefetch_factor)
         args = (cfg, qf, batch_queue)
         data_ = DataWorker(*args)
 
+    polyak.sync(qf, qf_t)
+    # qf_polyak = polyak.Polyak(qf, qf_t, **cfg.nets.polyak)
+    should_update = make_sched(cfg.nets.polyak)
+
     env_step, opt_step = 0, 0
     exp.register_step("env_step", lambda: env_step, default=True)
 
-    def take_env_step():
-        ep_ret = data_.take_env_step()
+    def after_env_step(ep_ret):
         if ep_ret is not None:
             exp.add_scalar("train/ep_ret", ep_ret)
 
@@ -284,7 +318,8 @@ def main():
 
     pbar = tqdm(desc="Warmup", total=cfg.warmup, initial=env_step)
     while env_step < cfg.warmup:
-        take_env_step()
+        ep_ret = data_.take_env_step()
+        after_env_step(ep_ret)
 
     data_.fetch_start()
 
@@ -303,10 +338,12 @@ def main():
             exp.add_scalar("val/mean_ret", np.mean(rets))
 
         with prof.region("env_step"):
-            take_env_step()
+            ep_ret = data_.take_env_step()
+            after_env_step(ep_ret)
+            # fut = data_.take_env_step.future()
 
         while should_update:
-            polyak.update(qf, qf_t, cfg.nets.polyak["tau"])
+            polyak.update(qf, qf_t, tau=cfg.nets.polyak["tau"])
 
         # Opt step
         while should_opt:
@@ -376,3 +413,6 @@ def main():
 
                 if cfg.prioritized.enabled:
                     data_.update_prio(idxes, prio)
+
+        # ep_ret = fut.result()
+        # after_env_step(ep_ret)
