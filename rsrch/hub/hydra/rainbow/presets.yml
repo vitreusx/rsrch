@@ -1,9 +1,5 @@
 faster:
   num_envs: 8
-  prioritized:
-    enabled: false
-  # distq:
-  #   enabled: false
 debug:
   warmup: 2e3
   val.sched: {never: true}
