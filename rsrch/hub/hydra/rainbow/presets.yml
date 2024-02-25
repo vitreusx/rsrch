@@ -1,20 +1,9 @@
-working:
-  expl:
-    noisy: true
-    sigma0: 0.5
-    eps: linear(1.0, 0.01, 500e3)
+faster:
+  num_envs: 8
   prioritized:
     enabled: false
-  total_env_steps: 10e6
-  nets:
-    encoder: impala[small]
-    polyak: {every: [32.0e3, env_step]}
-  opt:
-    batch_size: 256
-  distq:
-    enabled: false
-  data:
-    parallel: true
+  # distq:
+  #   enabled: false
 debug:
   warmup: 2e3
   val.sched: {never: true}

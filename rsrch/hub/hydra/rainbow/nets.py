@@ -87,21 +87,30 @@ class QHead(nn.Module):
         self.num_actions = num_actions
         self.dist_cfg = dist_cfg
 
-        num_atoms = dist_cfg.num_atoms if dist_cfg.enabled else 1
-
-        self.v_head = nn.Sequential(
-            nn.Linear(in_features, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, num_atoms),
-        )
-
-        self.adv_head = nn.Sequential(
-            nn.Linear(in_features, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, num_actions * num_atoms),
-        )
-
-        ...
+        if dist_cfg.enabled:
+            self.v_head = nn.Sequential(
+                nn.Linear(in_features, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, dist_cfg.num_atoms),
+            )
+            self.v_head.apply(partial(layer_init, std=1e-2))
+            self.adv_head = nn.Sequential(
+                nn.Linear(in_features, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, num_actions * dist_cfg.num_atoms),
+            )
+            self.adv_head.apply(partial(layer_init, std=1e-2))
+        else:
+            self.v_head = nn.Sequential(
+                nn.Linear(in_features, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, 1),
+            )
+            self.adv_head = nn.Sequential(
+                nn.Linear(in_features, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, num_actions),
+            )
 
     def forward(self, feat: Tensor, adv_only=False) -> Tensor | ValueDist:
         if self.dist_cfg.enabled:

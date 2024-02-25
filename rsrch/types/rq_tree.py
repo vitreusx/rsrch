@@ -75,21 +75,6 @@ class rq_tree:
                 if cur == 0:
                     break
 
-        # if isinstance(idx, np.ndarray):
-        #     value = np.asarray(value)
-        #     value = np.broadcast_to(value, idx.shape)
-        #     for idx_, value_ in zip(idx.ravel(), value.ravel()):
-        #         self[idx_] = value_
-        #     return
-
-        # self.array[idx] = value
-
-        # node = self._array_beg + idx
-        # while node > 0:
-        #     node = (node - 1) // 2
-        #     left_v, right_v = self.tree[2 * node + 1], self.tree[2 * node + 2]
-        #     self.tree[node] = self.reduce_fn(left_v, right_v)
-
     def searchsorted(self, value):
         if isinstance(value, np.ndarray):
             return np.array([self.searchsorted(v) for v in value])
@@ -108,4 +93,4 @@ class rq_tree:
         return node - self._array_beg
 
     def __repr__(self):
-        return f"rq_tree({self.array[:self.size]})"
+        return f"rq_tree({self.array[:self.size]}, total={self.total})"

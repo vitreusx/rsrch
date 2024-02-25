@@ -28,7 +28,7 @@ data:
   prefetch_factor: 2
   parallel: false
 total_env_steps: 250e6
-num_envs: 8
+num_envs: 1
 expl:
   noisy: true
   sigma0: 0.5

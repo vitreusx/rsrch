@@ -79,7 +79,7 @@ class DataWorker:
             self.cfg.data.slice_len,
             sampler=self.sampler,
         )
-        self.env_buf_mtx = Lock()
+        self.mtx = Lock()
 
         self.batch_size = self.cfg.opt.batch_size
         self.fetch_thr = Thread(target=self._fetch_run)
@@ -111,7 +111,7 @@ class DataWorker:
             self.batch_queue.put(payload)
 
     def fetch_batch(self):
-        with self.env_buf_mtx:
+        with self.mtx:
             if isinstance(self.sampler, data.PrioritizedSampler):
                 idxes, is_coefs = self.sampler.sample(self.batch_size)
                 batch = self.env_f.fetch_slice_batch(self.env_buf, idxes)
@@ -123,7 +123,7 @@ class DataWorker:
 
     def take_env_step(self):
         env_idx, step = next(self.env_iter)
-        with self.env_buf_mtx:
+        with self.mtx:
             self.ep_ids[env_idx], slice_id = self.env_buf.push(
                 self.ep_ids[env_idx], step
             )
@@ -131,10 +131,11 @@ class DataWorker:
 
         if isinstance(self.sampler, data.PrioritizedSampler):
             if slice_id is not None:
-                max_prio = self.sampler._max.total
-                if max_prio == 0.0:
-                    max_prio = 1.0
-                self.sampler[slice_id] = max_prio
+                with self.mtx:
+                    max_prio = self.sampler._max.total
+                    if max_prio == 0.0:
+                        max_prio = 1.0
+                    self.sampler[slice_id] = max_prio
 
         ep_rets = None
         if step.done:
@@ -147,9 +148,10 @@ class DataWorker:
         return ep_rets
 
     def update_prio(self, idxes, prio):
-        prio_exp = self.cfg.prioritized.prio_exp(self.env_step)
-        prio = prio.float().detach().cpu().numpy() ** prio_exp
-        self.sampler.update(idxes, prio)
+        with self.mtx:
+            prio_exp = self.cfg.prioritized.prio_exp(self.env_step)
+            prio = prio.float().detach().cpu().numpy() ** prio_exp
+            self.sampler.update(idxes, prio)
 
 
 class RPC:
@@ -158,50 +160,22 @@ class RPC:
         self.conn = conn
         worker.start()
         self._cache = {}
-        self._req_idx, self._futures = 0, {}
 
     def __getattr__(self, name):
         if name not in self._cache:
 
-            class _func:
-                def __init__(f):
-                    f.name = name
+            def _func(*args, **kwargs):
+                self.conn.send((None, name, args, kwargs))
+                _, retval = self.conn.recv()
+                return retval
 
-                def __call__(f, *args, **kwargs):
-                    fut = f.future(*args, **kwargs)
-                    return fut.result()
-
-                def future(f, *args, **kwargs):
-                    req_idx = self._req_idx
-                    self._req_idx += 1
-                    self.conn.send((req_idx, f.name, args, kwargs))
-
-                    class _future:
-                        def __init__(fut):
-                            fut.req_idx = req_idx
-
-                        def result(fut):
-                            if fut.req_idx in self._cache:
-                                retval = self._cache[req_idx]
-                                del self._cache[req_idx]
-                                return retval
-
-                            while True:
-                                resp_idx, retval = self.conn.recv()
-                                if resp_idx == fut.req_idx:
-                                    return retval
-                                else:
-                                    self._cache[resp_idx] = retval
-
-                    return _future()
-
-            self._cache[name] = _func()
+            self._cache[name] = _func
 
         return self._cache[name]
 
 
 def main():
-    presets = ["working"]
+    presets = ["faster"]
     # presets = ["faster", "der"]
 
     cfg = config.from_args(
@@ -252,7 +226,6 @@ def main():
         return qf
 
     qf, qf_t = make_qf(), make_qf()
-    qf_opt = cfg.opt.optimizer(qf.parameters())
 
     if cfg.data.parallel:
         batch_queue = mp.Queue(maxsize=cfg.data.prefetch_factor)
@@ -261,8 +234,8 @@ def main():
         proc = mp.Process(target=DataWorker.target, args=(slave, *args))
         data_: DataWorker = RPC(proc, master)
         # For some reason, the network's parameters appear as though they were
-        # zero-initialized in the child process. This can be fixed by reinitializing
-        # the network.
+        # zero-initialized in the child process. This can be "fixed" by
+        # reinitializing the network.
         polyak.sync(make_qf(), qf)
         # Send the sync message
         master.send(())
@@ -270,6 +243,8 @@ def main():
         batch_queue = queue.Queue(maxsize=cfg.data.prefetch_factor)
         args = (cfg, qf, batch_queue)
         data_ = DataWorker(*args)
+
+    qf_opt = cfg.opt.optimizer(qf.parameters())
 
     polyak.sync(qf, qf_t)
     # qf_polyak = polyak.Polyak(qf, qf_t, **cfg.nets.polyak)
@@ -358,22 +333,31 @@ def main():
 
                 with torch.no_grad():
                     with autocast():
-                        if cfg.double_dqn:
-                            noisy.reset_noise_(qf)
-                            next_q = qf(batch.obs[-1])
-                        else:
-                            noisy.reset_noise_(qf_t)
-                            next_q = qf_t(batch.obs[-1])
+                        noisy.reset_noise_(qf_t)
+                        next_q_eval = qf_t(batch.obs[-1])
 
-                        if isinstance(next_q, ValueDist):
-                            act = next_q.mean.argmax(-1)
-                            target = next_q.gather(-1, act[..., None]).squeeze(-1)
-                        else:
-                            target = next_q.max(-1).values
+                        if isinstance(next_q_eval, ValueDist):
+                            if cfg.double_dqn:
+                                noisy.reset_noise_(qf)
+                                next_q_act: ValueDist = qf(batch.obs[-1])
+                            else:
+                                next_q_act = next_q_eval
+                            act = next_q_act.mean.argmax(-1)
+                            target = next_q_eval.gather(-1, act[..., None])
+                            target = target.squeeze(-1)
+                        elif isinstance(next_q_eval, Tensor):
+                            if cfg.double_dqn:
+                                noisy.reset_noise_(qf)
+                                next_q_act: Tensor = qf(batch.obs[-1])
+                                act = next_q_act.argmax(-1)
+                                target = next_q_eval.gather(-1, act[..., None])
+                                target = target.squeeze(-1)
+                            else:
+                                target = next_q_eval.max(-1).values
 
-                        target = (1.0 - batch.term.float()) * target
+                        gamma_t = (1.0 - batch.term.float()) * final_gamma
                         returns = (batch.reward * gammas.unsqueeze(-1)).sum(0)
-                        target = returns + final_gamma * target
+                        target = returns + gamma_t * target
 
                 with autocast():
                     noisy.reset_noise_(qf)
@@ -381,7 +365,7 @@ def main():
                     pred = qv.gather(-1, batch.act[0][..., None]).squeeze(-1)
 
                     if isinstance(target, ValueDist):
-                        prio = q_losses = ValueDist.proj_kl_div(pred, target)
+                        prio = q_losses = ValueDist.proj_kl_div(target, pred)
                     else:
                         prio = (pred - target).abs()
                         q_losses = (pred - target).square()
