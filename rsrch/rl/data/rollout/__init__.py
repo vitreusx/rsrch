@@ -79,8 +79,6 @@ def _(
         return
 
     ep_idx, step_idx = 0, 0
-    all_true = np.ones(env.num_envs, dtype=bool)
-    act_space, obs_space = env.single_action_space, env.single_observation_space
 
     obs, info = None, None
     if init:

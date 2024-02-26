@@ -1,12 +1,13 @@
 import argparse
 import queue
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
+from copy import copy
 from datetime import datetime
 from functools import partial
 from multiprocessing.connection import Connection
 from pathlib import Path
 from threading import Lock, Thread
+from typing import Type, TypeVar
 
 import numpy as np
 import torch
@@ -21,7 +22,7 @@ from rsrch.nn import noisy
 from rsrch.rl import data, gym
 from rsrch.rl.data import rollout
 from rsrch.rl.utils import polyak
-from rsrch.utils import cron
+from rsrch.utils import cron, repro
 
 from .. import env
 from ..utils import infer_ctx
@@ -51,6 +52,58 @@ class QAgent(gym.vector.Agent, nn.Module):
             return self.env_f.move_act(act, to="env")
 
 
+class _Remote:
+    def __init__(self, cls, *args, **kwargs):
+        master, slave = mp.Pipe(duplex=True)
+        self._conn = master
+        self._proc = mp.Process(
+            target=self.proc_target,
+            args=(cls, slave, *args),
+            kwargs=kwargs,
+        )
+        self._store, self._req_idx = {}, 0
+        self._func_cache = {}
+
+    @staticmethod
+    def proc_target(cls, conn: Connection, *args, **kwargs):
+        conn.recv()
+        worker = cls(*args, **kwargs)
+        while True:
+            idx, cmd, args, kwargs = conn.recv()
+            f = getattr(worker, cmd)
+            if not callable(f):
+                raise ValueError(f"Cannot access '{cmd}' of remote worker.")
+            ret = f(*args, **kwargs)
+            conn.send((idx, ret))
+
+    def __getattr__(self, __name: str):
+        if __name not in self._func_cache:
+
+            def _func(*args, **kwargs):
+                req_idx = self._req_idx
+                self._conn.send((req_idx, __name, args, kwargs))
+                self._req_idx += 1
+                while req_idx not in self._store:
+                    resp_idx, ret = self._conn.recv()
+                    self._store[resp_idx] = ret
+                ret = self._store[req_idx]
+                del self._store[req_idx]
+                return ret
+
+            self._func_cache = _func
+
+        return self._func_cache[__name]
+
+
+T = TypeVar("T")
+
+
+def remote(cls: Type[T]) -> Type[T]:
+    cls = copy(cls)
+    cls.remote = partial(_Remote, cls)
+    return cls
+
+
 class DataWorker:
     @staticmethod
     def target(rpc_conn: Connection, *args, **kwargs):
@@ -67,7 +120,7 @@ class DataWorker:
         self.batch_queue = batch_queue
 
         self.device = torch.device(self.cfg.device)
-        self.env_f = env.make_factory(self.cfg.env, self.device)
+        self.env_f = env.make_factory(self.cfg.env, self.device, seed=cfg.seed)
 
         if self.cfg.prioritized.enabled:
             self.sampler = data.PrioritizedSampler(max_size=self.cfg.data.buf_cap)
@@ -185,6 +238,9 @@ def main():
         presets_file=Path(__file__).parent / "presets.yml",
     )
 
+    rng = repro.RandomState()
+    rng.init(cfg.seed, benchmark=True)
+
     opt_step, env_step, agent_step = 0, 0, 0
 
     def make_sched(cfg):
@@ -213,7 +269,7 @@ def main():
     prof = profiler(exp.dir / "traces", device)
     prof.register("env_step", "opt_step")
 
-    env_f = env.make_factory(cfg.env, device)
+    env_f = env.make_factory(cfg.env, device, seed=cfg.seed)
     assert isinstance(env_f.obs_space, spaces.torch.Image)
     assert isinstance(env_f.act_space, spaces.torch.Discrete)
 
@@ -253,7 +309,9 @@ def main():
     env_step, opt_step = 0, 0
     exp.register_step("env_step", lambda: env_step, default=True)
 
-    def after_env_step(ep_ret):
+    def take_env_step():
+        ep_ret = data_.take_env_step()
+
         if ep_ret is not None:
             exp.add_scalar("train/ep_ret", ep_ret)
 
@@ -293,8 +351,7 @@ def main():
 
     pbar = tqdm(desc="Warmup", total=cfg.warmup, initial=env_step)
     while env_step < cfg.warmup:
-        ep_ret = data_.take_env_step()
-        after_env_step(ep_ret)
+        take_env_step()
 
     data_.fetch_start()
 
@@ -313,9 +370,7 @@ def main():
             exp.add_scalar("val/mean_ret", np.mean(rets))
 
         with prof.region("env_step"):
-            ep_ret = data_.take_env_step()
-            after_env_step(ep_ret)
-            # fut = data_.take_env_step.future()
+            take_env_step()
 
         while should_update:
             polyak.update(qf, qf_t, tau=cfg.nets.polyak["tau"])
@@ -397,6 +452,3 @@ def main():
 
                 if cfg.prioritized.enabled:
                     data_.update_prio(idxes, prio)
-
-        # ep_ret = fut.result()
-        # after_env_step(ep_ret)

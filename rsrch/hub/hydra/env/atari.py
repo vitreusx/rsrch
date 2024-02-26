@@ -19,8 +19,8 @@ from ._envpool import VecEnvPool
 class Config:
     env_id: str
     """Environment name"""
-    screen_size: int | tuple[int, int] = 84
-    """Screen size. Either a single number or a pair (width, height)."""
+    screen_size: int = 84
+    """Screen size."""
     frame_skip: int = 4
     """Environment frame skip - the emulator performs action k times and returns
     the last one, so one only sees every kth frame."""
@@ -36,6 +36,8 @@ class Config:
     """Time limit."""
     stack: int | None = 4
     """Whether to return stacked observations."""
+    use_envpool: bool = False
+    """Whether to use Envpool."""
 
 
 class Unstack(gym.vector.wrappers.ObservationWrapper):
@@ -56,14 +58,42 @@ class Unstack(gym.vector.wrappers.ObservationWrapper):
         return obs.reshape(new_shape)
 
 
+class ToChannelLast(gym.wrappers.ObservationWrapper):
+    def __init__(self, env: gym.Env):
+        super().__init__(env)
+        obs_space = env.observation_space
+        assert isinstance(obs_space, gym.spaces.Box)
+        h, w, c = obs_space.shape
+        if np.issubdtype(obs_space.dtype, np.integer):
+            self.observation_space = gym.spaces.Box(
+                0,
+                255,
+                (c, h, w),
+                dtype=obs_space.dtype,
+            )
+        else:
+            self.observation_space = gym.spaces.Box(
+                0.0,
+                1.0,
+                (c, h, w),
+                dtype=obs_space.dtype,
+            )
+
+    def observation(self, obs: np.ndarray):
+        return np.transpose(obs, (2, 0, 1))
+
+
 class Factory(base.Factory):
     def __init__(
         self,
         cfg: Config,
         device: torch.device,
+        seed: int,
     ):
         self.cfg = cfg
         self.device = device
+        self.seed = seed
+
         env = self.env()
         if cfg.obs_type == "ram":
             env_obs_space = from_gym(env.observation_space)
@@ -91,7 +121,7 @@ class Factory(base.Factory):
         )
 
     def env(self, mode="val", record=False):
-        if not record:
+        if not record and self.cfg.use_envpool:
             env = self._envpool(num_envs=1, mode=mode)
             if env is not None:
                 return gym.envs.FromVectorEnv(env)
@@ -116,6 +146,8 @@ class Factory(base.Factory):
                 grayscale_newaxis=True,
                 scale_obs=False,
             )
+
+            env = ToChannelLast(env)
         else:
             env = gym.make(
                 self.cfg.env_id,
@@ -138,18 +170,23 @@ class Factory(base.Factory):
         if self.cfg.stack is not None:
             env = gym.wrappers.FrameStack(env, self.cfg.stack)
 
+        env.reset(seed=self.seed)
         return env
 
     def vector_env(self, num_envs: int, mode="val"):
-        env = self._envpool(num_envs, mode=mode)
-        if env is not None:
-            return env
+        if self.cfg.use_envpool:
+            env = self._envpool(num_envs, mode=mode)
+            if env is not None:
+                return env
 
         env_fn = lambda: self.env(mode=mode)
         if num_envs > 1:
-            return gym.vector.AsyncVectorEnv([env_fn] * num_envs)
+            env = gym.vector.AsyncVectorEnv([env_fn] * num_envs)
         else:
-            return gym.vector.SyncVectorEnv([env_fn])
+            env = gym.vector.SyncVectorEnv([env_fn])
+
+        env.reset(seed=[self.seed + i for i in range(env.num_envs)])
+        return env
 
     def _envpool(self, num_envs: int, mode):
         if self.cfg.obs_type in ["ram"]:
@@ -197,6 +234,7 @@ class Factory(base.Factory):
             use_inter_area_resize=True,
             use_fire_reset=self.cfg.fire_reset,
             full_action_space=False,
+            seed=self.seed,
         )
 
         if self.cfg.stack is not None:

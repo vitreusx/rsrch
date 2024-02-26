@@ -31,10 +31,10 @@ class VecEnvPool(gym.VectorEnv):
     def step_async(self, actions):
         if isinstance(self.single_action_space, gym.spaces.Discrete):
             actions = actions.astype(np.int32)
-        self._actions = actions
+        self._envp.send(actions)
 
     def step_wait(self, **kwargs):
-        next_obs, reward, term, trunc, info = self._envp.step(self._actions)
+        next_obs, reward, term, trunc, info = self._envp.recv()
         info = {}
         done: np.ndarray = term | trunc
         if done.any():

@@ -64,6 +64,7 @@ class Opt:
 @dataclass
 class Config:
     device: str
+    seed: int
     env: env.Config
     distq: distq.Config
     nets: Nets
