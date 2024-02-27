@@ -30,6 +30,9 @@ class Space:
     def empty(self, shape: tuple[int, ...] = ()):
         return torch.empty([*shape, *self.shape], dtype=self.dtype, device=self.device)
 
+    def seed(self, new_seed: int):
+        self._seed, self._gen = new_seed, None
+
     def __repr__(self):
         return f"Space({self.shape!r}, {self.dtype}, {self.device})"
 

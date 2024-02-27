@@ -24,7 +24,6 @@ class Factory(base.Factory):
     def __init__(self, cfg: Config, device: torch.device, seed: int):
         self.cfg = cfg
         self.device = device
-        self.seed = seed
 
         dummy = self.env()
         env_obs_space = from_gym(dummy.observation_space)
@@ -39,6 +38,7 @@ class Factory(base.Factory):
             env_act_space,
             act_space,
             frame_skip=1,
+            seed=seed,
         )
 
     def env(self, mode="val", record=False):
@@ -52,7 +52,7 @@ class Factory(base.Factory):
         if isinstance(env.action_space, gym.spaces.Box):
             env = gym.wrappers.ClipAction(env)
 
-        env.reset(seed=self.seed)
+        self.seed_env_(env)
         return env
 
     def vector_env(self, num_envs: int, mode="val"):
@@ -78,7 +78,7 @@ class Factory(base.Factory):
 
         env = gym.vector.wrappers.VectorListInfo(env)
 
-        env.reset(seed=[self.seed + i for i in range(env.num_envs)])
+        self.seed_vector_env_(env)
         return env
 
     def move_obs(self, obs: np.ndarray) -> Tensor:

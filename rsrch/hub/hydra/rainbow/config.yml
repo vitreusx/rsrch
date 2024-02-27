@@ -1,5 +1,7 @@
 device: cuda
-seed: 42
+random:
+  seed: 42
+  benchmark: false
 env:
   type: atari
   atari:

@@ -10,6 +10,12 @@ from . import distq
 
 
 @dataclass
+class Random:
+    seed: int
+    benchmark: bool
+
+
+@dataclass
 class Nets:
     encoder: str
     hidden_dim: int
@@ -64,7 +70,7 @@ class Opt:
 @dataclass
 class Config:
     device: str
-    seed: int
+    random: Random
     env: env.Config
     distq: distq.Config
     nets: Nets

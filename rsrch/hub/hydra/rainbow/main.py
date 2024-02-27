@@ -1,5 +1,6 @@
 import argparse
 import queue
+import time
 from collections import defaultdict
 from copy import copy
 from datetime import datetime
@@ -120,7 +121,7 @@ class DataWorker:
         self.batch_queue = batch_queue
 
         self.device = torch.device(self.cfg.device)
-        self.env_f = env.make_factory(self.cfg.env, self.device, seed=cfg.seed)
+        self.env_f = env.make_factory(self.cfg.env, self.device, seed=cfg.random.seed)
 
         if self.cfg.prioritized.enabled:
             self.sampler = data.PrioritizedSampler(max_size=self.cfg.data.buf_cap)
@@ -239,9 +240,10 @@ def main():
     )
 
     rng = repro.RandomState()
-    rng.init(cfg.seed, benchmark=True)
+    rng.init(cfg.random.seed, benchmark=cfg.random.benchmark)
 
     opt_step, env_step, agent_step = 0, 0, 0
+    start_time = time.perf_counter()
 
     def make_sched(cfg):
         every, unit = cfg["every"]
@@ -249,6 +251,7 @@ def main():
             "opt_step": lambda: opt_step,
             "env_step": lambda: env_step,
             "agent_step": lambda: agent_step,
+            "time": lambda: time.perf_counter() - start_time,
         }[unit]
         return cron.Every2(
             step_fn=step_fn,
@@ -269,7 +272,7 @@ def main():
     prof = profiler(exp.dir / "traces", device)
     prof.register("env_step", "opt_step")
 
-    env_f = env.make_factory(cfg.env, device, seed=cfg.seed)
+    env_f = env.make_factory(cfg.env, device, seed=cfg.random.seed)
     assert isinstance(env_f.obs_space, spaces.torch.Image)
     assert isinstance(env_f.act_space, spaces.torch.Discrete)
 

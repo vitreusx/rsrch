@@ -24,6 +24,9 @@ class Space(NDArrayOperatorsMixin):
             self._gen = np.random.default_rng(self._seed)
         return self._gen
 
+    def seed(self, new_seed: int):
+        self._seed, self._gen = new_seed, None
+
     def __repr__(self):
         return f"Space({self.shape!r}, {self.dtype})"
 

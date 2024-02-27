@@ -7,6 +7,7 @@ import torch
 from torch import Tensor
 
 from rsrch import spaces
+from rsrch.rl import gym
 from rsrch.rl.data.buffer import SliceBuffer, StepBuffer
 from rsrch.rl.data.types import SliceBatch, StepBatch
 
@@ -19,6 +20,7 @@ class Factory(ABC):
         env_act_space: spaces.np.Space,
         act_space: spaces.torch.Space,
         frame_skip: int,
+        seed: int,
     ):
         self.env_obs_space = env_obs_space
         self.obs_space = obs_space
@@ -26,15 +28,36 @@ class Factory(ABC):
         self.act_space = act_space
         self.frame_skip = frame_skip
 
+        self.seed_seq = np.random.SeedSequence(seed)
+        seeds = self.seed_seq.spawn(1)[0].generate_state(4).tolist()
+        self.env_obs_space.seed(seeds[0])
+        self.obs_space.seed(seeds[1])
+        self.env_act_space.seed(seeds[2])
+        self.act_space.seed(seeds[3])
+
     @abstractmethod
     def env(self, mode: str, record: bool = False):
         """Create a single env."""
         ...
 
+    def seed_env_(self, env: gym.Env):
+        seeds = self.seed_seq.spawn(1)[0].generate_state(3).tolist()
+        env.reset(seed=seeds[0])
+        env.observation_space.seed(seeds[1])
+        env.action_space.seed(seeds[2])
+
     @abstractmethod
     def vector_env(self, num_envs: int, mode: str, record: bool = False):
         """Create vectorized env."""
         ...
+
+    def seed_vector_env_(self, envs: gym.VectorEnv):
+        seeds = self.seed_seq.spawn(1)[0].generate_state(4 + envs.num_envs).tolist()
+        envs.observation_space.seed(seeds[0])
+        envs.single_observation_space.seed(seeds[1])
+        envs.action_space.seed(seeds[2])
+        envs.single_action_space.seed(seeds[3])
+        envs.reset(seed=seeds[4:])
 
     @abstractmethod
     def move_obs(self, obs: np.ndarray) -> Tensor:

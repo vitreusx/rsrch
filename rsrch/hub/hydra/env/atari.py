@@ -118,6 +118,7 @@ class Factory(base.Factory):
             env_act_space,
             act_space,
             frame_skip=cfg.frame_skip,
+            seed=seed,
         )
 
     def env(self, mode="val", record=False):
@@ -170,22 +171,22 @@ class Factory(base.Factory):
         if self.cfg.stack is not None:
             env = gym.wrappers.FrameStack(env, self.cfg.stack)
 
-        env.reset(seed=self.seed)
+        self.seed_env_(env)
         return env
 
     def vector_env(self, num_envs: int, mode="val"):
+        env = None
         if self.cfg.use_envpool:
             env = self._envpool(num_envs, mode=mode)
-            if env is not None:
-                return env
 
-        env_fn = lambda: self.env(mode=mode)
-        if num_envs > 1:
-            env = gym.vector.AsyncVectorEnv([env_fn] * num_envs)
-        else:
-            env = gym.vector.SyncVectorEnv([env_fn])
+        if env is None:
+            env_fn = lambda: self.env(mode=mode)
+            if num_envs > 1:
+                env = gym.vector.AsyncVectorEnv([env_fn] * num_envs)
+            else:
+                env = gym.vector.SyncVectorEnv([env_fn])
 
-        env.reset(seed=[self.seed + i for i in range(env.num_envs)])
+        self.seed_vector_env_(env)
         return env
 
     def _envpool(self, num_envs: int, mode):
