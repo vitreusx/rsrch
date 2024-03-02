@@ -1,5 +1,19 @@
 faster:
-  num_envs: 8
+  random.deterministic: false
+dominik:
+  num_envs: 64
+  opt:
+    batch_size: 256
+    sched:
+      every: ['${opt.batch_size/8}', agent_step] # replay ratio = 8
+      iters: 1
+  nets:
+    encoder: impala[large,2]
+    spectral_norm: none # last
+    polyak: {every: [32e3, env_step], tau: 0.0}
+  distq.enabled: false
+  total_env_steps: 40e6
+  data.parallel: true
 debug:
   warmup: 2e3
   val.sched: {never: true}

@@ -1,7 +1,7 @@
 device: cuda
 random:
   seed: 42
-  benchmark: false
+  deterministic: true
 env:
   type: atari
   atari:
@@ -25,7 +25,7 @@ nets:
   hidden_dim: 256
   dueling: true
   polyak: {every: [32e3, env_step], tau: 0.0}
-  spectral_norm: false
+  spectral_norm: none
 data:
   buf_cap: 1e6
   slice_len: 3

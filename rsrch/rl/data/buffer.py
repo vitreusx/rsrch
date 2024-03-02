@@ -126,7 +126,7 @@ class Allocator:
         self._voids = merged
 
 
-class SeqBuffer(Mapping[int, dict]):
+class SeqBuffer_(Mapping[int, dict]):
     def __init__(
         self,
         max_size: int,
@@ -215,6 +215,75 @@ class SeqBuffer(Mapping[int, dict]):
         else:
             _, beg, end = self._seq_to_alloc[seq_id]
             return {k: a[beg:end] for k, a in self._arrays.items()}
+
+
+class SeqBuffer(Mapping[int, dict]):
+    def __init__(
+        self,
+        max_size: int,
+        spaces: dict[str, Any],
+        sampler: CyclicSampler | None = None,
+        array_ctor=default_array_ctor,
+    ):
+        self._cap = max_size
+        self._min_id, self._max_id = 0, 0
+        self.sampler = sampler or UniformSampler()
+        self._array_ctor = array_ctor
+        self._spaces = spaces
+        self._store = {}
+
+    def push(self, seq_id: int | None, data: dict, done=False):
+        if seq_id is None:
+            seq_id = self._max_id
+            self._max_id += 1
+            self._store[seq_id] = defaultdict(lambda: [])
+
+        seq = self._store[seq_id]
+        added = {k: False for k in self._spaces}
+        for k, v in data.items():
+            seq[k].append(v)
+            added[k] = True
+        for k, v in added.items():
+            if not v:
+                seq[k].append(None)
+
+        if done:
+            seq_len = len(next(iter(seq.values())))
+            persist_ = {
+                k: self._array_ctor(space, (seq_len,))
+                for k, space in self._spaces.items()
+            }
+            for k, v_seq in seq.items():
+                for idx in range(seq_len):
+                    if v_seq[idx] is not None:
+                        persist_[k][idx] = v_seq[idx]
+            self._store[seq_id] = persist_
+            seq_id = None
+
+        return seq_id
+
+    def popleft(self):
+        seq_id = self._min_id
+        self._min_id += 1
+        del self._store[seq_id]
+
+    @property
+    def ids(self):
+        return range(self._min_id, self._max_id)
+
+    def __len__(self):
+        return len(self.ids)
+
+    def __iter__(self):
+        return iter(self.ids)
+
+    def reset(self):
+        self._min_id, self._max_id = 0, 0
+        self.sampler.reset()
+        self._store = {}
+
+    def __getitem__(self, seq_id: int):
+        return self._store[seq_id]
 
 
 class EpisodeBuffer(Mapping[int, Seq]):

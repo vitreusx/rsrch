@@ -12,7 +12,7 @@ from . import distq
 @dataclass
 class Random:
     seed: int
-    benchmark: bool
+    deterministic: bool
 
 
 @dataclass
@@ -21,7 +21,7 @@ class Nets:
     hidden_dim: int
     dueling: bool
     polyak: dict
-    spectral_norm: bool
+    spectral_norm: Literal["none", "last", "all"]
 
 
 @dataclass

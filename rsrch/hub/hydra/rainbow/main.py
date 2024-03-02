@@ -1,10 +1,12 @@
 import argparse
+import logging
 import queue
 import time
 from collections import defaultdict
 from copy import copy
 from datetime import datetime
 from functools import partial
+from itertools import islice
 from multiprocessing.connection import Connection
 from pathlib import Path
 from threading import Lock, Thread
@@ -14,14 +16,15 @@ import numpy as np
 import torch
 import torch.multiprocessing as mp
 from torch import Tensor, nn
-from tqdm.auto import tqdm
 
 from rsrch import spaces
 from rsrch.exp import tensorboard
+from rsrch.exp.logging import Logger
+from rsrch.exp.pbar import ProgressBar
 from rsrch.exp.profiler import profiler
 from rsrch.nn import noisy
 from rsrch.rl import data, gym
-from rsrch.rl.data import rollout
+from rsrch.rl.data import _rollout as rollout
 from rsrch.rl.utils import polyak
 from rsrch.utils import cron, repro
 
@@ -29,6 +32,8 @@ from .. import env
 from ..utils import infer_ctx
 from . import config, nets
 from .distq import ValueDist
+
+logger = Logger(__name__)
 
 
 class QAgent(gym.vector.Agent, nn.Module):
@@ -53,7 +58,7 @@ class QAgent(gym.vector.Agent, nn.Module):
             return self.env_f.move_act(act, to="env")
 
 
-class _Remote:
+class Remote:
     def __init__(self, cls, *args, **kwargs):
         master, slave = mp.Pipe(duplex=True)
         self._conn = master
@@ -62,20 +67,37 @@ class _Remote:
             args=(cls, slave, *args),
             kwargs=kwargs,
         )
+        self._proc.start()
         self._store, self._req_idx = {}, 0
         self._func_cache = {}
 
     @staticmethod
     def proc_target(cls, conn: Connection, *args, **kwargs):
-        conn.recv()
         worker = cls(*args, **kwargs)
         while True:
             idx, cmd, args, kwargs = conn.recv()
-            f = getattr(worker, cmd)
-            if not callable(f):
-                raise ValueError(f"Cannot access '{cmd}' of remote worker.")
-            ret = f(*args, **kwargs)
+            if cmd != "__sync__":
+                f = getattr(worker, cmd)
+                if not callable(f):
+                    raise ValueError(f"Cannot access '{cmd}' of remote worker.")
+                ret = f(*args, **kwargs)
+            else:
+                ret = None
             conn.send((idx, ret))
+
+    def sync(self):
+        req_idx = self._req_idx
+        self._conn.send((req_idx, "__sync__", (), {}))
+        self._req_idx += 1
+        self.wait_for(req_idx)
+
+    def wait_for(self, req_idx: int):
+        while req_idx not in self._store:
+            resp_idx, ret = self._conn.recv()
+            self._store[resp_idx] = ret
+        ret = self._store[req_idx]
+        del self._store[req_idx]
+        return ret
 
     def __getattr__(self, __name: str):
         if __name not in self._func_cache:
@@ -84,37 +106,23 @@ class _Remote:
                 req_idx = self._req_idx
                 self._conn.send((req_idx, __name, args, kwargs))
                 self._req_idx += 1
-                while req_idx not in self._store:
-                    resp_idx, ret = self._conn.recv()
-                    self._store[resp_idx] = ret
-                ret = self._store[req_idx]
-                del self._store[req_idx]
-                return ret
+                return self.wait_for(req_idx)
 
-            self._func_cache = _func
+            self._func_cache[__name] = _func
 
         return self._func_cache[__name]
 
 
-T = TypeVar("T")
+class RemoteMixin:
+    """Mixin for making class instances able to be deployed in a child process. Master process is then able to invoke methods of the class instance as though it were available locally. Similar to Ray's actor concept."""
+
+    @classmethod
+    def remote(cls, *args, **kwargs):
+        remote: cls = Remote(cls, *args, **kwargs)
+        return remote
 
 
-def remote(cls: Type[T]) -> Type[T]:
-    cls = copy(cls)
-    cls.remote = partial(_Remote, cls)
-    return cls
-
-
-class DataWorker:
-    @staticmethod
-    def target(rpc_conn: Connection, *args, **kwargs):
-        rpc_conn.recv()  # Sync message
-        worker = DataWorker(*args, **kwargs)
-        while True:
-            idx, cmd, args, kwargs = rpc_conn.recv()
-            retval = getattr(worker, cmd)(*args, **kwargs)
-            rpc_conn.send((idx, retval))
-
+class DataWorker(RemoteMixin):
     def __init__(self, cfg: config.Config, qf: nets.Q, batch_queue):
         self.cfg = cfg
         self.qf = qf
@@ -146,7 +154,7 @@ class DataWorker:
             eps=self._agent_eps(),
         )
 
-        self.env_iter = iter(rollout.steps(self.envs, self.agent))
+        self.env_iter = rollout.steps(self.envs, self.agent)
         self.ep_ids = defaultdict(lambda: None)
         self.ep_rets = defaultdict(lambda: 0.0)
 
@@ -175,62 +183,47 @@ class DataWorker:
                 batch = self.env_f.fetch_slice_batch(self.env_buf, idxes)
                 return idxes, batch
 
-    def take_env_step(self):
-        env_idx, step = next(self.env_iter)
-        with self.mtx:
-            self.ep_ids[env_idx], slice_id = self.env_buf.push(
-                self.ep_ids[env_idx], step
-            )
-        self.ep_rets[env_idx] += step.reward
+    def step_async(self):
+        self.env_iter.step_async()
 
-        if isinstance(self.sampler, data.PrioritizedSampler):
-            if slice_id is not None:
-                with self.mtx:
-                    max_prio = self.sampler._max.total
-                    if max_prio == 0.0:
-                        max_prio = 1.0
-                    self.sampler[slice_id] = max_prio
+    def step_wait(self):
+        ep_rets = {}
+        for env_idx, step in self.env_iter.step_wait():
+            with self.mtx:
+                self.ep_ids[env_idx], slice_id = self.env_buf.push(
+                    self.ep_ids[env_idx], step
+                )
+            self.ep_rets[env_idx] += step.reward
 
-        ep_rets = None
-        if step.done:
-            del self.ep_ids[env_idx]
-            ep_rets = self.ep_rets[env_idx]
-            del self.ep_rets[env_idx]
+            if isinstance(self.sampler, data.PrioritizedSampler):
+                if slice_id is not None:
+                    with self.mtx:
+                        max_prio = self.sampler._max.total
+                        if max_prio == 0.0:
+                            max_prio = 1.0
+                        self.sampler[slice_id] = max_prio
 
-        self.env_step += self.env_f.frame_skip
-        self.agent.eps = self._agent_eps()
+            if step.done:
+                del self.ep_ids[env_idx]
+                ep_rets[env_idx] = self.ep_rets[env_idx]
+                del self.ep_rets[env_idx]
+            else:
+                ep_rets[env_idx] = None
+
+            self.env_step += self.env_f.frame_skip
+            self.agent.eps = self._agent_eps()
         return ep_rets
 
     def update_prio(self, idxes, prio):
         with self.mtx:
             prio_exp = self.cfg.prioritized.prio_exp(self.env_step)
-            prio = prio.float().detach().cpu().numpy() ** prio_exp
+            prio = prio.float().cpu().numpy() ** prio_exp
             self.sampler.update(idxes, prio)
 
 
-class RPC:
-    def __init__(self, worker: mp.Process | Thread, conn: Connection):
-        self.worker = worker
-        self.conn = conn
-        worker.start()
-        self._cache = {}
-
-    def __getattr__(self, name):
-        if name not in self._cache:
-
-            def _func(*args, **kwargs):
-                self.conn.send((None, name, args, kwargs))
-                _, retval = self.conn.recv()
-                return retval
-
-            self._cache[name] = _func
-
-        return self._cache[name]
-
-
 def main():
-    presets = ["faster"]
-    # presets = ["faster", "der"]
+    # presets = ["faster"]
+    presets = ["faster", "dominik"]
 
     cfg = config.from_args(
         config.Config,
@@ -240,12 +233,12 @@ def main():
     )
 
     rng = repro.RandomState()
-    rng.init(cfg.random.seed, benchmark=cfg.random.benchmark)
+    rng.init(cfg.random.seed, deterministic=cfg.random.deterministic)
 
     opt_step, env_step, agent_step = 0, 0, 0
     start_time = time.perf_counter()
 
-    def make_sched(cfg):
+    def make_sched(cfg: dict):
         every, unit = cfg["every"]
         step_fn = {
             "opt_step": lambda: opt_step,
@@ -253,6 +246,7 @@ def main():
             "agent_step": lambda: agent_step,
             "time": lambda: time.perf_counter() - start_time,
         }[unit]
+
         return cron.Every2(
             step_fn=step_fn,
             every=every,
@@ -288,16 +282,12 @@ def main():
 
     if cfg.data.parallel:
         batch_queue = mp.Queue(maxsize=cfg.data.prefetch_factor)
-        master, slave = mp.Pipe(duplex=True)
-        args = (cfg, qf, batch_queue)
-        proc = mp.Process(target=DataWorker.target, args=(slave, *args))
-        data_: DataWorker = RPC(proc, master)
+        data_ = DataWorker.remote(cfg, qf, batch_queue)
         # For some reason, the network's parameters appear as though they were
         # zero-initialized in the child process. This can be "fixed" by
         # reinitializing the network.
         polyak.sync(make_qf(), qf)
-        # Send the sync message
-        master.send(())
+        data_.sync()
     else:
         batch_queue = queue.Queue(maxsize=cfg.data.prefetch_factor)
         args = (cfg, qf, batch_queue)
@@ -307,31 +297,31 @@ def main():
 
     polyak.sync(qf, qf_t)
     # qf_polyak = polyak.Polyak(qf, qf_t, **cfg.nets.polyak)
-    should_update = make_sched(cfg.nets.polyak)
 
     env_step, opt_step = 0, 0
     exp.register_step("env_step", lambda: env_step, default=True)
 
-    def take_env_step():
-        ep_ret = data_.take_env_step()
-
-        if ep_ret is not None:
-            exp.add_scalar("train/ep_ret", ep_ret)
-
+    def step_wait():
         nonlocal env_step, agent_step
-        env_step += env_f.frame_skip
-        agent_step += 1
-        pbar.update(env_f.frame_skip)
+        ep_rets = data_.step_wait()
+        for env_idx, ep_ret in ep_rets.items():
+            if ep_ret is not None:
+                exp.add_scalar("train/ep_ret", ep_ret)
+
+            env_step += env_f.frame_skip
+            agent_step += 1
+            pbar.update(env_f.frame_skip)
 
     val_envs = env_f.vector_env(cfg.num_envs, mode="val")
     val_agent = QAgent(env_f, qf, val=True)
-    make_val_iter = lambda: iter(
-        rollout.episodes(
-            val_envs,
-            val_agent,
-            max_episodes=cfg.val.episodes,
-        )
-    )
+
+    def val_ret_iter():
+        val_ep_rets = defaultdict(lambda: 0.0)
+        for env_idx, step in rollout.steps(val_envs, val_agent):
+            val_ep_rets[env_idx] += step.reward
+            if step.done:
+                yield val_ep_rets[env_idx]
+                del val_ep_rets[env_idx]
 
     amp_enabled = cfg.opt.dtype != "float32"
     scaler = torch.cuda.amp.GradScaler(enabled=amp_enabled)
@@ -341,39 +331,38 @@ def main():
         enabled=amp_enabled,
     )
 
-    global tqdm
-    tqdm = partial(tqdm, dynamic_ncols=True)
-
-    should_val = make_sched(cfg.val.sched)
-    should_opt = make_sched(cfg.opt.sched)
-    should_log = make_sched(cfg.log)
-
     gammas = torch.tensor([cfg.gamma**i for i in range(cfg.data.slice_len)])
     gammas = gammas.to(device)
     final_gamma = cfg.gamma**cfg.data.slice_len
 
-    pbar = tqdm(desc="Warmup", total=cfg.warmup, initial=env_step)
+    pbar = ProgressBar(desc="Warmup", total=cfg.warmup, initial=env_step)
     while env_step < cfg.warmup:
-        take_env_step()
+        data_.step_async()
+        step_wait()
 
     data_.fetch_start()
 
-    pbar = tqdm(desc="Train", total=cfg.total_env_steps, initial=env_step)
+    should_val = make_sched(cfg.val.sched)
+    should_opt = make_sched(cfg.opt.sched)
+    should_log = make_sched(cfg.log)
+    should_update = make_sched(cfg.nets.polyak)
+
+    pbar = ProgressBar(desc="Train", total=cfg.total_env_steps, initial=env_step)
     while env_step < cfg.total_env_steps:
         if should_val:
-            val_iter = tqdm(
-                make_val_iter(),
+            val_iter = ProgressBar(
+                islice(val_ret_iter(), 0, cfg.val.episodes),
                 desc="Val",
                 total=cfg.val.episodes,
                 leave=False,
             )
 
             noisy.zero_noise_(qf)
-            rets = [sum(ep.reward) for _, ep in val_iter]
-            exp.add_scalar("val/mean_ret", np.mean(rets))
+            exp.add_scalar("val/mean_ret", np.mean([*val_iter]))
 
         with prof.region("env_step"):
-            take_env_step()
+            data_.step_async()
+            step_wait()
 
         while should_update:
             polyak.update(qf, qf_t, tau=cfg.nets.polyak["tau"])
@@ -454,4 +443,4 @@ def main():
                         exp.add_scalar("train/mean_q_pred", pred.mean())
 
                 if cfg.prioritized.enabled:
-                    data_.update_prio(idxes, prio)
+                    data_.update_prio(idxes, prio.detach())

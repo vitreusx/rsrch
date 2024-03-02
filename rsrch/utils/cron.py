@@ -52,6 +52,28 @@ class Every2:
             return False
 
 
+class Every3:
+    """A flag for running actions based on a loop counter, or other
+    monotonically increasing variable."""
+
+    def __init__(self, step_fn, iter_fn, every=1, iters=1, never=False):
+        """Create the flag variable.
+        :param step_fn: Step function, i.e. target loop counter.
+        :param iter_fn: Iter count function, i.e. execution loop counter.
+        :param every: How often (in terms of steps) to signal True.
+        :param iters: How many times, once the period of `every` has passed, to signal True.
+        """
+
+        self.step_fn, self.iter_fn = step_fn, iter_fn
+        self._step0, self._iter0 = self.step_fn(), self.iter_fn()
+        self.every, self.iters = every, iters
+
+    def __bool__(self):
+        cur_step = self.step_fn() - self._step0
+        cur_iter = self.iter_fn() - self._iter0
+        return cur_step * self.iters > cur_iter * self.every
+
+
 class Once:
     def __init__(self, cond):
         self.cond = cond

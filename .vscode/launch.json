@@ -2,7 +2,7 @@
   "configurations": [
     {
       "name": "Rainbow",
-      "type": "python",
+      "type": "debugpy",
       "request": "launch",
       "module": "rsrch.hub.hydra.rainbow",
       "pythonArgs": ["-O"],
@@ -15,7 +15,7 @@
     },
     {
       "name": "TD3",
-      "type": "python",
+      "type": "debugpy",
       "request": "launch",
       "module": "rsrch.hub.hydra.td3",
       "pythonArgs": ["-O"],
@@ -28,7 +28,7 @@
     },
     {
       "name": "MBPO",
-      "type": "python",
+      "type": "debugpy",
       "request": "launch",
       "module": "rsrch.hub.hydra.mbpo",
       "pythonArgs": ["-O"],
@@ -41,7 +41,7 @@
     },
     {
       "name": "REDQ",
-      "type": "python",
+      "type": "debugpy",
       "request": "launch",
       "module": "rsrch.hub.hydra.redq",
       "pythonArgs": ["-O"],

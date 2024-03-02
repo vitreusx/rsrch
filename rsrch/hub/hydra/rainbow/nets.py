@@ -2,12 +2,13 @@ import re
 from functools import partial
 
 import torch
+import torch.nn.functional as F
 from torch import Tensor, nn
+from torch.nn.utils.parametrizations import _SpectralNorm, spectral_norm
 
 import rsrch.distributions as D
 from rsrch import spaces
 from rsrch.nn import noisy
-from rsrch.nn.rewrite import rewrite_module_
 
 from ..utils import infer_ctx, layer_init
 from . import config, distq
@@ -39,14 +40,39 @@ class ImpalaSmall(nn.Sequential):
         )
 
 
+class SpectralConv2d(nn.Conv2d):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._spec_hook = _SpectralNorm(self.weight)
+
+    def forward(self, input: Tensor) -> Tensor:
+        weight = self._spec_hook(self.weight)
+        return F.conv2d(
+            input,
+            weight,
+            self.bias,
+            self.stride,
+            self.padding,
+            self.dilation,
+            self.groups,
+        )
+
+
+# def SpectralConv2d(*args, **kwargs):
+#     mod = nn.Conv2d(*args, **kwargs)
+#     mod = spectral_norm(mod)
+#     return mod
+
+
 class ImpalaResidual(nn.Module):
-    def __init__(self, channels: int):
+    def __init__(self, channels: int, use_spectral_norm=False):
         super().__init__()
+        Conv2d = SpectralConv2d if use_spectral_norm else nn.Conv2d
         self.main = nn.Sequential(
             nn.ReLU(),
-            nn.Conv2d(channels, channels, 3, 1, 1),
+            Conv2d(channels, channels, 3, 1, 1),
             nn.ReLU(),
-            nn.Conv2d(channels, channels, 3, 1, 1),
+            Conv2d(channels, channels, 3, 1, 1),
         )
 
     def forward(self, x):
@@ -54,21 +80,21 @@ class ImpalaResidual(nn.Module):
 
 
 class ImpalaBlock(nn.Sequential):
-    def __init__(self, in_channels: int, out_channels: int):
+    def __init__(self, in_channels: int, out_channels: int, use_spectral_norm: bool):
         super().__init__(
             nn.Conv2d(in_channels, out_channels, 3, 1, 1),
             nn.MaxPool2d(3, 2, 1),
-            ImpalaResidual(out_channels),
-            ImpalaResidual(out_channels),
+            ImpalaResidual(out_channels, use_spectral_norm),
+            ImpalaResidual(out_channels, use_spectral_norm),
         )
 
 
 class ImpalaLarge(nn.Sequential):
-    def __init__(self, in_channels: int, model_size=1):
+    def __init__(self, in_channels: int, model_size=1, use_spectral_norm="none"):
         super().__init__(
-            ImpalaBlock(in_channels, 16 * model_size),
-            ImpalaBlock(16 * model_size, 32 * model_size),
-            ImpalaBlock(32 * model_size, 32 * model_size),
+            ImpalaBlock(in_channels, 16 * model_size, use_spectral_norm == "all"),
+            ImpalaBlock(16 * model_size, 32 * model_size, use_spectral_norm == "all"),
+            ImpalaBlock(32 * model_size, 32 * model_size, use_spectral_norm != "none"),
             nn.ReLU(),
             nn.AdaptiveMaxPool2d((8, 8)),
             nn.Flatten(),
@@ -145,21 +171,11 @@ def Encoder(cfg: config.Config, obs_space: spaces.torch.Image):
         if m["variant"] == "small":
             enc = ImpalaSmall(in_channels)
         else:
-            enc = ImpalaLarge(in_channels, int(m["size"]))
-
-        if cfg.nets.spectral_norm:
-
-            def apply_sn_res(mod):
-                if isinstance(mod, nn.Conv2d):
-                    mod = nn.utils.spectral_norm(mod)
-                return mod
-
-            def apply_sn(mod):
-                if isinstance(mod, ImpalaResidual):
-                    mod = rewrite_module_(mod, apply_sn_res)
-                return mod
-
-            enc = rewrite_module_(enc, apply_sn)
+            enc = ImpalaLarge(
+                in_channels,
+                model_size=int(m["size"]),
+                use_spectral_norm=cfg.nets.spectral_norm,
+            )
 
         return enc
 

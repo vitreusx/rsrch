@@ -36,7 +36,7 @@ class Factory(ABC):
         self.act_space.seed(seeds[3])
 
     @abstractmethod
-    def env(self, mode: str, record: bool = False):
+    def env(self, mode: str, record: bool = False) -> gym.Env:
         """Create a single env."""
         ...
 
@@ -47,7 +47,9 @@ class Factory(ABC):
         env.action_space.seed(seeds[2])
 
     @abstractmethod
-    def vector_env(self, num_envs: int, mode: str, record: bool = False):
+    def vector_env(
+        self, num_envs: int, mode: str, record: bool = False
+    ) -> gym.VectorEnv:
         """Create vectorized env."""
         ...
 

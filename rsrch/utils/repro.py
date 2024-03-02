@@ -23,10 +23,10 @@ def seed_worker(worker_id):
 class RandomState:
     """Random state manager for Python, Numpy and Pytorch."""
 
-    def init(self, seed: int, benchmark=True):
-        torch.backends.cudnn.benchmark = benchmark
-        if not benchmark:
-            torch.use_deterministic_algorithms(True)
+    def init(self, seed: int, deterministic=False):
+        torch.backends.cudnn.benchmark = not deterministic
+        torch.use_deterministic_algorithms(deterministic)
+        if deterministic:
             os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":16:8"
         torch.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)

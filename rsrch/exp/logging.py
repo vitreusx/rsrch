@@ -53,20 +53,20 @@ class _LoggerMixin:
 
 
 class Logger(_LoggerMixin):
-    def __init__(self, name: str, stream, level=logging.INFO, pretty=False):
+    def __init__(self, name: str, stream=None, level=logging.INFO, no_ansi=True):
         self._logger = logging.getLogger(name)
-        self._logger.setLevel(logging.NOTSET)
+        self._logger.setLevel(level)
 
-        self._stream = stream
-        handler = logging.StreamHandler(self._file)
+        handler = logging.StreamHandler(stream)
         handler.setLevel(level)
-        if pretty:
+        if no_ansi:
+            fmt = "%(asctime)s - %(name)-13s - %(levelname)-8s - %(message)s"
+            formatter = logging.Formatter(fmt)
+        else:
             fmt = "%(name)-13s: %(color_on)s%(levelname)-8s%(color_off)s %(message)s"
             formatter = ColorFormatter(fmt)
-        else:
-            fmt = "%(asctime)s - %(name)-13s - %(levelname)-8ss - %(message)s"
-            formatter = logging.Formatter(fmt)
         handler.setFormatter(formatter)
+
         self._logger.addHandler(handler)
 
     def log(self, level: int, msg: str, *args):
