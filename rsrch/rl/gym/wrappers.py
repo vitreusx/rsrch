@@ -2,6 +2,7 @@ import numpy as np
 from gymnasium.core import ActionWrapper, ObservationWrapper, RewardWrapper, Wrapper
 from gymnasium.wrappers import *
 
+from .base import spaces
 from .envs import Env
 
 
@@ -171,3 +172,28 @@ class ClipRewardEnv(TransformReward):
 
     def __init__(self, env: Env) -> None:
         super().__init__(env, np.sign)
+
+
+class ToVisualEnv(Wrapper):
+    """Convert an environment with prioperceptive observations to one with
+    visual ones, obtained from render() method."""
+
+    def __init__(self, env: Env):
+        super().__init__(env)
+        assert env.render_mode == "rgb_array"
+
+        frame, _ = self.reset()
+        if isinstance(frame.dtype, np.uint8):
+            self.observation_space = spaces.Box(0, 255, frame.shape, frame.dtype)
+        elif isinstance(frame.dtype, np.float32):
+            self.observation_space = spaces.Box(0.0, 1.0, frame.shape, frame.dtype)
+
+    def reset(self, *, seed=None, options=None):
+        obs, info = super().reset(seed=seed, options=options)
+        obs = self.render()
+        return obs, info
+
+    def step(self, action):
+        next_obs, reward, term, trunc, info = super().step(action)
+        next_obs = self.render()
+        return next_obs, reward, term, trunc, info

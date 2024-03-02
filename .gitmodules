@@ -1,0 +1,6 @@
+[submodule "ext/dm_control"]
+	path = ext/dm_control
+	url = https://github.com/google-deepmind/dm_control
+[submodule "ext/poetry"]
+	path = ext/poetry
+	url = https://github.com/python-poetry/poetry

@@ -83,7 +83,7 @@ def _(env: gym.Env, agent: gym.Agent):
 
     while True:
         act = agent.policy(obs)
-        next_obs, reward, term, trunc, info = agent.step(act)
+        next_obs, reward, term, trunc, info = env.step(act)
         agent.step(act)
         agent.observe(act, next_obs, reward, term, trunc, info)
         yield types.Step(obs, act, next_obs, reward, term, trunc, info)

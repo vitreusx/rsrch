@@ -1,7 +1,9 @@
 import torch.distributions as D
 from gymnasium.envs import *
 
+from . import dmc
 from .base import Env, Space
+from .dmc import DMCEnv
 from .vector.base import VectorEnv
 
 
@@ -62,3 +64,6 @@ class FromVectorEnv(Env):
     def step(self, act):
         res = self._venv.step(act[None])
         return tuple(self._squeeze(x) for x in res)
+
+
+dmc.register_envs()

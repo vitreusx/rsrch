@@ -7,17 +7,17 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "3.10.*"
-poetry = {git = "https://github.com/python-poetry/poetry", rev = "776fcb8"}
+poetry = {path = "ext/poetry"}
 ipykernel = "^6.22.0"
 ipywidgets = "^8.0.4"
-setuptools = "*"
+setuptools = "<69"
 tensorboard = "^2.12.2"
 torch-tb-profiler = "^0.4.1"
 colorama = "*"
 moviepy = "*"
 python-slugify = "*"
 patchelf = "^0.17.2.1"
-mujoco = "<=2.3.3"
+mujoco = "^3.1.2"
 ptflops = "^0.7"
 h5py = "^3.8.0"
 sympy = "^1.12"
@@ -40,6 +40,7 @@ poetry-plugin-export = "^1.6.0"
 ray = "^2.9.0"
 lightning = "^2.1.3"
 ruamel-yaml = "^0.18.5"
+dm-control = {path = "ext/dm_control"}
 
 [[tool.poetry.source]]
 name = "torch"

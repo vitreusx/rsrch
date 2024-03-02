@@ -8,6 +8,7 @@ from torch import Tensor
 
 from rsrch import spaces
 from rsrch.rl import gym
+from rsrch.rl.gym.envs.dmc import DMCEnv
 from rsrch.spaces.utils import from_gym
 
 from . import base
@@ -16,8 +17,8 @@ from ._envpool import VecEnvPool
 
 @dataclass
 class Config:
-    env_id: str
-    """Environment ID."""
+    domain: str
+    task: str
     obs_type: Literal["default", "rgb", "grayscale"] = "default"
 
 
@@ -43,16 +44,14 @@ class Factory(base.Factory):
         )
 
     def env(self, mode="val", record=False):
-        image_obs = record or self.cfg.obs_type != "default"
-        env = gym.make(
-            self.cfg.env_id,
-            render_mode="rgb_array" if image_obs else None,
-        )
+        env = DMCEnv(self.cfg.domain, self.cfg.task)
 
         if self.cfg.obs_type in ("rgb", "grayscale"):
             env = gym.wrappers.ToVisualEnv(env)
             if self.cfg.obs_type == "grayscale":
                 env = gym.wrappers.GrayScaleObservation(env, keep_dim=True)
+        else:
+            env = gym.wrappers.FlattenObservation(env)
 
         env = gym.wrappers.RecordEpisodeStatistics(env)
 
