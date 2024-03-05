@@ -46,12 +46,11 @@ class Optim:
 
 @dataclass
 class Polyak:
-    period: int
-    tau: Literal["copy"] | float
+    period: int = 1
+    tau: float = 0.0
 
     def make(self):
-        tau = 0.0 if self.tau == "copy" else self.tau
-        return partial(polyak.Polyak, every=self.period, tau=tau)
+        return partial(polyak.Polyak, every=self.period, tau=self.tau)
 
 
 def gae_adv_est(r: Tensor, v: Tensor, gamma: float, gae_lambda: float):

@@ -186,7 +186,7 @@ class Beta(nn.Module):
     def forward(self, x: Tensor):
         out: Tensor = self.fc(x)
         alpha, beta = out.chunk(2, -1)
-        alpha, beta = 1.0 + alpha.exp(), 1.0 + beta.exp()
+        alpha, beta = 1.0 + (alpha - 5.0).exp(), 1.0 + (beta - 5.0).exp()
         alpha, beta = alpha.reshape(-1, *self.shape), beta.reshape(-1, *self.shape)
         return D.Affine(
             D.Beta(alpha, beta, len(self.shape)),

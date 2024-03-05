@@ -29,11 +29,14 @@ class Every2:
         """
 
         self.step_fn = step_fn
-        self.every, self.iters = every, iters
+        self.every, self.iters, self.never = every, iters, never
         self._last, self._ret = None, True
         self._acc = 0
 
     def __bool__(self):
+        if self.never:
+            return False
+
         cur_step = self.step_fn()
 
         if self._last is None:

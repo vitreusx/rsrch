@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from numbers import Number
+from typing import Literal
 
 import numpy as np
 import torch
@@ -17,7 +18,7 @@ class Config:
     adaptive: bool
     opt: Optim | None = None
     value: float | None = None
-    target_ent: float | None = None
+    target_ent: float | Literal["auto"] | None = None
     min_value: float | None = 1e-6
 
 
@@ -37,14 +38,23 @@ class Alpha(nn.Module):
     def __init__(self, cfg: Config, act_space: spaces.torch.Space):
         super().__init__()
         self.cfg = cfg
+        self.adaptive = cfg.adaptive
         if cfg.adaptive:
             log_min_value = torch.tensor(cfg.min_value).log()
             self.log_alpha = nn.Parameter(torch.tensor(log_min_value))
             self.register_buffer("min_value", log_min_value)
             self.opt = cfg.opt.make()([self.log_alpha])
-            assert cfg.target_ent is not None
-            self.target_ent = max_ent(act_space) * cfg.target_ent
             self.alpha = self.log_alpha.exp().item()
+
+            assert cfg.target_ent is not None
+            if cfg.target_ent == "auto":
+                if isinstance(act_space, spaces.torch.Box):
+                    target_ent = -1.0
+                elif isinstance(act_space, spaces.torch.Discrete):
+                    target_ent = 0.75
+            else:
+                target_ent = cfg.target_ent
+            self.target_ent = max_ent(act_space) * target_ent
         else:
             self.alpha = cfg.value
 
@@ -74,9 +84,9 @@ class Alpha(nn.Module):
             self.alpha = self.log_alpha.exp().item()
 
             if metrics is not None:
-                metrics["train/alpha"] = self.alpha
-                metrics["train/alpha_loss"] = loss.mean()
-                metrics["train/policy_ent"] = ent.mean()
+                metrics["alpha"] = self.alpha
+                metrics["alpha_loss"] = loss.mean()
+                metrics["policy_ent"] = ent.mean()
 
             return loss
 

@@ -4,7 +4,8 @@ import inspect
 import io
 import math
 import re
-from dataclasses import MISSING, fields, is_dataclass
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import MISSING, dataclass, fields, is_dataclass
 from pathlib import Path
 from types import UnionType
 from typing import (
@@ -29,7 +30,7 @@ from ruamel.yaml import YAML
 
 yaml = YAML(typ="safe", pure=True)
 
-__all__ = ["compose", "cli", "parser", "from_args", "parse"]
+__all__ = ["from_dicts", "cli", "parser", "from_args", "parse", "dataclass"]
 
 
 class AttrDict(dict):
@@ -155,8 +156,9 @@ def resolve_exprs(x: Any):
     def _g(x):
         d = {}
         for k, v in x.items():
-            if not isinstance(v, Expr):
-                d[k] = _g(v) if isinstance(v, dict) else v
+            d[k] = _g(v) if isinstance(v, dict) else v
+            # if not isinstance(v, Expr):
+            #     d[k] = _g(v) if isinstance(v, dict) else v
         return AttrDict(d)
 
     while True:
@@ -267,7 +269,16 @@ def fix_compound_keys(d: dict) -> dict:
 T = TypeVar("T")
 
 
-def compose(dicts: list[dict], cls: Type[T] | None = None) -> T:
+def remove_attr_dicts(d):
+    if isinstance(d, Mapping):
+        return {k: remove_attr_dicts(v) for k, v in d.items()}
+    elif isinstance(d, List):
+        return [remove_attr_dicts(x) for x in d]
+    else:
+        return d
+
+
+def from_dicts(dicts: list[dict], cls: Type[T] | None = None) -> T:
     """Compose a config class or dict from a list of raw dicts.
 
     In the process, we:
@@ -281,6 +292,7 @@ def compose(dicts: list[dict], cls: Type[T] | None = None) -> T:
     d = fix_compound_keys(d)
     d = replace_str_by_expr(d)
     d = resolve_exprs(d)
+    d = remove_attr_dicts(d)
     if cls is not None:
         d = cast(d, cls)
     return d
@@ -289,7 +301,7 @@ def compose(dicts: list[dict], cls: Type[T] | None = None) -> T:
 def parse(s: str, cls: Type[T]) -> T:
     """Parse a string into a config object of a given class."""
     d = yaml.load(io.StringIO(s))
-    return compose([d], cls)
+    return from_dicts([d], cls)
 
 
 def _attr_docstrings(t):
@@ -456,12 +468,12 @@ def from_args(
 
         dicts.append(opts)
 
-    return compose(dicts, cls)
+    return from_dicts(dicts, cls)
 
 
 @overload
 def cli(
-    cls: None,
+    *,
     config_file: Path | None = None,
     presets_file: Path | None = None,
     args: list[str] | None = None,
@@ -472,6 +484,7 @@ def cli(
 @overload
 def cli(
     cls: Type[T],
+    *,
     config_file: Path | None = None,
     presets_file: Path | None = None,
     args: list[str] | None = None,
@@ -480,7 +493,8 @@ def cli(
 
 
 def cli(
-    cls: Type[T] | None,
+    cls: Type[T] | None = None,
+    *,
     config_file: Path | None = None,
     presets_file: Path | None = None,
     args: list[str] | None = None,

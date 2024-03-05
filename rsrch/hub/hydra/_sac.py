@@ -141,67 +141,68 @@ def main():
     exp = tensorboard.Experiment(project="sac")
     env_step = 0
     exp.register_step("env_step", lambda: env_step, default=True)
-    prof = profiler(exp.dir / "traces", device)
-    prof.start()
+    # prof = profiler(exp.dir / "traces", device)
+    # prof.start()
 
     pbar = tqdm(desc="SAC", total=cfg.total_steps)
     should_val = cron.Every(lambda: env_step, period=cfg.val_every)
 
     alpha = cfg.sac_alpha
 
-    with prof:
-        while True:
-            if should_val:
-                val_rets = []
-                for _, ep in val_iter_fn():
-                    ep_ret = sum(ep.reward)
-                    val_rets.append(ep_ret)
-                exp.add_scalar("val/mean_ret", np.mean(val_rets))
+    while True:
+        if should_val:
+            val_rets = []
+            for _, ep in val_iter_fn():
+                ep_ret = sum(ep.reward)
+                val_rets.append(ep_ret)
+            exp.add_scalar("val/mean_ret", np.mean(val_rets))
 
-            for _ in range(cfg.env_iters):
-                env_idx, step = next(env_iter)
-                ep_ids[env_idx], _ = buf.push(ep_ids[env_idx], step)
-                ep_rets[env_idx] += step.reward
-                if step.done:
-                    exp.add_scalar("train/ep_ret", ep_rets[env_idx])
-                    del ep_rets[env_idx]
+        for _ in range(cfg.env_iters):
+            env_idx, step = next(env_iter)
+            ep_ids[env_idx], _ = buf.push(ep_ids[env_idx], step)
+            ep_rets[env_idx] += step.reward
+            if step.done:
+                exp.add_scalar("train/ep_ret", ep_rets[env_idx])
+                del ep_rets[env_idx]
 
-                env_step += 1
-                pbar.update(1)
-                if env_step > cfg.warmup:
-                    prof.step()
+            env_step += 1
+            pbar.update(1)
 
-            if env_step <= cfg.warmup:
-                continue
+        if env_step <= cfg.warmup:
+            continue
 
-            for _ in range(cfg.opt_iters):
-                idxes = sampler.sample(cfg.batch_size)
-                batch = env_f.fetch_step_batch(buf, idxes)
+        for _ in range(cfg.opt_iters):
+            idxes = sampler.sample(cfg.batch_size)
+            batch = env_f.fetch_step_batch(buf, idxes)
 
-                with torch.no_grad():
-                    next_act_rv = actor(batch.next_obs)
-                    next_act = next_act_rv.sample()
-                    min_q = torch.min(
-                        qf_t[0](batch.next_obs, next_act),
-                        qf_t[1](batch.next_obs, next_act),
-                    )
-                    next_v = min_q - alpha * next_act_rv.log_prob(next_act)
-                    gamma = (1.0 - batch.term.float()) * cfg.gamma
-                    q_targ = batch.reward + gamma * next_v
+            with torch.no_grad():
+                next_act_rv = actor(batch.next_obs)
+                next_act = next_act_rv.sample()
+                min_q = torch.min(
+                    qf_t[0](batch.next_obs, next_act),
+                    qf_t[1](batch.next_obs, next_act),
+                )
+                next_v = min_q - alpha * next_act_rv.log_prob(next_act)
+                gamma = (1.0 - batch.term.float()) * cfg.gamma
+                q_targ = batch.reward + gamma * next_v
 
-                qf0_pred = qf[0](batch.obs, batch.act)
-                qf1_pred = qf[1](batch.obs, batch.act)
-                q_loss = F.mse_loss(qf0_pred, q_targ) + F.mse_loss(qf1_pred, q_targ)
+            qf0_pred = qf[0](batch.obs, batch.act)
+            qf1_pred = qf[1](batch.obs, batch.act)
+            q_loss = F.mse_loss(qf0_pred, q_targ) + F.mse_loss(qf1_pred, q_targ)
 
-                qf_opt.zero_grad(set_to_none=True)
-                q_loss.backward()
-                qf_opt.step()
-                qf_polyak.step()
+            qf_opt.zero_grad(set_to_none=True)
+            q_loss.backward()
+            qf_opt.step()
+            qf_polyak.step()
 
-            act_rv = actor(batch.obs)
-            act = act_rv.rsample()
-            actor_loss = -(qf[0](batch.obs, act) - alpha * act_rv.log_prob(act)).mean()
+        act_rv = actor(batch.obs)
+        act = act_rv.rsample()
+        actor_loss = -(qf[0](batch.obs, act) - alpha * act_rv.log_prob(act)).mean()
 
-            actor_opt.zero_grad(set_to_none=True)
-            actor_loss.backward()
-            actor_opt.step()
+        actor_opt.zero_grad(set_to_none=True)
+        actor_loss.backward()
+        actor_opt.step()
+
+
+if __name__ == "__main__":
+    main()

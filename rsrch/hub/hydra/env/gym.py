@@ -8,7 +8,6 @@ from torch import Tensor
 
 from rsrch import spaces
 from rsrch.rl import gym
-from rsrch.spaces.utils import from_gym
 
 from . import base
 from ._envpool import VecEnvPool
@@ -27,20 +26,49 @@ class Factory(base.Factory):
         self.device = device
 
         dummy = self.env()
-        env_obs_space = from_gym(dummy.observation_space)
-        env_act_space = from_gym(dummy.action_space)
 
-        obs_space = spaces.torch.as_tensor(env_obs_space)
-        act_space = spaces.torch.as_tensor(env_act_space)
+        self.env_obs_space = self._from_gym(dummy.observation_space)
+        net_obs = self.move_obs(self.env_obs_space.sample())
+        obs_space = self._infer_space(self.env_obs_space, net_obs)
+
+        self.env_act_space = self._from_gym(dummy.action_space)
+        net_act = self.move_act(self.env_act_space.sample())
+        act_space = self._infer_space(self.env_act_space, net_act)
 
         super().__init__(
-            env_obs_space,
+            self.env_obs_space,
             obs_space,
-            env_act_space,
+            self.env_act_space,
             act_space,
             frame_skip=1,
             seed=seed,
         )
+
+    def _from_gym(self, space: gym.Space):
+        if type(space) == gym.spaces.Box:
+            if len(space.shape) == 3:
+                return spaces.np.Image(
+                    space.shape, channel_last=True, dtype=space.dtype
+                )
+            else:
+                return spaces.np.Box(space.shape, space.low, space.high, space.dtype)
+        elif type(space) == gym.spaces.Discrete:
+            return spaces.np.Discrete(space.n, space.dtype)
+        else:
+            raise ValueError(type(space))
+
+    def _infer_space(self, orig: spaces.np.Space, x: Tensor):
+        if type(orig) == spaces.np.Image:
+            return spaces.torch.Image(x.shape, x.dtype, x.device)
+        elif type(orig) == spaces.np.Discrete:
+            assert type(orig) == spaces.np.Discrete
+            return spaces.torch.Discrete(orig.n, x.dtype, x.device)
+        elif type(orig) == spaces.np.Box:
+            low = torch.tensor(orig.low, dtype=x.dtype, device=x.device)
+            high = torch.tensor(orig.high, dtype=x.dtype, device=x.device)
+            return spaces.torch.Box(x.shape, low, high, x.dtype, x.device)
+        else:
+            raise ValueError(type(orig))
 
     def env(self, mode="val", record=False):
         image_obs = record or self.cfg.obs_type != "default"
@@ -89,7 +117,12 @@ class Factory(base.Factory):
         return env
 
     def move_obs(self, obs: np.ndarray) -> Tensor:
-        return torch.as_tensor(obs, device=self.device)
+        if isinstance(self.env_obs_space, spaces.np.Image):
+            obs = np.moveaxis(obs, -1, -3)
+            if isinstance(obs.dtype, np.uint8):
+                obs = obs / 255.0
+        obs = torch.tensor(obs, dtype=torch.float32, device=self.device)
+        return obs
 
     def move_act(
         self,
@@ -97,6 +130,11 @@ class Factory(base.Factory):
         to: Literal["net", "env"] = "net",
     ) -> Tensor:
         if to == "net":
-            return torch.as_tensor(act, device=self.device)
+            dtype = (
+                torch.float32 if np.issubdtype(act.dtype, np.floating) else torch.long
+            )
+            act = torch.as_tensor(act, device=self.device, dtype=dtype)
         else:
-            return act.detach().cpu().numpy()
+            act: np.ndarray = act.detach().cpu().numpy()
+            act = act.astype(dtype=self.env_act_space.dtype)
+        return act

@@ -5,6 +5,8 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
+from itertools import islice
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -18,49 +20,16 @@ from rsrch.exp import tensorboard
 from rsrch.nn import dist_head as dh
 from rsrch.nn import fc
 from rsrch.rl import data, gym
-from rsrch.rl.data import rollout
+from rsrch.rl.data import _rollout as rollout
 from rsrch.rl.data.buffer import StepBuffer
 from rsrch.rl.data.types import StepBatch
 from rsrch.rl.utils import polyak
 from rsrch.types import Tensorlike
-from rsrch.utils import cron
+from rsrch.utils import cron, repro
 
-from . import alpha, env
-from .utils import Optim, layer_init
-
-
-@dataclass
-class Config:
-    # General info
-    seed = 0
-    device = "cuda"
-    env_id = "Ant-v4"
-    # NN config
-    ac_opt = Optim(type="adam", lr=3e-4, eps=1e-5)
-    wm_opt = Optim(type="adam", lr=1e-3, eps=1e-5)
-    alpha = alpha.Config(adaptive=False, value=0.2)
-    hidden_dim = 200
-    gamma = 0.99
-    tau = 0.995
-    num_models = 8
-    # Schedule
-    total_steps = int(1e6)
-    warmup = int(20e3)
-    env_batch = 1
-    env_buf_cap = int(1e6)
-    model_opt_sched = {"every": 256}
-    model_val_frac = 0.2
-    model_opt_bs = 256
-    model_early_stopping = {"patience": 16}
-    model_sample_sched = {"every": 16}
-    model_sample_bs = 1024
-    model_buf_cap = int(10e6)
-    opt_sched = {"iters": 1}
-    real_frac = 0.1
-    opt_bs = 256
-    # Misc
-    val_every = int(32e3)
-    val_episodes = 32
+from .. import alpha, env
+from ..utils import Optim, layer_init
+from . import config
 
 
 class Affine(nn.Module):
@@ -112,24 +81,28 @@ class SampleRate:
 
 def dist_loss(dist: D.Distribution, data: Tensor):
     if isinstance(dist, D.Dirac):
-        return F.mse_loss(dist.value, data)
+        value, data = torch.broadcast_tensors(dist.value, data)
+        return F.mse_loss(value, data)
     elif isinstance(dist, D.Affine):
         return dist_loss(dist.base, (data - dist.loc) / dist.scale)
     else:
+        data = data.expand(*dist.batch_shape, *dist.event_shape)
         return -dist.log_prob(data).mean()
 
 
 def main():
-    cfg = Config()
+    cfg = config.cli(
+        cls=config.Config,
+        config_file=Path(__file__).parent / "config.yml",
+        presets_file=Path(__file__).parent / "presets.yml",
+    )
 
-    random.seed(cfg.seed)
-    np.random.seed(cfg.seed)
-    torch.manual_seed(cfg.seed)
-    torch.backends.cudnn.deterministic = True
+    rs = repro.RandomState()
+    rs.init(cfg.random.seed, cfg.random.deterministic)
 
     device = torch.device(cfg.device)
-    env_cfg = env.Config("gym", gym=env.gym.Config(env_id=cfg.env_id))
-    env_f = env.make_factory(env_cfg, device)
+
+    env_f = env.make_factory(cfg.env, device)
 
     assert isinstance(env_f.obs_space, spaces.torch.Box)
     obs_dim = int(np.prod(env_f.obs_space.shape))
@@ -144,7 +117,7 @@ def main():
                 fc.FullyConnected(
                     layer_sizes=[
                         obs_dim + act_dim,
-                        *[cfg.hidden_dim for _ in range(2)],
+                        *[cfg.ac.hidden_dim for _ in range(2)],
                         1,
                     ],
                     act_layer=nn.SiLU,
@@ -158,17 +131,15 @@ def main():
             x = torch.cat([state, act], -1)
             return self.net(x)
 
-    qf = nn.ModuleList()
-    qf_t = nn.ModuleList()
-    for _ in range(2):
-        qf.append(Q().to(device))
-        qf_t.append(Q().to(device))
+    def make_qf():
+        return nn.ModuleList([Q() for _ in range(2)]).to(device)
 
+    qf, qf_t = make_qf(), make_qf()
     polyak.sync(qf, qf_t)
-    qf_polyak = polyak.Polyak(qf, qf_t, tau=cfg.tau)
-    qf_opt = cfg.ac_opt.make()(qf.parameters())
+    qf_polyak = polyak.Polyak(qf, qf_t, **cfg.ac.polyak)
+    qf_opt = cfg.ac.opt.make()(qf.parameters())
 
-    sac_alpha = alpha.Alpha(cfg.alpha, env_f.act_space)
+    sac_alpha = alpha.Alpha(cfg.ac.alpha, env_f.act_space)
 
     class Actor(nn.Sequential):
         def __init__(self):
@@ -176,63 +147,33 @@ def main():
                 fc.FullyConnected(
                     layer_sizes=[
                         obs_dim,
-                        *[cfg.hidden_dim for _ in range(2)],
+                        *[cfg.ac.hidden_dim for _ in range(2)],
                     ],
                     act_layer=nn.SiLU,
                     norm_layer=None,
                     final_layer="act",
                 ),
-                dh.Beta(cfg.hidden_dim, env_f.act_space),
+                dh.Beta(cfg.ac.hidden_dim, env_f.act_space),
             )
 
     actor = Actor().to(device)
-    actor_opt = cfg.ac_opt.make()(actor.parameters())
-
-    class WorldModel(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.enc = nn.Sequential(
-                fc.FullyConnected(
-                    layer_sizes=[
-                        obs_dim + act_dim,
-                        *[cfg.hidden_dim for _ in range(2)],
-                    ],
-                    act_layer=nn.SiLU,
-                    norm_layer=None,
-                    final_layer="act",
-                ),
-            )
-
-            self.head = nn.Linear(cfg.hidden_dim, obs_dim + 2)
-            self.head.apply(partial(layer_init, std=1e-2))
-
-        def forward(self, state: Tensor, act: Tensor):
-            x = torch.cat([state, act], -1)
-            out: Tensor = self.head(self.enc(x))
-            diff, rew, term = out.split_with_sizes([obs_dim, 1, 1], -1)
-
-            diff = diff.reshape(len(x), *env_f.obs_space.shape)
-            state_dist = D.Dirac(state + diff, len(env_f.obs_space.shape))
-
-            rew_dist = D.Dirac(rew.ravel(), event_dims=0)
-
-            term_dist = D.Bernoulli(logits=term.ravel(), event_dims=0)
-
-            return {"next_s": state_dist, "rew": rew_dist, "term": term_dist}
+    actor_opt = cfg.ac.opt.make()(actor.parameters())
 
     class EnsembleWM(nn.Module):
-        def __init__(self, num_models: int):
+        def __init__(self):
             super().__init__()
-            self.num_models = num_models
+            self.num_models = cfg.wm.ensemble
+
+            Linear = partial(nn.ensemble.Linear, num_models=self.num_models)
 
             self.net = nn.Sequential(
-                nn.ensemble.Linear(obs_dim + act_dim, cfg.hidden_dim, num_models),
+                Linear(obs_dim + act_dim, cfg.wm.hidden_dim),
                 nn.ReLU(),
-                nn.ensemble.Linear(cfg.hidden_dim, cfg.hidden_dim, num_models),
+                Linear(cfg.wm.hidden_dim, cfg.wm.hidden_dim),
                 nn.ReLU(),
-                nn.ensemble.Linear(cfg.hidden_dim, cfg.hidden_dim, num_models),
+                Linear(cfg.wm.hidden_dim, cfg.wm.hidden_dim),
                 nn.ReLU(),
-                nn.ensemble.Linear(cfg.hidden_dim, obs_dim + 2, num_models),
+                Linear(cfg.wm.hidden_dim, obs_dim + 2),
             )
 
             self.net[-1].apply(partial(layer_init, std=1e-2))
@@ -258,10 +199,8 @@ def main():
             return {"next_s": state_dist, "rew": rew_dist, "term": term_dist}
 
     # wm = WorldModel().to(device)
-    wm = EnsembleWM(cfg.num_models).to(device)
-    wm_opt = cfg.wm_opt.make()(wm.parameters())
-
-    ...
+    wm = EnsembleWM().to(device)
+    wm_opt = cfg.wm.opt.make()(wm.parameters())
 
     # wm = nn.ModuleList()
     # for _ in range(cfg.ensemble):
@@ -275,7 +214,7 @@ def main():
             return env_f.move_act(act, to="env")
 
     train_agent = TrainAgent()
-    train_envs = env_f.vector_env(cfg.env_batch, mode="train")
+    train_envs = env_f.vector_env(cfg.num_envs, mode="train")
     train_iter = iter(rollout.steps(train_envs, train_agent))
 
     class ValAgent(gym.vector.Agent):
@@ -286,9 +225,11 @@ def main():
             return env_f.move_act(act, to="env")
 
     val_agent = ValAgent()
-    val_envs = env_f.vector_env(cfg.val_episodes, mode="val")
-    make_val_iter = lambda: rollout.episodes(
-        val_envs, val_agent, max_episodes=cfg.val_episodes
+    val_envs = env_f.vector_env(cfg.val.envs, mode="val")
+    make_val_iter = lambda: islice(
+        rollout.episodes(val_envs, val_agent),
+        0,
+        cfg.val.episodes,
     )
 
     sampler = data.UniformSampler()
@@ -296,47 +237,44 @@ def main():
     ep_ids = defaultdict(lambda: None)
     ep_rets = defaultdict(lambda: 0.0)
 
+    env_id = getattr(cfg.env, cfg.env.type).env_id
     exp = tensorboard.Experiment(
         project="mbpo",
-        run=f"{cfg.env_id}__{datetime.now():%Y-%m-%d_%H-%M-%S}",
+        run=f"{env_id}__{datetime.now():%Y-%m-%d_%H-%M-%S}",
     )
 
-    env_step = 0
+    env_step, ac_opt_step, wm_opt_step = 0, 0, 0
     exp.register_step("env_step", lambda: env_step, default=True)
-    sr = SampleRate()
-    start_t = time.time()
+    exp.register_step("wm_opt_step", lambda: wm_opt_step)
+    exp.register_step("ac_opt_step", lambda: ac_opt_step)
 
-    def update_env_step(pbar, n: int = 1):
-        nonlocal env_step
-        env_step += 1
-        pbar.update(1)
-        exp.add_scalar("time_elapsed", time.time() - start_t)
-        sr.update()
-        if sr.value is not None:
-            exp.add_scalar("sample_rate", sr.value)
+    def make_sched(cfg):
+        nonlocal env_step, wm_opt_step, ac_opt_step
+        count, unit = cfg["every"]
+        step_fn = exp.get_step_fn(unit)
+        cfg = {**cfg, "step_fn": step_fn, "every": count}
+        return cron.Every2(**cfg)
 
-    should_val = cron.Every(lambda: env_step, cfg.val_every)
-    should_opt = cron.Every2(lambda: env_step, **cfg.opt_sched)
+    should_val = make_sched(cfg.val.sched)
+    should_opt_ac = make_sched(cfg.ac.opt_sched)
+    should_log_ac = make_sched(cfg.ac.log)
 
     # should_opt_model = cron.Never()
-    use_model = cfg.real_frac < 1.0
-    should_opt_model = cron.Every2(lambda: env_step, **cfg.model_opt_sched)
-    model_buf = StepBuffer(cfg.model_buf_cap, env_f.obs_space, env_f.act_space)
-    should_sample_model = cron.Every2(lambda: env_step, **cfg.model_sample_sched)
-
-    wm_opt_step = 0
-    exp.register_step("wm_opt_step", lambda: wm_opt_step)
+    use_model = cfg.ac.real_frac < 1.0
+    should_opt_wm = make_sched(cfg.wm.opt_sched)
+    model_buf = StepBuffer(cfg.wm.buf_cap, env_f.obs_space, env_f.act_space)
+    should_sample_wm = make_sched(cfg.wm.sample_sched)
 
     # Variables for train/val id split
-    id_rng = np.random.default_rng(seed=cfg.seed + 1)
+    id_rng = np.random.default_rng(seed=cfg.random.seed + 1)
     id_range = range(0, 0)
     is_val_sample, train_ids, val_ids = deque(), deque(), deque()
 
     global tqdm
     tqdm = partial(tqdm, dynamic_ncols=True)
 
-    num_real = int(cfg.real_frac * cfg.opt_bs)
-    num_fake = cfg.opt_bs - num_real
+    num_real = int(cfg.ac.real_frac * cfg.ac.opt_bs)
+    num_fake = cfg.ac.opt_bs - num_real
 
     # prof = profiler(exp.dir / "traces", device)
     # prof.start()
@@ -345,7 +283,8 @@ def main():
         while env_step < cfg.warmup:
             env_idx, step = next(train_iter)
             ep_ids[env_idx], _ = env_buf.push(ep_ids[env_idx], step)
-            update_env_step(pbar)
+            env_step += 1
+            pbar.update()
 
     with tqdm(desc="Train", total=cfg.total_steps) as pbar:
         pbar.n = env_step
@@ -357,7 +296,7 @@ def main():
                 val_iter = tqdm(
                     make_val_iter(),
                     desc="Val",
-                    total=cfg.val_episodes,
+                    total=cfg.val.episodes,
                     leave=False,
                 )
 
@@ -377,11 +316,12 @@ def main():
                     exp.add_scalar("train/ep_ret", ep_rets[env_idx])
                     del ep_rets[env_idx]
 
-                update_env_step(pbar)
+                env_step += 1
+                pbar.update(1)
 
             # Model optimization
             if use_model:
-                while should_opt_model:
+                while should_opt_wm:
                     # This segment updates values in is_val_id_q to match
                     # current ids from the buffer with real env rollouts.
                     beg, end = id_range.start, id_range.stop
@@ -391,7 +331,7 @@ def main():
                         beg += 1
                     while end < env_buf.ids.stop:
                         x = id_rng.random()
-                        is_val = x < cfg.model_val_frac
+                        is_val = x < cfg.wm.val_frac
                         (val_ids if is_val else train_ids).append(end)
                         is_val_sample.append(is_val)
                         end += 1
@@ -404,8 +344,8 @@ def main():
                         wm.eval()
                         with torch.inference_mode():
                             val_loss = 0.0
-                            for off in range(0, len(val_ids_), cfg.model_opt_bs):
-                                idxes = slice(off, off + cfg.model_opt_bs)
+                            for off in range(0, len(val_ids_), cfg.wm.opt_bs):
+                                idxes = slice(off, off + cfg.wm.opt_bs)
                                 if idxes.stop >= len(val_ids_):
                                     continue
                                 batch = env_f.fetch_step_batch(env_buf, val_ids_[idxes])
@@ -425,8 +365,8 @@ def main():
                     def _do_train_epoch():
                         wm.train()
                         np.random.shuffle(train_ids_)
-                        for off in range(0, len(train_ids_), cfg.model_opt_bs):
-                            idxes = slice(off, off + cfg.model_opt_bs)
+                        for off in range(0, len(train_ids_), cfg.wm.opt_bs):
+                            idxes = slice(off, off + cfg.wm.opt_bs)
                             if idxes.stop >= len(train_ids_):
                                 continue
                             batch = env_f.fetch_step_batch(env_buf, train_ids_[idxes])
@@ -445,7 +385,7 @@ def main():
                             nonlocal wm_opt_step
                             wm_opt_step += 1
 
-                    should_stop = EarlyStopping(**cfg.model_early_stopping)
+                    should_stop = EarlyStopping(**cfg.wm.early_stopping)
 
                     while True:
                         val_loss = _do_val_epoch()
@@ -456,8 +396,8 @@ def main():
                     wm.load_state_dict(should_stop.best_state_dict)
 
                 # Fake data sampling
-                while should_sample_model or len(model_buf) < cfg.warmup:
-                    ids, _ = env_buf.sampler.sample(cfg.model_sample_bs)
+                while should_sample_wm or len(model_buf) < cfg.warmup:
+                    ids = env_buf.sampler.sample(cfg.wm.sample_bs)
                     batch = env_f.fetch_step_batch(env_buf, ids)
                     preds = wm(batch.obs, batch.act)
                     batch.next_obs = preds["next_s"].sample().flatten(0, 1)
@@ -467,11 +407,11 @@ def main():
                         model_buf.push(None, step)
 
             # Policy opt
-            while should_opt:
+            while should_opt_ac:
                 if use_model:
-                    real_ids, _ = env_buf.sampler.sample(num_real)
+                    real_ids = env_buf.sampler.sample(num_real)
                     real_batch = env_f.fetch_step_batch(env_buf, real_ids)
-                    fake_ids, _ = model_buf.sampler.sample(num_fake)
+                    fake_ids = model_buf.sampler.sample(num_fake)
                     fake_batch = env_f.fetch_step_batch(model_buf, fake_ids)
 
                     batch = StepBatch(
@@ -493,7 +433,7 @@ def main():
                         qf_t[1](batch.next_obs, next_act),
                     )
                     next_v = min_q - sac_alpha.value * next_act_dist.entropy()
-                    gamma = (1.0 - batch.term.float()) * cfg.gamma
+                    gamma = (1.0 - batch.term.float()) * cfg.ac.gamma
                     q_targ = batch.reward + gamma * next_v
 
                 qf0_pred = qf[0](batch.obs, batch.act)
@@ -515,6 +455,12 @@ def main():
                 actor_opt.zero_grad(set_to_none=True)
                 actor_loss.backward()
                 actor_opt.step()
+
+                while should_log_ac:
+                    exp.add_scalar("train/q_loss", q_loss, step="ac_opt_step")
+                    exp.add_scalar("train/actor_loss", actor_loss, step="ac_opt_step")
+
+                ac_opt_step += 1
 
 
 if __name__ == "__main__":

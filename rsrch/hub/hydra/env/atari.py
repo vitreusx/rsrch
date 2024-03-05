@@ -45,9 +45,9 @@ class Unstack(gym.vector.wrappers.ObservationWrapper):
         super().__init__(env)
         self.stack_num = stack_num
 
-        assert isinstance(self.observation_space, gym.spaces.Box)
-        new_low = self.observation(self.observation_space.low)
-        new_high = self.observation(self.observation_space.high)
+        assert isinstance(env.observation_space, gym.spaces.Box)
+        new_low = self.observation(env.observation_space.low)
+        new_high = self.observation(env.observation_space.high)
         self.observation_space = gym.spaces.Box(new_low, new_high, dtype=new_low.dtype)
         self.single_observation_space = gym.spaces.Box(
             new_low[0], new_high[0], dtype=new_low.dtype
@@ -61,22 +61,23 @@ class Unstack(gym.vector.wrappers.ObservationWrapper):
 class ToChannelLast(gym.wrappers.ObservationWrapper):
     def __init__(self, env: gym.Env):
         super().__init__(env)
-        obs_space = env.observation_space
-        assert isinstance(obs_space, gym.spaces.Box)
-        h, w, c = obs_space.shape
-        if np.issubdtype(obs_space.dtype, np.integer):
+
+        assert isinstance(env.observation_space, gym.spaces.Box)
+        h, w, c = env.observation_space.shape
+
+        if np.issubdtype(env.observation_space.dtype, np.integer):
             self.observation_space = gym.spaces.Box(
                 0,
                 255,
                 (c, h, w),
-                dtype=obs_space.dtype,
+                dtype=env.observation_space.dtype,
             )
         else:
             self.observation_space = gym.spaces.Box(
                 0.0,
                 1.0,
                 (c, h, w),
-                dtype=obs_space.dtype,
+                dtype=env.observation_space.dtype,
             )
 
     def observation(self, obs: np.ndarray):

@@ -1,0 +1,34 @@
+random:
+  seed: 1
+  deterministic: false
+device: cuda
+env:
+  type: gym
+  gym:
+    env_id: Ant-v4
+total_steps: 1e6
+num_envs: 1
+batch_size: 256
+opt_sched: {every: [4, env_step], iters: 1}
+log_sched: {every: [32, opt_step]}
+warmup: 50e3
+buf_cap: 1e6
+polyak:
+  sched: {every: [1, opt_step]}
+  tau: 0.995
+gamma: 0.99
+opt:
+  type: adam
+  lr: 3e-4
+  eps: 1e-5
+alpha:
+  adaptive: false
+  target_ent: auto
+  value: 0.1
+  opt: ${..opt}
+hidden_dim: 256
+val:
+  envs: 4
+  sched: {every: [32e3, env_step]}
+  episodes: 32
+q_opt_iters: 1

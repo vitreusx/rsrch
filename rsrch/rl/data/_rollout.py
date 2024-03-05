@@ -1,3 +1,4 @@
+from collections import defaultdict
 from copy import deepcopy
 from functools import singledispatch
 from typing import Iterable, Iterator, overload
@@ -110,3 +111,55 @@ def steps(env: gym.VectorEnv, agent: gym.VecAgent) -> VecStepRollout:
 
 def steps(*args, **kwargs):
     return _steps(*args, **kwargs)
+
+
+@singledispatch
+def _episodes(env, agent):
+    ...
+
+
+@_episodes.register
+def _(env: gym.Env, agent: gym.Agent):
+    ep = None
+    for step in steps(env, agent):
+        if ep is None:
+            ep = types.Seq([step.obs], [], [], False, [])
+        ep.obs.append(step.next_obs)
+        ep.act.append(step.act)
+        ep.rew.append(step.reward)
+        ep.term |= step.term
+        ep.info.append(step.info)
+        if step.done:
+            yield ep
+            ep = None
+
+
+@_episodes.register
+def _(env: gym.VectorEnv, agent: gym.VecAgent):
+    eps = {}
+    for env_idx, step in steps(env, agent):
+        if env_idx not in eps:
+            eps[env_idx] = types.Seq([step.obs], [], [], False, [])
+        ep = eps[env_idx]
+        ep.obs.append(step.next_obs)
+        ep.act.append(step.act)
+        ep.reward.append(step.reward)
+        ep.term |= step.term
+        ep.info.append(step.info)
+        if step.done:
+            yield env_idx, ep
+            del eps[env_idx]
+
+
+@overload
+def episodes(env: gym.Env, agent: gym.Agent) -> Iterable[types.Seq]:
+    ...
+
+
+@overload
+def episodes(env: gym.VectorEnv, agent: gym.VecAgent) -> Iterable[types.Seq]:
+    ...
+
+
+def episodes(*args, **kwargs):
+    return _episodes(*args, **kwargs)

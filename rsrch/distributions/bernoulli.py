@@ -46,14 +46,13 @@ class Bernoulli(Distribution, Tensorlike):
             eps = torch.finfo(self._probs.dtype).eps
             probs = self._probs.clamp(eps, 1 - eps)
             logits = torch.log(probs) - torch.log1p(-probs)
-            self.register("_logits", logits)
+            self._logits = logits
         return self._logits
 
     @property
     def probs(self) -> Tensor:
         if self._probs is None:
-            probs = F.sigmoid(self._logits)
-            self.register("_probs", probs)
+            self._probs = F.sigmoid(self._logits)
         return self._probs
 
     @property

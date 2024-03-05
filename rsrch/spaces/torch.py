@@ -37,6 +37,13 @@ class Space:
         return f"Space({self.shape!r}, {self.dtype}, {self.device})"
 
 
+def to_tensor(x, dtype=None, device=None):
+    if isinstance(x, Tensor):
+        return x.detach().clone().to(dtype=dtype, device=device)
+    else:
+        return torch.tensor(x, dtype=dtype, device=device)
+
+
 class Box(Space):
     def __init__(
         self,
@@ -48,7 +55,7 @@ class Box(Space):
         seed: torch.Generator | int | None = None,
     ):
         if dtype is None:
-            low = torch.as_tensor(low, device=device)
+            low = to_tensor(low, device=device)
             dtype = low.dtype
         else:
             if low is None:
@@ -56,14 +63,14 @@ class Box(Space):
                     low = torch.finfo(dtype).min
                 else:
                     low = torch.iinfo(dtype).min
-            low = torch.as_tensor(low, dtype=dtype, device=device)
+            low = to_tensor(low, dtype=dtype, device=device)
 
         if high is None:
             if dtype.is_floating_point:
                 high = torch.finfo(dtype).max
             else:
                 high = torch.iinfo(dtype).max
-        high = torch.as_tensor(high, dtype=dtype, device=device)
+        high = to_tensor(high, dtype=dtype, device=device)
 
         super().__init__(shape, dtype, device, seed)
         self.low = low.expand(shape)
@@ -184,8 +191,8 @@ def as_tensor(space: spaces_np.Space, device: torch.device | None = None):
     if type(space) == spaces_np.Box:
         return Box(
             shape=space.shape,
-            low=torch.as_tensor(space.low, device=device),
-            high=torch.as_tensor(space.high, device=device),
+            low=to_tensor(space.low, device=device),
+            high=to_tensor(space.high, device=device),
         )
     elif type(space) == spaces_np.Discrete:
         return Discrete(space.n, device=device)

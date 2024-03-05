@@ -41,10 +41,11 @@ class Factory(ABC):
         ...
 
     def seed_env_(self, env: gym.Env):
-        seeds = self.seed_seq.spawn(1)[0].generate_state(3).tolist()
-        env.reset(seed=seeds[0])
-        env.observation_space.seed(seeds[1])
-        env.action_space.seed(seeds[2])
+        if hasattr(self, "seed_seq"):
+            seeds = self.seed_seq.spawn(1)[0].generate_state(3).tolist()
+            env.reset(seed=seeds[0])
+            env.observation_space.seed(seeds[1])
+            env.action_space.seed(seeds[2])
 
     @abstractmethod
     def vector_env(
@@ -54,12 +55,13 @@ class Factory(ABC):
         ...
 
     def seed_vector_env_(self, envs: gym.VectorEnv):
-        seeds = self.seed_seq.spawn(1)[0].generate_state(4 + envs.num_envs).tolist()
-        envs.observation_space.seed(seeds[0])
-        envs.single_observation_space.seed(seeds[1])
-        envs.action_space.seed(seeds[2])
-        envs.single_action_space.seed(seeds[3])
-        envs.reset(seed=seeds[4:])
+        if hasattr(self, "seed_seq"):
+            seeds = self.seed_seq.spawn(1)[0].generate_state(4 + envs.num_envs).tolist()
+            envs.observation_space.seed(seeds[0])
+            envs.single_observation_space.seed(seeds[1])
+            envs.action_space.seed(seeds[2])
+            envs.single_action_space.seed(seeds[3])
+            envs.reset(seed=seeds[4:])
 
     @abstractmethod
     def move_obs(self, obs: np.ndarray) -> Tensor:
@@ -108,16 +110,11 @@ class Factory(ABC):
             act = np.stack([x.act for x in batch])
             act = self.move_act(act)
 
-        rew = torch.as_tensor(
-            [x.reward for x in batch],
-            dtype=torch.float32,
-            device=self.device,
-        )
-        term = torch.as_tensor(
-            [x.term for x in batch],
-            dtype=torch.bool,
-            device=self.device,
-        )
+        rew = np.array([x.reward for x in batch])
+        rew = torch.tensor(rew, dtype=torch.float32, device=self.device)
+
+        term = np.array([x.term for x in batch])
+        term = torch.tensor(term, dtype=torch.bool, device=self.device)
 
         batch = StepBatch(obs, act, next_obs, rew, term)
         return batch

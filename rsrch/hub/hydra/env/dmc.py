@@ -1,3 +1,4 @@
+import os
 import time
 from dataclasses import dataclass
 from typing import Literal
@@ -8,7 +9,7 @@ from torch import Tensor
 
 from rsrch import spaces
 from rsrch.rl import gym
-from rsrch.rl.gym.envs.dmc import DMCEnv
+from rsrch.rl.gym.dmc import DMCEnv
 from rsrch.spaces.utils import from_gym
 
 from . import base
@@ -20,6 +21,12 @@ class Config:
     domain: str
     task: str
     obs_type: Literal["default", "rgb", "grayscale"] = "default"
+
+    @property
+    def env_id(self):
+        domain = self.domain.replace("_", " ").title().replace(" ", "")
+        task = self.task.replace("_", " ").title().replace(" ", "")
+        return f"DMC/{domain}_{task}-v1"
 
 
 class Factory(base.Factory):
@@ -44,6 +51,9 @@ class Factory(base.Factory):
         )
 
     def env(self, mode="val", record=False):
+        # Otherwise, rendering (using swrast) is extremely slow
+        os.environ["MUJOCO_GL"] = "egl"
+
         env = DMCEnv(self.cfg.domain, self.cfg.task)
 
         if self.cfg.obs_type in ("rgb", "grayscale"):
@@ -62,25 +72,11 @@ class Factory(base.Factory):
         return env
 
     def vector_env(self, num_envs: int, mode="val"):
-        try:
-            env = VecEnvPool.make(
-                task_id=self.cfg.env_id,
-                env_type="gymnasium",
-                num_envs=num_envs,
-                seed=self.seed,
-            )
-
-            env = gym.vector.wrappers.RecordEpisodeStatistics(env)
-
-            if isinstance(env.action_space, gym.spaces.Box):
-                env = gym.vector.wrappers.ClipAction(env)
-
-        except:
-            env_fn = lambda: self.env(mode)
-            if num_envs == 1:
-                return gym.vector.SyncVectorEnv([env_fn])
-            else:
-                return gym.vector.AsyncVectorEnv([env_fn] * num_envs)
+        env_fn = lambda: self.env(mode)
+        if num_envs == 1:
+            env = gym.vector.SyncVectorEnv([env_fn])
+        else:
+            env = gym.vector.AsyncVectorEnv([env_fn] * num_envs)
 
         env = gym.vector.wrappers.VectorListInfo(env)
 

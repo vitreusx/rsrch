@@ -7,7 +7,20 @@ from . import utils as vec_utils
 from .base import VectorEnv
 
 
-class RewardWrapper(VectorEnvWrapper):
+class _VectorEnvWrapper(VectorEnvWrapper):
+    """This variant of VectorEnvWrapper sets *_space attributes. This
+    silences warnings Gymnasium gives when accessing them."""
+
+    def __init__(self, env):
+        super().__init__(env)
+        self.observation_space = env.observation_space
+        self.single_observation_space = env.single_observation_space
+        self.action_space = env.action_space
+        self.single_action_space = env.single_action_space
+        self.num_envs = env.num_envs
+
+
+class RewardWrapper(_VectorEnvWrapper):
     def __init__(self, env: VectorEnv, f):
         super().__init__(env)
         self.f = f
@@ -21,7 +34,7 @@ class RewardWrapper(VectorEnvWrapper):
         return next_obs, reward, term, trunc, info
 
 
-class ObservationWrapper(VectorEnvWrapper):
+class ObservationWrapper(_VectorEnvWrapper):
     def __init__(self, env):
         super().__init__(env)
 
@@ -46,7 +59,7 @@ class ObservationWrapper(VectorEnvWrapper):
         return next_obs, reward, term, trunc, info
 
 
-class ActionWrapper(VectorEnvWrapper):
+class ActionWrapper(_VectorEnvWrapper):
     def __init__(self, env):
         super().__init__(env)
 
@@ -58,7 +71,7 @@ class ActionWrapper(VectorEnvWrapper):
         return super().step_async(actions)
 
 
-class ClipAction(VectorEnvWrapper):
+class ClipAction(_VectorEnvWrapper):
     def step_async(self, actions):
         actions = np.clip(
             actions,
@@ -68,7 +81,7 @@ class ClipAction(VectorEnvWrapper):
         return super().step_async(actions)
 
 
-class RecordEpisodeStatistics(VectorEnvWrapper):
+class RecordEpisodeStatistics(_VectorEnvWrapper):
     def __init__(self, env: VectorEnv):
         super().__init__(env)
 
@@ -106,7 +119,7 @@ class RecordEpisodeStatistics(VectorEnvWrapper):
         return next_obs, reward, term, trunc, info
 
 
-class VectorListInfo(VectorEnvWrapper):
+class VectorListInfo(_VectorEnvWrapper):
     def reset_wait(self, **kwargs):
         obs, info = super().reset_wait(**kwargs)
         info = self._convert(info)
