@@ -1,4 +1,0 @@
-Alien-v5:
-  env:
-    type: atari
-    atari.env_id: ALE/Alien-v5
