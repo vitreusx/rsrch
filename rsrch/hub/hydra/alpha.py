@@ -40,9 +40,10 @@ class Alpha(nn.Module):
         self.cfg = cfg
         self.adaptive = cfg.adaptive
         if cfg.adaptive:
-            log_min_value = torch.tensor(cfg.min_value).log()
-            self.log_alpha = nn.Parameter(torch.tensor(log_min_value))
-            self.register_buffer("min_value", log_min_value)
+            assert cfg.min_value is not None
+            min_log_value = torch.tensor(cfg.min_value).log()
+            self.register_buffer("min_log_value", min_log_value)
+            self.log_alpha = nn.Parameter(torch.tensor(0.0))
             self.opt = cfg.opt.make()([self.log_alpha])
             self.alpha = self.log_alpha.exp().item()
 
@@ -73,14 +74,16 @@ class Alpha(nn.Module):
         """
 
         if self.cfg.adaptive:
-            loss = self.log_alpha * (ent - self.target_ent).detach()
+            loss = (
+                self.log_alpha.clamp_min(self.min_log_value)
+                * (ent - self.target_ent).detach()
+            )
             if w is not None:
                 loss = loss * w
+
             self.opt.zero_grad(set_to_none=True)
             loss.mean().backward()
             self.opt.step()
-            with torch.no_grad():
-                self.log_alpha.fill_(torch.max(self.log_alpha, self.min_value))
             self.alpha = self.log_alpha.exp().item()
 
             if metrics is not None:

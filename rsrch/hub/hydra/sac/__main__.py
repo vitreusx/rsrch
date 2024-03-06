@@ -1,4 +1,6 @@
 from collections import defaultdict
+from datetime import datetime
+from functools import partial
 from pathlib import Path
 
 import numpy as np
@@ -7,6 +9,8 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 from tqdm.auto import tqdm
 
+import rsrch.distributions as D
+import rsrch.distributions.transforms as DT
 from rsrch import spaces
 from rsrch.exp import tensorboard
 from rsrch.nn import dist_head as dh
@@ -18,7 +22,33 @@ from rsrch.utils import cron, repro
 
 from .. import env
 from ..alpha import Alpha
+from ..utils import layer_init
 from . import config
+
+
+class ActHead(nn.Module):
+    def __init__(self, in_features: int, out_space: spaces.torch.Box):
+        super().__init__()
+        self.shape = out_space.shape
+        out_dim = int(np.prod(out_space.shape))
+        self.mean_fc = nn.Linear(in_features, out_dim)
+        self.mean_fc.apply(partial(layer_init, std=1e-2))
+        # Pseudo-scale factor
+        self.lmbd_f = nn.Parameter(torch.zeros(out_dim))
+        self._min_lmbd_f, self._max_lmbd_f = -5.0, 5.0
+        self.register_buffer("act_loc", out_space.low)
+        self.register_buffer("act_scale", out_space.high - out_space.low)
+
+    def forward(self, x: Tensor):
+        mean = 0.5 + 0.45 * torch.tanh(self.mean_fc(x))
+        lmbd_f = self.lmbd_f
+        lmbd_f = self._min_lmbd_f + F.softplus(lmbd_f - self._min_lmbd_f)
+        lmbd_f = self._max_lmbd_f - F.softplus(self._max_lmbd_f - lmbd_f)
+        lmbd = (1.0 + lmbd_f.exp()) / torch.minimum(mean, 1.0 - mean)
+        alpha, beta = mean * lmbd, (1.0 - mean) * lmbd
+        alpha, beta = alpha.reshape(-1, *self.shape), beta.reshape(-1, *self.shape)
+        unscaled = D.Beta(alpha, beta, len(self.shape))
+        return D.Affine(unscaled, self.act_loc, self.act_scale)
 
 
 def main():
@@ -40,7 +70,12 @@ def main():
     obs_dim = int(np.prod(env_f.obs_space.shape))
     act_dim = int(np.prod(env_f.act_space.shape))
 
-    exp = tensorboard.Experiment(project="sac", config=cfg_d)
+    env_id = getattr(cfg.env, cfg.env.type).env_id
+    exp = tensorboard.Experiment(
+        project="sac",
+        run=f"{env_id}__{datetime.now():%Y-%m-%d_%H-%M-%S}",
+        config=cfg_d,
+    )
 
     env_step, opt_step = 0, 0
     exp.register_step("env_step", lambda: env_step, default=True)
@@ -75,9 +110,9 @@ def main():
         qf.append(Q().to(device))
         qf_t.append(Q().to(device))
 
-    qf_opt = cfg.opt.make()(qf.parameters())
+    qf_opt = cfg.value.opt.make()(qf.parameters())
     polyak.sync(qf, qf_t)
-    should_step_polyak = make_sched(cfg.polyak.sched)
+    should_step_polyak = make_sched(cfg.value.polyak.sched)
 
     class Actor(nn.Sequential):
         def __init__(self):
@@ -89,11 +124,12 @@ def main():
                     act_layer=nn.ReLU,
                     final_layer="fc",
                 ),
-                dh.Beta(cfg.hidden_dim, env_f.act_space),
+                ActHead(cfg.hidden_dim, env_f.act_space),
+                # dh.Beta(cfg.hidden_dim, env_f.act_space),
             )
 
     actor = Actor().to(device)
-    actor_opt = cfg.opt.make()(actor.parameters())
+    actor_opt = cfg.actor.opt.make()(actor.parameters())
 
     class TrainAgent(gym.vector.Agent):
         @torch.inference_mode()
@@ -106,8 +142,10 @@ def main():
     train_envs = env_f.vector_env(cfg.num_envs, mode="train")
     env_iter = iter(rollout.steps(train_envs, train_agent))
 
-    should_opt = make_sched(cfg.opt_sched)
-    should_log = make_sched(cfg.log_sched)
+    should_opt = make_sched(cfg.value.sched)
+    should_opt_actor = make_sched({"every": [cfg.actor.opt_ratio, "opt_step"]})
+    should_log_v = make_sched(cfg.log_sched)
+    should_log_a = make_sched(cfg.log_sched)
 
     class ValAgent(gym.vector.Agent):
         @torch.inference_mode()
@@ -167,53 +205,58 @@ def main():
             pbar.update(1)
 
         while should_opt:
-            for _ in range(cfg.q_opt_iters):
-                idxes = sampler.sample(cfg.batch_size)
-                batch = env_f.fetch_step_batch(buf, idxes)
+            idxes = sampler.sample(cfg.batch_size)
+            batch = env_f.fetch_step_batch(buf, idxes)
 
-                with torch.no_grad():
-                    next_act_rv = actor(batch.next_obs)
-                    next_act = next_act_rv.sample()
-                    min_q = torch.min(
-                        qf_t[0](batch.next_obs, next_act),
-                        qf_t[1](batch.next_obs, next_act),
-                    )
-                    next_v = min_q - alpha.value * next_act_rv.log_prob(next_act)
-                    gamma = (1.0 - batch.term.float()) * cfg.gamma
-                    q_targ = batch.reward + gamma * next_v
+            with torch.no_grad():
+                next_act_rv = actor(batch.next_obs)
+                next_act = next_act_rv.sample()
+                min_q = torch.min(
+                    qf_t[0](batch.next_obs, next_act),
+                    qf_t[1](batch.next_obs, next_act),
+                )
+                next_v = min_q - alpha.value * next_act_rv.log_prob(next_act)
+                gamma = (1.0 - batch.term.float()) * cfg.gamma
+                q_targ = batch.reward + gamma * next_v
 
-                qf0_pred = qf[0](batch.obs, batch.act)
-                qf1_pred = qf[1](batch.obs, batch.act)
-                q_loss = F.mse_loss(qf0_pred, q_targ) + F.mse_loss(qf1_pred, q_targ)
+            qf0_pred = qf[0](batch.obs, batch.act)
+            qf1_pred = qf[1](batch.obs, batch.act)
+            q_loss = F.mse_loss(qf0_pred, q_targ) + F.mse_loss(qf1_pred, q_targ)
 
-                qf_opt.zero_grad(set_to_none=True)
-                q_loss.backward()
-                qf_opt.step()
-                while should_step_polyak:
-                    polyak.update(qf, qf_t, cfg.polyak.tau)
+            qf_opt.zero_grad(set_to_none=True)
+            q_loss.backward()
+            qf_opt.step()
+            while should_step_polyak:
+                polyak.update(qf, qf_t, cfg.value.polyak.tau)
 
-                opt_step += 1
+            if should_opt_actor:
+                act_rv = actor(batch.obs)
+                act = act_rv.rsample()
+                min_q = torch.minimum(
+                    qf[0](batch.obs, act),
+                    qf[1](batch.obs, act),
+                )
+                actor_loss = -(min_q - alpha.value * act_rv.log_prob(act)).mean()
 
-            act_rv = actor(batch.obs)
-            act = act_rv.rsample()
-            actor_loss = -(
-                qf[0](batch.obs, act) - alpha.value * act_rv.log_prob(act)
-            ).mean()
+                actor_opt.zero_grad(set_to_none=True)
+                actor_loss.backward()
+                actor_opt.step()
 
-            actor_opt.zero_grad(set_to_none=True)
-            actor_loss.backward()
-            actor_opt.step()
+                if should_log_a:
+                    exp.add_scalar("train/actor_loss", actor_loss)
 
             metrics = {}
             if alpha.adaptive:
+                act_rv = actor(batch.obs)
                 alpha.opt_step(act_rv.entropy(), metrics=metrics)
 
-            while should_log:
+            if should_log_v:
                 exp.add_scalar("train/mean_q", qf0_pred.mean())
                 exp.add_scalar("train/q_loss", q_loss)
-                exp.add_scalar("train/actor_loss", actor_loss)
                 for k, v in metrics.items():
                     exp.add_scalar(f"train/{k}", v)
+
+            opt_step += 1
 
 
 if __name__ == "__main__":
