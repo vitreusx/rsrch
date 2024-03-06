@@ -4,7 +4,7 @@
       "name": "PPO",
       "type": "debugpy",
       "request": "launch",
-      "module": "rsrch.hub.hydra.ppo",
+      "module": "rsrch.hub.rl.ppo",
       "pythonArgs": ["-O"],
       "env": {
         // "CUDA_LAUNCH_BLOCKING": "1", 
@@ -17,7 +17,7 @@
       "name": "SAC",
       "type": "debugpy",
       "request": "launch",
-      "module": "rsrch.hub.hydra.sac",
+      "module": "rsrch.hub.rl.sac",
       "pythonArgs": ["-O"],
       "env": {
         // "CUDA_LAUNCH_BLOCKING": "1", 
@@ -31,46 +31,7 @@
       "name": "Rainbow",
       "type": "debugpy",
       "request": "launch",
-      "module": "rsrch.hub.hydra.rainbow",
-      "pythonArgs": ["-O"],
-      "env": {
-        // "CUDA_LAUNCH_BLOCKING": "1", 
-        "MUJOCO_GL": "osmesa",
-        "KINETO_LOG_LEVEL": "3", // ERROR
-      },
-      "justMyCode": false
-    },
-    {
-      "name": "TD3",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "rsrch.hub.hydra.td3",
-      "pythonArgs": ["-O"],
-      "env": {
-        // "CUDA_LAUNCH_BLOCKING": "1", 
-        "MUJOCO_GL": "osmesa",
-        "KINETO_LOG_LEVEL": "3", // ERROR
-      },
-      "justMyCode": false
-    },
-    {
-      "name": "MBPO",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "rsrch.hub.hydra.mbpo",
-      "pythonArgs": ["-O"],
-      "env": {
-        // "CUDA_LAUNCH_BLOCKING": "1", 
-        "MUJOCO_GL": "osmesa",
-        "KINETO_LOG_LEVEL": "3", // ERROR
-      },
-      "justMyCode": false
-    },
-    {
-      "name": "REDQ",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "rsrch.hub.hydra.redq",
+      "module": "rsrch.hub.rl.rainbow",
       "pythonArgs": ["-O"],
       "env": {
         // "CUDA_LAUNCH_BLOCKING": "1", 
