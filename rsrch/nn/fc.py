@@ -54,4 +54,5 @@ class FullyConnected(nn.Sequential):
             layers.pop()
             layer_types.pop()
 
+        layers = [x for x in layers if not isinstance(x, nn.Identity)]
         super().__init__(*layers)

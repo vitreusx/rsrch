@@ -389,25 +389,10 @@ class Tensorlike:
         ...
 
     def to(self, *args, **kwargs):
-        if len(args) == 1:
-            arg = args[0]
-            if isinstance(arg, (torch.Tensor, Tensorlike)):
-                return self._to(arg.device, arg.dtype, **kwargs)
-            else:
-                return self._to(None, arg, **kwargs)
-        else:
-            return self._to(*args, **kwargs)
-
-    def _to(self, device=None, dtype=None, non_blocking=False, copy=False):
         fields = {}
         for name in self._tensors:
             tensor: Tensorlike = getattr(self, name)
-            fields[name] = tensor.to(
-                device=device,
-                dtype=dtype,
-                non_blocking=non_blocking,
-                copy=copy,
-            )
+            fields[name] = tensor.to(*args, **kwargs)
         return self._new(self.shape, fields)
 
     @torch_function(torch.clone)

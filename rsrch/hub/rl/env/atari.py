@@ -118,9 +118,9 @@ class Factory(base.Factory):
             obs_space,
             env_act_space,
             act_space,
-            frame_skip=cfg.frame_skip,
             seed=seed,
         )
+        self.frame_skip = cfg.frame_skip
 
     def env(self, mode="val", record=False):
         if not record and self.cfg.use_envpool:

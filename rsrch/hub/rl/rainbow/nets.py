@@ -200,7 +200,7 @@ class Q(nn.Sequential):
         )
 
         if cfg.expl.noisy:
-            noisy.replace_(
+            head = noisy.replace_(
                 module=head,
                 sigma0=cfg.expl.sigma0,
                 factorized=cfg.expl.factorized,

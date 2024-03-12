@@ -19,28 +19,45 @@ def layer_init(layer, std=1e-2, bias=0.0):
 class Normal(nn.Module):
     def __init__(
         self,
-        in_features: int,
+        in_features: int | None,
         out_shape: torch.Size | int,
         std: float | Literal["softplus", "sigmoid", "exp"] = "softplus",
+        std_as_param=False,
     ):
         super().__init__()
         if isinstance(out_shape, int):
             out_shape = [out_shape]
         self.out_shape = torch.Size(out_shape)
         self.out_features = int(np.prod(out_shape))
+
         self.std = std
-        if isinstance(self.std, str):
-            self.fc = nn.Linear(in_features, 2 * self.out_features)
-        else:
-            self.fc = nn.Linear(in_features, self.out_features)
-        self.fc.apply(layer_init)
+
+        self.std_as_param = std_as_param
+        if std_as_param:
+            assert isinstance(std, str)
+            self.log_std = nn.Parameter(torch.zeros(self.out_shape))
+
+        self.in_features = in_features
+        if in_features is not None:
+            if isinstance(self.std, str) and not std_as_param:
+                self.fc = nn.Linear(in_features, 2 * self.out_features)
+            else:
+                self.fc = nn.Linear(in_features, self.out_features)
+            self.fc.apply(layer_init)
 
     def forward(self, x: Tensor) -> D.Distribution:
-        params: Tensor = self.fc(x)
+        if self.in_features is not None:
+            x = self.fc(x)
+
         if isinstance(self.std, str):
-            mean, std = params.chunk(2, dim=1)  # [B, N_out]
-            mean = mean.reshape(len(x), *self.out_shape)
-            std = std.reshape(len(x), *self.out_shape)
+            if self.std_as_param:
+                mean = x.reshape(len(x), *self.out_shape)
+                std = self.log_std
+            else:
+                mean, std = x.chunk(2, dim=1)  # [B, N_out]
+                mean = mean.reshape(len(x), *self.out_shape)
+                std = std.reshape(len(x), *self.out_shape)
+
             if self.std == "softplus":
                 std = nn.functional.softplus(std)
             elif self.std == "sigmoid":
@@ -48,7 +65,7 @@ class Normal(nn.Module):
             elif self.std == "exp":
                 std = std.exp()
         else:
-            mean = params
+            mean = x
             mean = mean.reshape(len(x), *self.out_shape)
             std = self.std
 
@@ -60,12 +77,15 @@ class Normal(nn.Module):
 class Bernoulli(nn.Module):
     def __init__(self, in_features: int):
         super().__init__()
-        self.fc = nn.Linear(in_features, 1)
-        self.fc.apply(layer_init)
+        self.in_features = in_features
+        if in_features is not None:
+            self.fc = nn.Linear(in_features, 1)
+            self.fc.apply(partial(layer_init, std=1e-2))
 
     def forward(self, x: Tensor) -> D.Distribution:
-        logits: Tensor = self.fc(x).ravel()
-        return D.Bernoulli(logits=logits)
+        if self.in_features is not None:
+            x = self.fc(x).ravel()
+        return D.Bernoulli(logits=x)
 
 
 class Categorical(nn.Module):
@@ -73,16 +93,19 @@ class Categorical(nn.Module):
         super().__init__()
         self.in_features = in_features
         self.num_classes = num_classes
-        self.fc = nn.Linear(in_features, num_classes)
-        self.fc.apply(layer_init)
         self._min_pr = min_pr
+        if self.in_features is not None:
+            self.fc = nn.Linear(in_features, num_classes)
+            self.fc.apply(partial(layer_init, std=1e-2))
 
     def forward(self, x: Tensor) -> D.Categorical:
+        if self.in_features is not None:
+            x = self.fc(x)
+
         if self._min_pr is None:
-            logits: Tensor = self.fc(x)
-            return D.Categorical(logits=logits)
+            return D.Categorical(logits=x)
         else:
-            probs = nn.functional.softmax(self.fc(x), -1)
+            probs = nn.functional.softmax(x, -1)
             probs = self._min_pr + (1.0 - self._min_pr) * probs
             return D.Categorical(probs=probs)
 
@@ -91,7 +114,7 @@ class OneHotCategoricalST(nn.Module):
     def __init__(self, in_features: int, num_classes: int, min_pr=None):
         super().__init__()
         self.fc = nn.Linear(in_features, num_classes)
-        self.fc.apply(layer_init)
+        self.fc.apply(partial(layer_init, std=1e-2))
         self._min_pr = min_pr
 
     def forward(self, x: Tensor) -> D.Categorical:
@@ -113,7 +136,7 @@ class MultiheadOHST(nn.Module):
         self.out_features = out_features
         self.num_heads = num_heads
         self.fc = nn.Linear(in_features, out_features)
-        self.fc.apply(layer_init)
+        self.fc.apply(partial(layer_init, std=1e-2))
         self._min_pr = min_pr
 
     def forward(self, x: Tensor) -> D.MultiheadOHST:

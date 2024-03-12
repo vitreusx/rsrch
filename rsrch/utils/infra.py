@@ -1,11 +1,35 @@
-class Specs:
-    """Environment specs."""
+import os
+from abc import abstractmethod
+from collections import defaultdict
+from dataclasses import ABC, dataclass
+
+import torch
 
 
-class Infra:
-    @property
-    def exec_env(self):
-        """Current execution environment."""
+@dataclass
+class Requires:
+    """Requirements for the execution of the program."""
 
-    def ensure(self, specs: Specs):
-        """Ensure that the current environment conforms to given specs. If not, then a fork of the current program is created in one of the available environments."""
+    nodes: int = 1
+    gpus_per_node: int = 0
+    gpu_type: str = "cuda"
+
+
+class ExecEnv(ABC):
+    """Abstract execution environment."""
+
+    @abstractmethod
+    def spawn(self):
+        """Fork current program to another execution environment."""
+
+
+class Local(ExecEnv):
+    def __init__(self):
+        self.devices = defaultdict(lambda: 0)
+        self.devices["cpu"] = len(os.sched_getaffinity(0))
+        if torch.cuda.is_available():
+            self.devices["cuda"] = torch.cuda.device_count
+
+    def spawn(self):
+        # We're already running locally
+        return

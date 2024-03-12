@@ -77,6 +77,32 @@ class Every3:
         return cur_step * self.iters > cur_iter * self.every
 
 
+class Every4:
+    def __init__(self, step_fn, every=1, iters=1):
+        self.step_fn = step_fn
+        self.every = every
+        self.iters = iters
+        self._last, self._acc = None, None
+
+    def __bool__(self):
+        cur = self.step_fn()
+        if self._last is None:
+            self._acc = self.iters
+            self._last = cur
+        else:
+            if cur - self._last >= self.every:
+                self._acc = self.iters
+                self._last = cur
+            elif cur > self._last:
+                self._acc = 0
+
+        if self._acc > 0:
+            self._acc -= 1
+            return True
+        else:
+            return False
+
+
 class Once:
     def __init__(self, cond):
         self.cond = cond
@@ -86,6 +112,15 @@ class Once:
         if not self._done:
             self._done = self.cond()
         return self._done
+
+
+class Until:
+    def __init__(self, step_fn, max_value):
+        self.step_fn = step_fn
+        self.max_value = max_value
+
+    def __bool__(self):
+        return self.step_fn() <= self.max_value
 
 
 class Never:

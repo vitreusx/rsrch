@@ -46,7 +46,6 @@ class Factory(base.Factory):
             obs_space,
             env_act_space,
             act_space,
-            frame_skip=1,
             seed=seed,
         )
 

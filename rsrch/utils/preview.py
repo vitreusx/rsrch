@@ -8,7 +8,7 @@ def make_grid(images, ncols=None, padding=2) -> Image.Image:
     def _convert(img):
         if not isinstance(img, Image.Image):
             img = F.to_pil_image(img)
-        return img.convert("RGB")
+        return img.convert("RGBA")
 
     def flat_to_2d():
         assert ncols is not None
@@ -62,7 +62,7 @@ def make_grid(images, ncols=None, padding=2) -> Image.Image:
 
     total_width = sum(widths) + padding * (len(widths) - 1)
     total_height = sum(heights) + padding * (len(heights) - 1)
-    grid_img = Image.new("RGB", (total_width, total_height))
+    grid_img = Image.new("RGBA", (total_width, total_height))
 
     offset_x = np.cumsum([0, *widths]) + padding * np.arange(len(widths) + 1)
     offset_y = np.cumsum([0, *heights]) + padding * np.arange(len(heights) + 1)
@@ -72,7 +72,7 @@ def make_grid(images, ncols=None, padding=2) -> Image.Image:
             img = grid[row_idx][col_idx]
             if img is None:
                 w, h = widths[col_idx], heights[row_idx]
-                img = Image.new("RGB", (w, h), 0)
+                img = Image.new("RGBA", (w, h), 0)
 
             off_x, off_y = offset_x[col_idx], offset_y[row_idx]
             grid_img.paste(img, (off_x, off_y))

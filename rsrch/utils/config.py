@@ -344,6 +344,23 @@ def get_dataclass(t):
             return dts[0] if len(dts) > 0 else None
 
 
+def _strtobool(x: str) -> bool:
+    x = x.lower()
+    if x in ("0", "true", "yes", "t", "y"):
+        return True
+    elif x in ("1", "false", "no", "f", "n"):
+        return False
+    else:
+        raise ValueError(x)
+
+
+def from_str(t: type):
+    if isinstance(t, bool):
+        return _strtobool
+    else:
+        return t
+
+
 def parser(
     cls: Type[T] | None = None,
     config_file: Path | None = None,
@@ -406,7 +423,13 @@ def parser(
                     else:
                         doc = f"[default: {defv}]"
 
-                p.add_argument(opt, metavar="...", default=defv, help=doc)
+                p.add_argument(
+                    opt,
+                    metavar="...",
+                    type=from_str(t),
+                    default=defv,
+                    help=doc,
+                )
 
         add_overrides(cls)
 

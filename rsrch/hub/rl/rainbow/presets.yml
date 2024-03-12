@@ -9,15 +9,12 @@ dominik:
       iters: 1
   nets:
     encoder: impala[large,2]
-    spectral_norm: none # last
+    spectral_norm: last
     polyak: {every: [32e3, env_step], tau: 0.0}
   distq.enabled: false
+  prioritized.enabled: false
   total_env_steps: 40e6
   data.parallel: true
-debug:
-  warmup: 2e3
-  val.sched: {never: true}
-  data.buf_cap: 100e3
 der:
   warmup: 1.6e3
   data.slice_len: 20

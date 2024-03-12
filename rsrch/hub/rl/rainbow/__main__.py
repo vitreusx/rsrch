@@ -1,4 +1,4 @@
-from .main import main
+from . import train
 
 if __name__ == "__main__":
-    main()
+    train.main()

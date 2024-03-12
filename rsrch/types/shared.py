@@ -5,9 +5,7 @@ import numpy as np
 
 
 class shared_ndarray(np.ndarray):
-    """A numpy array, which can be shared between processes.
-    NOTE: Pickles of this class contain shared memory name, NOT the array data.
-    To store/load the underlying data, use np.load/np.save."""
+    """A numpy array, which can be shared between processes via pickle."""
 
     def __new__(cls, shape, dtype=np.float32, shm_name=None):
         if shm_name is None:

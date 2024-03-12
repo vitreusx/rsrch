@@ -1,6 +1,32 @@
 {
   "configurations": [
     {
+      "name": "cVAE",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "rsrch.hub.vis.cvae",
+      "pythonArgs": ["-O"],
+      "env": {
+        // "CUDA_LAUNCH_BLOCKING": "1", 
+        // "MUJOCO_GL": "osmesa",
+        "KINETO_LOG_LEVEL": "3", // ERROR
+      },
+      "justMyCode": false
+    },
+    {
+      "name": "Dreamer",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "rsrch.hub.rl.dreamer",
+      "pythonArgs": ["-O"],
+      "env": {
+        // "CUDA_LAUNCH_BLOCKING": "1", 
+        "MUJOCO_GL": "osmesa",
+        "KINETO_LOG_LEVEL": "3", // ERROR
+      },
+      "justMyCode": false
+    },
+    {
       "name": "PPO",
       "type": "debugpy",
       "request": "launch",

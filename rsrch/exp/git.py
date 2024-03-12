@@ -3,7 +3,7 @@ from pathlib import Path
 import git
 
 
-def create_auto_commit(run: str):
+def create_auto_commit(run: str) -> str:
     """Create an auto-commit for a run in a separate branch named
     `auto/{branch}`, where {branch} is the current branch name."""
 
@@ -30,3 +30,5 @@ def create_auto_commit(run: str):
     # Switch back to the original state
     repo.git.symbolic_ref("HEAD", f"refs/heads/{branch}")
     repo.git.reset()
+
+    return auto

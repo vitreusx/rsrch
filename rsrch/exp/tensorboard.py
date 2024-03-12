@@ -3,16 +3,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .git import create_auto_commit
 import numpy as np
 import torch
-import torchvision.transforms.functional as F
+import torchvision.transforms.functional as tv_F
 from moviepy.editor import VideoClip
+from PIL import Image
 from ruamel import yaml
 from torch import Tensor
 from torch.utils.tensorboard import SummaryWriter
 
 from rsrch.utils.path import sanitize
+
+from .git import create_auto_commit
 
 
 def _flatten(x, prefix=[]):
@@ -90,3 +92,8 @@ class Experiment:
         vid_tensor = torch.from_numpy(vid_arr)
         vid_tensor = vid_tensor.permute(0, 3, 1, 2)
         self._writer.add_video(tag, vid_tensor, global_step=step, fps=int(fps))
+
+    def add_image(self, tag: str, pic: Image.Image, step=None):
+        step = self._get_step(step)
+        pic_arr = tv_F.to_tensor(pic)
+        self._writer.add_image(tag, pic_arr, global_step=step)

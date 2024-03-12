@@ -1,14 +1,10 @@
-from dataclasses import dataclass
-from functools import partial
-
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 
 import rsrch.distributions as D
+from rsrch.rl import gym
 from rsrch.types import Tensorlike
-
-from .nets import SpaceDistLayer
 
 
 class State(Tensorlike):
@@ -31,123 +27,102 @@ class StateDist(Tensorlike, D.Distribution):
         return State(self.deter, self.stoch.sample(sample_shape))
 
 
-class StochDistLayer(nn.Module):
-    def __init__(
-        self,
-        in_features: int,
-        stoch: int,
-        discrete: bool | int,
-        min_std=0.1,
-    ):
+class StateToTensor(nn.Module):
+    def forward(self, state: State) -> Tensor:
+        return torch.cat([state.deter, state.stoch], -1)
+
+
+class PredCell(nn.Module):
+    def __init__(self):
         super().__init__()
-        self._discrete = discrete
-        self._min_std = min_std
-        out_dim = (2 if not discrete else 1) * stoch
-        self.fc = nn.Linear(in_features, out_dim)
+        self.deter: nn.RNNCellBase
+        self.deter_norm = nn.LayerNorm([self._deter.hidden_size])
+        self.stoch: nn.Module
 
-    def forward(self, x: Tensor) -> StateDist:
-        out: Tensor = self.fc(x)
-        if self._discrete:
-            return D.MultiheadOHST(self._discrete, logits=out)
-        else:
-            mean, std = out.chunk(2, -1)
-            std = F.softplus(std) + self._min_std
-            return D.Normal(mean, std, 1)
+    def forward(self, state: State, input: Tensor) -> StateDist:
+        input = torch.cat([input, state.stoch], 1)
+        next_deter = self.deter(state.deter, input)
+        next_deter = self.deter_norm(next_deter)
+        next_stoch_dist = self.stoch(next_deter)
+        return StateDist(next_deter, next_stoch_dist)
 
 
-class EnsembleRSSM(nn.Module):
-    def __init__(
-        self,
-        obs_dim: int,
-        act_dim: int,
-        ensemble=5,
-        stoch=256,
-        deter=256,
-        hidden=256,
-        discrete=False,
-        act="elu",
-        norm=None,
-        min_std=0.1,
-    ):
+class RSSM(nn.Module):
+    def __init__(self):
         super().__init__()
-        self.deter = deter
-        self.stoch = stoch
+        self.deter_dim: int
+        self.stoch_dim: int
+        self.obs_dim: int
+        self.act_dim: int
+        self._init: nn.RNNBase
+        self._belief: nn.RNNBase
+        self.proj: nn.Module
+        self.pred: PredCell
 
-        act_layer = {"elu": nn.ELU, "relu": nn.ReLU}[act]
-        norm_layer = {None: lambda _: nn.Identity, "bn": nn.BatchNorm1d}[norm]
-        stoch_layer = lambda h: StochDistLayer(h, stoch, discrete, min_std)
+    @property
+    def device(self):
+        return next(self.parameters()).device
 
-        self._img_in = nn.Sequential(
-            nn.Linear(stoch + act_dim, hidden),
-            norm_layer(hidden),
-            act_layer(),
+    def init(self, obs: Tensor) -> Tensor:
+        _, init_h = self._init(obs[None].contiguous())
+        return init_h
+
+    def beliefs(
+        self,
+        act_seq: Tensor,
+        obs_seq: Tensor,
+        init_h: Tensor | None = None,
+    ) -> tuple[Tensor, Tensor]:
+        is_none = init_h is None
+        if is_none:
+            init_h = self.init(obs_seq[0])
+            obs_seq = obs_seq[1:]
+        input = torch.cat([act_seq, obs_seq], 1)
+        out, next_h = self._belief(input.contiguous(), init_h.contiguous())
+        if is_none:
+            out = torch.cat([init_h[-1][None], out], 0)
+        return out, next_h
+
+    def update(self, cur_h: Tensor, act: Tensor, next_obs: Tensor) -> Tensor:
+        input = torch.cat([act, next_obs], 1)[None]
+        _, next_h = self._belief(input.contiguous(), cur_h.contiguous())
+        return next_h
+
+
+def state_dist_div(p: StateDist, q: StateDist):
+    return F.mse_loss(p.deter, q.deter) + D.kl_divergence(p.stoch, q.stoch)
+
+
+class VecAgent(gym.VecAgent):
+    def __init__(self, wm: RSSM, obs_enc, act_enc, env_f, num_envs: int):
+        super().__init__()
+        self.wm = wm
+        self.env_f = env_f
+        self.obs_enc, self.act_enc = obs_enc, act_enc
+
+        self._obs = torch.empty((num_envs, wm.obs_dim), device=wm.device)
+        self._state = State(
+            deter=torch.empty((num_envs, wm.deter_dim), device=wm.device),
+            stoch=torch.empty((num_envs, wm.stoch_dim), device=wm.device),
         )
 
-        self._obs_out = nn.Sequential(
-            nn.Linear(deter + obs_dim, hidden),
-            norm_layer(hidden),
-            act_layer(),
-            stoch_layer(hidden),
+    def reset(self, idxes, obs, info):
+        obs = self.env_f.move_obs(obs)
+        obs = self.obs_enc(obs)
+        self._obs[idxes] = obs
+        self._state[idxes] = self.wm.init(obs)
+
+    def policy(self, obs):
+        ...
+
+    def step(self, act):
+        act = self.env_f.move_act(act, to="net")
+        self._act = self.act_enc(act)
+
+    def observe(self, idxes, next_obs, term, trunc, info):
+        next_obs = self.env_f.move_obs(next_obs)
+        next_obs = self.obs_enc(next_obs)
+        self._obs[idxes] = next_obs
+        self._state[idxes] = self.wm.update(
+            self._state[idxes], self._act[idxes], next_obs
         )
-
-        self._img_stoch = nn.ModuleList()
-        for _ in range(ensemble):
-            self._img_stoch.append(
-                nn.Sequential(
-                    nn.Linear(deter, hidden),
-                    norm_layer(hidden),
-                    act_layer(),
-                    stoch_layer(hidden),
-                )
-            )
-
-        # NOTE: Originally, it's custom GRUCell with LN
-        self._cell = nn.GRUCell(hidden, deter)
-
-    def imagine(self, act: Tensor, state: State | None = None):
-        seq_len, bs = act.shape[:2]
-        if state is None:
-            deter = torch.zeros(bs, self.deter, device=act.device)
-            stoch = torch.zeros(bs, self.stoch, device=act.device)
-            state = State(deter, stoch)
-
-        rvs, states = [], [state]
-        for step in range(seq_len):
-            state_rv = self.img_step(state, act[step])
-            rvs.append(state_rv)
-            state = state_rv.rsample()
-            states.append(state)
-
-        return torch.stack(rvs), torch.stack(states)
-
-    def observe(self, obs: Tensor, act: Tensor, state: State | None = None):
-        seq_len, bs = act.shape[:2]
-        if state is None:
-            deter = torch.zeros(bs, self.deter, device=act.device)
-            stoch = torch.zeros(bs, self.stoch, device=act.device)
-            state = State(deter, stoch)
-
-        post, prior, states = [], [], [state]
-        for step in range(seq_len):
-            prior_rv = self.img_step(state, act[step])
-            prior.append(prior_rv)
-            prior_h = prior_rv.rsample()
-            post_rv = self.obs_step(prior_h, obs[step])
-            post.append(post_rv)
-            state = post_rv.rsample()
-            states.append(state)
-
-        return torch.stack(post), torch.stack(prior), torch.stack(states)
-
-    def img_step(self, prev_h: State, act: Tensor):
-        x = torch.cat([prev_h.stoch, act], -1)
-        x = self._img_in(x)
-        deter = self._cell(x, prev_h.deter)
-        index = torch.randint(0, len(self._img_stoch), size=()).item()
-        stoch = self._img_stoch[index](deter)
-        return StateDist(deter, stoch)
-
-    def obs_step(self, prev_h: State, next_obs: Tensor):
-        x = torch.cat([prev_h.deter, next_obs], -1)
-        stoch = self._obs_out(x)
-        return StateDist(prev_h.deter, stoch)
