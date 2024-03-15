@@ -8,27 +8,18 @@ from torch import Tensor, nn
 from torch.multiprocessing.reductions import reduce_tensor
 
 
-def reduce_tensor_fix(tensor: Tensor):
-    if tensor.device.type == "cuda" and not getattr(tensor, "_reduced", False):
-        data = tensor.detach().cpu()
-        reduce_value = reduce_tensor(tensor)
-        tensor.copy_(data.to(tensor.device))
-        tensor._reduced = True
-    else:
-        reduce_value = reduce_tensor(tensor)
-    return reduce_value
-
-
 def fix_reductions():
-    """On Windows and WSL, when reducing CUDA tensors for the first time,
-    the tensor is cleared. The (inefficient, but working) fix is to copy
-    the data to CPU (Note: doing .clone() doesn't work), reduce, and then
-    reset the tensor to previous value."""
+    """On Windows and WSL, when reducing CUDA tensors for the first time, ALL
+    CUDA tensors are invalidated. Now, it would appear that one way to remedy
+    this is to do this once on a dummy CUDA tensor to avoid surprises later on
+    in the execution of the program."""
 
-    if platform.system() == "Windows" or "WSL" in platform.platform():
-        for type, reduce in ForkingPickler._extra_reducers.items():
-            if reduce == reduce_tensor:
-                ForkingPickler.register(type, reduce_tensor_fix)
+    if (
+        platform.system() == "Windows" or "WSL" in platform.platform()
+    ) and torch.cuda.is_available():
+        x = torch.empty(8, device="cuda")
+        reduce_tensor(x)
+        del x
 
 
 def _deserializer(ctor, args, state=None, items=None, kvpairs=None, setstate=None):

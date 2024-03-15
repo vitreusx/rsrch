@@ -1,4 +1,5 @@
 import multiprocessing as mp
+from multiprocessing.reduction import ForkingPickler
 from multiprocessing.shared_memory import SharedMemory
 
 import numpy as np
@@ -23,12 +24,13 @@ class shared_ndarray(np.ndarray):
             return
         self._shm: SharedMemory = getattr(obj, "_shm", None)
 
-    def __reduce__(self):
-        return shared_ndarray, (self.shape, self.dtype, self._shm.name)
-
-    def __reduce_ex__(self, __protocol):
-        return self.__reduce__()
-
     def __repr__(self):
         orig = super().__repr__()
         return orig[:-1] + f", shm_name={self._shm.name})"
+
+
+def _mp_reducer(arr: shared_ndarray):
+    return shared_ndarray, (arr.shape, arr.dtype, arr._shm.name)
+
+
+ForkingPickler.register(shared_ndarray, _mp_reducer)

@@ -13,7 +13,6 @@ from threading import Lock, Thread
 from typing import Type, TypeVar
 
 import numpy as np
-import ray
 import torch
 import torch.multiprocessing as mp
 from torch import Tensor, nn
@@ -28,39 +27,149 @@ from rsrch.rl import data, gym
 from rsrch.rl.data import _rollout as rollout
 from rsrch.rl.utils import polyak
 from rsrch.utils import cron, repro
+from rsrch.utils.parallel import Manager
 
 from .. import env
 from ..utils import infer_ctx
 from . import config, nets
 from .distq import ValueDist
 
+logger = Logger(__name__)
+
+
+class QProxy:
+    def __init__(self, qf: nets.Q):
+        self.qf = qf
+
+    def __call__(self, obs, val):
+        with infer_ctx(self.qf):
+            if val:
+                noisy.zero_noise_(self.qf)
+            else:
+                noisy.reset_noise_(self.qf)
+            q: ValueDist | Tensor = self.qf(obs)
+        return q
+
 
 class QAgent(gym.vector.Agent, nn.Module):
-    def __init__(self, env_f: env.Factory, qf: nets.Q, val=False):
+    def __init__(self, env_f: env.Factory, qpx: QProxy, val=False):
         nn.Module.__init__(self)
-        self.qf = qf
+        self.qpx = qpx
         self.env_f = env_f
         self.val = val
-        self.eps = 1.0
 
     def policy(self, obs: np.ndarray):
         obs = self.env_f.move_obs(obs)
-
-        with infer_ctx(self.qf):
-            (noisy.zero_noise_ if self.val else noisy.reset_noise_)(self.qf)
-            q: ValueDist | Tensor = self.qf(obs)
-
+        q = self.qpx(obs, self.val)
         if isinstance(q, ValueDist):
-            act = q.mean.argmax(-1)
-        else:
-            act = q.argmax(-1)
-
+            q = q.mean
+        act = q.argmax(-1)
         return self.env_f.move_act(act, to="env")
+
+
+class DataWorker:
+    def __init__(self, cfg: config.Config, qpx: QProxy, batch_queue):
+        self.cfg = cfg
+        self.qpx = qpx
+        self.batch_queue = batch_queue
+
+        self.device = torch.device(self.cfg.device)
+        self.env_f = env.make_factory(self.cfg.env, self.device, seed=cfg.random.seed)
+
+        if self.cfg.prioritized.enabled:
+            self.sampler = data.PrioritizedSampler(max_size=self.cfg.data.buf_cap)
+        else:
+            self.sampler = data.UniformSampler()
+
+        self.env_buf = self.env_f.slice_buffer(
+            self.cfg.data.buf_cap,
+            self.cfg.data.slice_len,
+            sampler=self.sampler,
+        )
+        self.mtx = Lock()
+
+        self.batch_size = self.cfg.opt.batch_size
+        self.fetch_thr = Thread(target=self._fetch_run)
+
+        self.envs = self.env_f.vector_env(self.cfg.num_envs, mode="train")
+        self.env_step = 0
+        self.agent = gym.vector.agents.EpsAgent(
+            opt=QAgent(self.env_f, self.qpx),
+            rand=gym.vector.agents.RandomAgent(self.envs),
+            eps=self._agent_eps(),
+        )
+
+        self.env_iter = rollout.steps(self.envs, self.agent)
+        self.ep_ids = defaultdict(lambda: None)
+        self.ep_rets = defaultdict(lambda: 0.0)
+
+    def _agent_eps(self):
+        if self.env_step < self.cfg.warmup:
+            return 1.0
+        else:
+            return self.cfg.expl.eps(self.env_step)
+
+    def fetch_start(self):
+        self.fetch_thr.start()
+
+    def _fetch_run(self):
+        while True:
+            payload = self.fetch_batch()
+            self.batch_queue.put(payload)
+
+    def fetch_batch(self):
+        with self.mtx:
+            if isinstance(self.sampler, data.PrioritizedSampler):
+                idxes, is_coefs = self.sampler.sample(self.batch_size)
+                batch = self.env_f.fetch_slice_batch(self.env_buf, idxes)
+                return idxes, is_coefs, batch
+            else:
+                idxes = self.sampler.sample(self.batch_size)
+                batch = self.env_f.fetch_slice_batch(self.env_buf, idxes)
+                return idxes, batch
+
+    def step_async(self):
+        self.env_iter.step_async()
+
+    def step_wait(self):
+        ep_rets = {}
+        for env_idx, step in self.env_iter.step_wait():
+            with self.mtx:
+                self.ep_ids[env_idx], slice_id = self.env_buf.push(
+                    self.ep_ids[env_idx], step
+                )
+            self.ep_rets[env_idx] += step.reward
+
+            if isinstance(self.sampler, data.PrioritizedSampler):
+                if slice_id is not None:
+                    with self.mtx:
+                        max_prio = self.sampler._max.total
+                        if max_prio == 0.0:
+                            max_prio = 1.0
+                        self.sampler[slice_id] = max_prio
+
+            if step.done:
+                del self.ep_ids[env_idx]
+                ep_rets[env_idx] = self.ep_rets[env_idx]
+                del self.ep_rets[env_idx]
+            else:
+                ep_rets[env_idx] = None
+
+            self.env_step += getattr(self.env_f, "frame_skip", 1)
+            self.agent.eps = self._agent_eps()
+        return ep_rets
+
+    def update_prio(self, idxes, prio):
+        with self.mtx:
+            prio_exp = self.cfg.prioritized.prio_exp(self.env_step)
+            prio = prio.float().cpu().numpy() ** prio_exp
+            self.sampler.update(idxes, prio)
 
 
 def main():
     # presets = ["faster"]
-    presets = ["faster", "dominik"]
+    presets = ["faster", "der"]
+    # presets = ["faster", "dominik"]
 
     cfg = config.from_args(
         config.Config,
@@ -69,32 +178,39 @@ def main():
         presets_file=Path(__file__).parent / "presets.yml",
     )
 
+    rng = repro.RandomState()
+    rng.init(cfg.random.seed, deterministic=cfg.random.deterministic)
+
+    opt_step, env_step, agent_step = 0, 0, 0
+    start_time = time.perf_counter()
+
+    def make_sched(cfg: dict):
+        every, unit = cfg["every"]
+        step_fn = {
+            "opt_step": lambda: opt_step,
+            "env_step": lambda: env_step,
+            "agent_step": lambda: agent_step,
+            "time": lambda: time.perf_counter() - start_time,
+        }[unit]
+
+        return cron.Every2(
+            step_fn=step_fn,
+            every=every,
+            iters=cfg.get("iters", 1),
+            never=cfg.get("never", False),
+        )
+
+    device = torch.device(cfg.device)
+    ctx = mp.get_context("spawn")
+    m = Manager(ctx)
+
+    torch.autograd.set_detect_anomaly(True)
+
     env_id = getattr(cfg.env, cfg.env.type).env_id
     exp = tensorboard.Experiment(
         project="rainbow",
         run=f"{env_id}__{datetime.now():%Y-%m-%d_%H-%M-%S}",
     )
-
-    rng = repro.RandomState()
-    rng.init(cfg.random.seed, deterministic=cfg.random.deterministic)
-
-    opt_step, env_step, agent_step = 0, 0, 0
-    step_fns = dict(
-        opt_step=lambda: opt_step,
-        env_step=lambda: env_step,
-        agent_step=lambda: env_step,
-    )
-
-    exp.register_step("env_step", lambda: env_step, default=True)
-    exp.register_step("opt_step", lambda: opt_step)
-
-    def make_sched(cfg: dict):
-        every, unit = cfg["every"]
-        step_fn = step_fns[unit]
-        cfg = {**cfg, "every": every, "step_fn": step_fn}
-        return cron.Every2(**cfg)
-
-    device = torch.device(cfg.device)
 
     prof = profiler(exp.dir / "traces", device)
     prof.register("env_step", "opt_step")
@@ -112,33 +228,36 @@ def main():
         return qf
 
     qf, qf_t = make_qf(), make_qf()
-    polyak.sync(qf, qf_t)
+    qpx = QProxy(qf)
+
+    if cfg.data.parallel:
+        batch_queue = m.ctx.Queue(maxsize=cfg.data.prefetch_factor)
+        data_ = m.remote(DataWorker)(cfg, m.local_ref(qpx), batch_queue)
+    else:
+        batch_queue = queue.Queue(maxsize=cfg.data.prefetch_factor)
+        data_ = DataWorker(cfg, qpx, batch_queue)
+
     qf_opt = cfg.opt.optimizer(qf.parameters())
 
-    train_envs = env_f.vector_env(cfg.num_envs, mode="train")
-    train_agent = gym.vector.agents.EpsAgent(
-        opt=QAgent(env_f, qf, val=False),
-        rand=gym.vector.agents.RandomAgent(train_envs),
-        eps=cfg.expl.eps(env_step),
-    )
+    polyak.sync(qf, qf_t)
+    # qf_polyak = polyak.Polyak(qf, qf_t, **cfg.nets.polyak)
 
-    env_iter = iter(rollout.steps(train_envs, train_agent))
-    ep_ids = defaultdict(lambda: None)
-    ep_rets = defaultdict(lambda: 0.0)
+    env_step, opt_step = 0, 0
+    exp.register_step("env_step", lambda: env_step, default=True)
 
-    if cfg.prioritized.enabled:
-        sampler = data.PrioritizedSampler(max_size=cfg.data.buf_cap)
-    else:
-        sampler = data.UniformSampler()
+    def step_wait():
+        nonlocal env_step, agent_step
+        ep_rets = data_.step_wait()
+        for env_idx, ep_ret in ep_rets.items():
+            if ep_ret is not None:
+                exp.add_scalar("train/ep_ret", ep_ret)
 
-    env_buf = env_f.slice_buffer(
-        cfg.data.buf_cap,
-        cfg.data.slice_len,
-        sampler=sampler,
-    )
+            env_step += getattr(env_f, "frame_skip", 1)
+            agent_step += 1
+            pbar.update(getattr(env_f, "frame_skip", 1))
 
-    val_envs = env_f.vector_env(cfg.num_envs, mode="val")
-    val_agent = QAgent(env_f, qf, val=True)
+    val_envs = env_f.vector_env(cfg.val.envs, mode="val")
+    val_agent = QAgent(env_f, QProxy(qf), val=True)
 
     def val_ret_iter():
         val_ep_rets = defaultdict(lambda: 0.0)
@@ -160,38 +279,17 @@ def main():
     gammas = gammas.to(device)
     final_gamma = cfg.gamma**cfg.data.slice_len
 
-    def take_env_step():
-        env_idx, step = next(env_iter)
-        ep_ids[env_idx], slice_id = env_buf.push(ep_ids[env_idx], step)
-        ep_rets[env_idx] += step.reward
-
-        if isinstance(sampler, data.PrioritizedSampler):
-            if slice_id is not None:
-                max_prio = sampler._max.total
-                if max_prio == 0.0:
-                    max_prio = 1.0
-                sampler[slice_id] = max_prio
-
-        if step.done:
-            exp.add_scalar("train/ep_ret", ep_rets[env_idx])
-            del ep_ids[env_idx]
-            del ep_rets[env_idx]
-
-        nonlocal env_step, agent_step
-        env_step += getattr(env_f, "frame_skip", 1)
-        agent_step += 1
-        train_agent.eps = cfg.expl.eps(env_step)
-
     pbar = ProgressBar(desc="Warmup", total=cfg.warmup, initial=env_step)
     while env_step < cfg.warmup:
-        take_env_step()
-        pbar.n = env_step
-        pbar.update()
+        data_.step_async()
+        step_wait()
+
+    data_.fetch_start()
 
     should_val = make_sched(cfg.val.sched)
     should_opt = make_sched(cfg.opt.sched)
     should_log = make_sched(cfg.log)
-    should_update = make_sched({"every": cfg.nets.polyak["every"]})
+    should_update = make_sched(cfg.nets.polyak)
 
     pbar = ProgressBar(desc="Train", total=cfg.total_env_steps, initial=env_step)
     while env_step < cfg.total_env_steps:
@@ -207,9 +305,8 @@ def main():
             exp.add_scalar("val/mean_ret", np.mean([*val_iter]))
 
         with prof.region("env_step"):
-            take_env_step()
-            pbar.n = env_step
-            pbar.update()
+            data_.step_async()
+            step_wait()
 
         while should_update:
             polyak.update(qf, qf_t, tau=cfg.nets.polyak["tau"])
@@ -217,11 +314,10 @@ def main():
         # Opt step
         while should_opt:
             with prof.region("opt_step"):
-                if isinstance(sampler, data.PrioritizedSampler):
-                    idxes, is_coefs = sampler.sample(cfg.opt.batch_size)
+                if cfg.prioritized.enabled:
+                    idxes, is_coefs, batch = batch_queue.get()
                 else:
-                    idxes = sampler.sample(cfg.opt.batch_size)
-                batch = env_f.fetch_slice_batch(env_buf, idxes)
+                    idxes, batch = batch_queue.get()
 
                 if cfg.aug.rew_clip is not None:
                     batch.reward.clamp_(*cfg.aug.rew_clip)
@@ -291,6 +387,4 @@ def main():
                         exp.add_scalar("train/mean_q_pred", pred.mean())
 
                 if cfg.prioritized.enabled:
-                    prio_exp = cfg.prioritized.prio_exp(env_step)
-                    prio = prio.detach().cpu().numpy() ** prio_exp
-                    sampler.update(idxes, prio)
+                    data_.update_prio(idxes, prio.detach())

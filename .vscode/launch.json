@@ -57,7 +57,7 @@
       "name": "Rainbow",
       "type": "debugpy",
       "request": "launch",
-      "module": "rsrch.hub.rl.rainbow",
+      "module": "rsrch.hub.rl._rainbow",
       "pythonArgs": ["-O"],
       "env": {
         // "CUDA_LAUNCH_BLOCKING": "1", 

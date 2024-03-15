@@ -30,6 +30,7 @@ class _FuncProxy:
 class _Proxy:
     def __init__(self, ctx: BaseContext, local: bool, *args, **kwargs):
         self._conn, proc_end = ctx.Pipe(duplex=True)
+        self._args, self._kwargs = args, kwargs
         if local:
             self._proc = Thread(
                 target=_Proxy._thr_target,
@@ -116,6 +117,9 @@ class _Proxy:
     def __getitem__(self, *args, **kwargs):
         return self._command("__getitem__")(*args, **kwargs)
 
+    def __call__(self, *args, **kwargs):
+        return self._command("__call__")(*args, **kwargs)
+
     def __del__(self):
         if hasattr(self, "_proc"):
             self._conn.send(("_kill", None, None))
@@ -125,15 +129,15 @@ class _Proxy:
 T = TypeVar("T")
 
 
-def remote(cls: Type[T], ctx=None):
-    ctx = ctx or mp.get_context()
+class Manager:
+    def __init__(self, ctx: BaseContext | None = None):
+        self.ctx = ctx
 
-    def _ctor(*args, **kwargs) -> T:
-        return _Proxy(ctx, False, cls, *args, **kwargs)
+    def remote(self, cls: Type[T]):
+        def _ctor(*args, **kwargs) -> T:
+            return _Proxy(self.ctx, False, cls, *args, **kwargs)
 
-    return _ctor
+        return _ctor
 
-
-def local_ref(x: T, ctx=None) -> T:
-    ctx = ctx or mp.get_context()
-    return _Proxy(ctx, True, x)
+    def local_ref(self, x: T) -> T:
+        return _Proxy(self.ctx, True, x)
