@@ -180,30 +180,39 @@ def Encoder(cfg: config.Config, obs_space: spaces.torch.Image):
         return enc
 
 
-class Q(nn.Sequential):
+class Q(nn.Module):
     def __init__(
         self,
         cfg: config.Config,
         obs_space: spaces.torch.Image,
         act_space: spaces.torch.Discrete,
     ):
-        enc = Encoder(cfg, obs_space)
-        with infer_ctx(enc):
-            dummy = obs_space.sample()[None].cpu()
-            num_features = enc(dummy)[0].shape[0]
+        super().__init__()
 
-        head = QHead(
+        self.enc = Encoder(cfg, obs_space)
+        with infer_ctx(self.enc):
+            dummy = obs_space.sample()[None].cpu()
+            num_features = self.enc(dummy)[0].shape[0]
+
+        self.head = QHead(
             num_features,
             cfg.nets.hidden_dim,
             act_space.n,
             cfg.distq,
         )
 
-        if cfg.expl.noisy:
-            head = noisy.replace_(
-                module=head,
+        self._noisy = cfg.expl.noisy
+        if self._noisy:
+            self.head = noisy.replace_(
+                module=self.head,
                 sigma0=cfg.expl.sigma0,
                 factorized=cfg.expl.factorized,
             )
 
-        super().__init__(enc, head)
+    def forward(self, obs: Tensor, val_mode=False):
+        if self._noisy:
+            if val_mode:
+                noisy.zero_noise_(self.head)
+            else:
+                noisy.reset_noise_(self.head)
+        return self.head(self.enc(obs))

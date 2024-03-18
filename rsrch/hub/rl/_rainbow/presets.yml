@@ -7,12 +7,12 @@ dominik:
   opt:
     batch_size: 256
     sched:
-      every: ['${opt.batch_size/8}', agent_step] # replay ratio = 8
+      every: {n: '${opt.batch_size/8}', of: agent_step} # replay ratio = 8
       iters: 1
   nets:
     encoder: impala[large,2]
     spectral_norm: last
-    polyak: {every: [32e3, env_step], tau: 0.0}
+    polyak: {every: {n: 32e3, of: env_step}, tau: 0.0}
   distq.enabled: false
   total_env_steps: 40e6
   data.parallel: true
@@ -21,5 +21,5 @@ der:
   total_env_steps: 400e3
   data.slice_len: 20
   opt:
-    sched: {every: [1, agent_step]}
+    sched: {every: {n: 1, of: agent_step}}
     batch_size: 32

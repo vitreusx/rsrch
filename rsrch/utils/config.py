@@ -176,7 +176,11 @@ def cast(x, t):
     # brackets. For example, get_origin(Union[str, int]) == Union and
     # get_args(Union[str, int]) == (str, int)
     orig = get_origin(t)
-    if is_dataclass(t):
+    if t is None or t == type(None):
+        if x is not None:
+            raise ValueError()
+        return x
+    elif is_dataclass(t):
         # Allow conversion of dicts to dataclasses
         args = {}
         for field in fields(t):

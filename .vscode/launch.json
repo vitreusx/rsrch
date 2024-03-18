@@ -5,7 +5,9 @@
       "type": "debugpy",
       "request": "launch",
       "module": "rsrch.hub.vis.cvae",
-      "pythonArgs": ["-O"],
+      "pythonArgs": [
+        "-O"
+      ],
       "env": {
         // "CUDA_LAUNCH_BLOCKING": "1", 
         // "MUJOCO_GL": "osmesa",
@@ -18,7 +20,9 @@
       "type": "debugpy",
       "request": "launch",
       "module": "rsrch.hub.rl.dreamer",
-      "pythonArgs": ["-O"],
+      "pythonArgs": [
+        "-O"
+      ],
       "env": {
         // "CUDA_LAUNCH_BLOCKING": "1", 
         "MUJOCO_GL": "osmesa",
@@ -31,7 +35,9 @@
       "type": "debugpy",
       "request": "launch",
       "module": "rsrch.hub.rl.ppo",
-      "pythonArgs": ["-O"],
+      "pythonArgs": [
+        "-O"
+      ],
       "env": {
         // "CUDA_LAUNCH_BLOCKING": "1", 
         "MUJOCO_GL": "osmesa",
@@ -44,7 +50,9 @@
       "type": "debugpy",
       "request": "launch",
       "module": "rsrch.hub.rl.sac",
-      "pythonArgs": ["-O"],
+      "pythonArgs": [
+        "-O"
+      ],
       "env": {
         // "CUDA_LAUNCH_BLOCKING": "1", 
         "MUJOCO_GL": "osmesa",
@@ -52,13 +60,14 @@
       },
       "justMyCode": false
     },
-
     {
       "name": "Rainbow",
       "type": "debugpy",
       "request": "launch",
       "module": "rsrch.hub.rl._rainbow",
-      "pythonArgs": ["-O"],
+      "pythonArgs": [
+        "-O"
+      ],
       "env": {
         // "CUDA_LAUNCH_BLOCKING": "1", 
         "MUJOCO_GL": "osmesa",
@@ -67,5 +76,5 @@
       "justMyCode": false
     }
   ],
-  "inputs": [ ]
+  "inputs": []
 }

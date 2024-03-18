@@ -80,15 +80,7 @@ class _Proxy:
                 ret = callable(getattr(inst, name, None))
             else:
                 var = getattr(inst, cmd)
-                if callable(var):
-                    # ret = var(
-                    #     *(_fix(arg) for arg in args),
-                    #     **{k: _fix(v) for k, v in kwargs},
-                    # )
-                    ret = var(*args, **kwargs)
-                else:
-                    # ret = _fix(var)
-                    ret = var
+                ret = var(*args, **kwargs) if callable(var) else var
             proc_end.send(ret)
 
     def __getattr__(self, __name: str):

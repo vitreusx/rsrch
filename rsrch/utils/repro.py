@@ -41,7 +41,7 @@ class RandomState:
             "random": random.getstate(),
         }
 
-    def restore(self, state):
+    def load(self, state: dict):
         np.random.set_state(state["np"])
         torch.set_rng_state(torch.as_tensor(state["torch_cpu"]))
         for idx, rs in enumerate(state["torch_cuda"]):

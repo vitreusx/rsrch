@@ -10,16 +10,14 @@ from torch.multiprocessing.reductions import reduce_tensor
 
 def fix_reductions():
     """On Windows and WSL, when reducing CUDA tensors for the first time, ALL
-    CUDA tensors are invalidated. Now, it would appear that one way to remedy
-    this is to do this once on a dummy CUDA tensor to avoid surprises later on
-    in the execution of the program."""
+    CUDA tensors are invalidated. We do a "dirty fix" - perform reduction once,
+    before any tensor has been created by the user, to avoid surprises later on."""
 
     if (
         platform.system() == "Windows" or "WSL" in platform.platform()
     ) and torch.cuda.is_available():
-        x = torch.empty(8, device="cuda")
-        reduce_tensor(x)
-        del x
+        dummy = torch.empty(8, device="cuda")
+        reduce_tensor(dummy)
 
 
 def _deserializer(ctor, args, state=None, items=None, kvpairs=None, setstate=None):
