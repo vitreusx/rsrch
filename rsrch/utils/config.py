@@ -230,7 +230,7 @@ def update_(dst: dict, *src: dict):
     """Merge one or more dicts in place."""
     for d in src:
         for k, v in d.items():
-            if isinstance(v, dict) and k in dst:
+            if isinstance(v, dict) and k in dst and isinstance(dst[k], dict):
                 update_(dst[k], v)
             else:
                 dst[k] = v

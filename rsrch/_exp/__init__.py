@@ -1,19 +1,30 @@
+import os
+import sys
 from datetime import datetime
 from numbers import Number
-import sys
-from typing import Callable
-from .board import Board
-from .logging import setupLogger
-from . import infra, board
-from .infra import Requires
 from pathlib import Path
-from .git import create_exp_commit
-from rsrch.utils.path import sanitize
+from typing import Callable
+
 from ruamel.yaml import YAML
-import os
 from tqdm.auto import tqdm
 
+from rsrch.utils.path import sanitize
+
+from . import board, infra
+from .board import Board
+from .git import create_exp_commit
+from .infra import Requires
+from .logging import setupLogger
+
 yaml = YAML(typ="safe", pure=True)
+
+
+def str2bool(s: str) -> bool:
+    s = s.lower()
+    if s in ("0", "f", "n", "false", "no"):
+        return False
+    elif s in ("1", "t", "y", "true", "yes"):
+        return True
 
 
 class Experiment:
@@ -41,17 +52,11 @@ class Experiment:
             with open(self.dir / "config.yml", "w") as f:
                 yaml.dump(config, f)
 
-        r = infra.ensure(requires, env={"RUN_NAME": run})
-        if r.is_local_env:
-            create_exp_commit(run)
-            if r.remote_info is not None:
-                with open(self.dir / "remote.yml", "w") as f:
-                    yaml.dump(r.remote_info, f)
+        if requires is None:
+            requires = Requires()
 
-        if not r.is_exec_env:
-            sys.exit(0)
-
-        self.exec_env = r.env
+        self.exec_env = infra.try_ensure(requires)
+        create_exp_commit(run)
 
         self._boards: list[Board] = []
         if board is not None:

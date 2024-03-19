@@ -64,7 +64,7 @@
       "name": "Rainbow",
       "type": "debugpy",
       "request": "launch",
-      "module": "rsrch.hub.rl._rainbow",
+      "module": "rsrch.hub.rl.rainbow",
       "pythonArgs": [
         "-O"
       ],

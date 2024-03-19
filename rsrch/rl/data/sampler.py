@@ -64,6 +64,7 @@ class PrioritizedSampler:
 
     def update(self, ids: int | np.ndarray, prio: float | np.ndarray):
         idxes = np.asarray(ids) % self.max_size
+        prio = np.asarray(prio).clip(0)
         self._P[idxes] = prio
         self._max[idxes] = prio
 

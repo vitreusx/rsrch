@@ -13,6 +13,14 @@ from rsrch.nn.utils import straight_through
 from rsrch.types import Tensorlike
 
 
+def invperm(idxes: Tensor) -> Tensor:
+    irange = torch.arange(idxes.shape[-1], dtype=idxes.dtype, device=idxes.device)
+    irange = irange.expand_as(idxes)
+    invperm = torch.empty_like(idxes)
+    invperm.scatter_(-1, idxes, irange)
+    return invperm
+
+
 class ValueDist(Tensorlike, D.Distribution):
     def __init__(
         self,
@@ -86,6 +94,30 @@ class ValueDist(Tensorlike, D.Distribution):
         m.scatter_add_(-1, idx_f.long(), p.ind_rv.probs * (1.0 - frac_c))
         m.scatter_add_(-1, idx_c.long(), p.ind_rv.probs * frac_c)
         return D.kl_divergence(D.Categorical(probs=m), q.ind_rv)
+
+    @staticmethod
+    def apx_w1_div(p: ValueDist, q: ValueDist, eps=1e-6):
+        sup = torch.cat((p.support, q.support), dim=-1)
+
+        # This perturbation is done to (almost always) prevent support nodes
+        # from being equal, which messes up with the computation later on.
+        sup = sup + eps * torch.rand_like(sup)
+
+        sup, idxes = torch.sort(sup, dim=-1)
+        idxes = invperm(idxes)
+
+        p_pr = p.ind_rv.probs
+        p_cdf = torch.zeros_like(sup, requires_grad=p_pr.requires_grad)
+        p_cdf = p_cdf.scatter(-1, idxes[..., : p.N], p_pr)
+        p_cdf = p_cdf.cumsum(-1)
+
+        q_pr = q.ind_rv.probs
+        q_cdf = torch.zeros_like(sup, requires_grad=q_pr.requires_grad)
+        q_cdf = q_cdf.scatter(-1, idxes[..., p.N :], q_pr)
+        q_cdf = q_cdf.cumsum(-1)
+
+        delta = torch.diff(sup, dim=-1)
+        return ((p_cdf - q_cdf).abs()[..., :-1] * delta).sum(-1)
 
 
 @dataclass

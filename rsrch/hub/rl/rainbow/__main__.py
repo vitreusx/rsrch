@@ -1,4 +1,4 @@
-from . import train
+from . import runner
 
 if __name__ == "__main__":
-    train.main()
+    runner.main()

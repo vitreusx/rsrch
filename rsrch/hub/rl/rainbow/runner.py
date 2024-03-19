@@ -19,8 +19,8 @@ import torch
 import torch.multiprocessing as mp
 from torch import Tensor, nn
 
-from rsrch import spaces
 from rsrch import _exp as exp
+from rsrch import spaces
 from rsrch.nn import noisy
 from rsrch.rl import data, gym
 from rsrch.rl.data import _rollout as rollout
@@ -67,13 +67,13 @@ class DataWorker:
         q: nets.Q,
         q_lock,
         batch_queue: mp.Queue,
-        exec_env,
+        device: torch.device,
     ):
         self.cfg = cfg
         self.batch_queue = batch_queue
         self.q_lock = q_lock
 
-        self.device = exec_env.devices[0]
+        self.device = device
         self.env_f = env.make_factory(self.cfg.env, self.device, seed=cfg.random.seed)
 
         if self.cfg.prioritized.enabled:
@@ -182,21 +182,23 @@ class Runner:
             deterministic=cfg.random.deterministic,
         )
 
-        for name in ["opt_step", "env_step", "agent_step"]:
-            setattr(self, name, 0)
-            is_default = name == "env_step"
-            self.exp.register_step(name, lambda: getattr(self, name), is_default)
+        # torch.autograd.set_detect_anomaly(True)
 
-        device = self.exp.exec_env.devices[0]
+        self.env_step, self.opt_step, self.agent_step = 0, 0, 0
+        self.exp.register_step("env_step", lambda: self.env_step, default=True)
+        self.exp.register_step("opt_step", lambda: self.opt_step)
+        self.exp.register_step("agent_step", lambda: self.agent_step)
 
-        env_f = env.make_factory(cfg.env, device, seed=cfg.random.seed)
+        self.device = self.exp.exec_env.device
+
+        env_f = env.make_factory(cfg.env, self.device, seed=cfg.random.seed)
         assert isinstance(env_f.obs_space, spaces.torch.Image)
         assert isinstance(env_f.act_space, spaces.torch.Discrete)
         self._frame_skip = getattr(env_f, "frame_skip", 1)
 
         def make_qf():
             qf = nets.Q(cfg, env_f.obs_space, env_f.act_space)
-            qf = qf.to(device)
+            qf = qf.to(self.device)
             qf = qf.share_memory()
             return qf
 
@@ -209,10 +211,12 @@ class Runner:
             self.q_lock = m.ctx.Lock()
             q_ref = m.local_ref(self.qf)
             batch_queue = m.ctx.Queue(maxsize=cfg.data.prefetch_factor)
-            self.data = m.remote(DataWorker)(cfg, q_ref, self.q_lock, batch_queue)
+            self.data = m.remote(DataWorker)(
+                cfg, q_ref, self.q_lock, batch_queue, self.device
+            )
         else:
             self.q_lock = NoLock()
-            self.data = DataWorker(cfg, self.qf, self.q_lock, None)
+            self.data = DataWorker(cfg, self.qf, self.q_lock, None, self.device)
 
         self.val_envs = env_f.vector_env(cfg.val.envs, mode="val")
         self.val_agent = QAgent(env_f, self.qf, self.q_lock, val=True)
@@ -220,13 +224,13 @@ class Runner:
         amp_enabled = cfg.opt.dtype != "float32"
         self.scaler = torch.cuda.amp.GradScaler(enabled=amp_enabled)
         self.autocast = lambda: torch.autocast(
-            device_type=device.type,
+            device_type=self.device.type,
             dtype=getattr(torch, cfg.opt.dtype),
             enabled=amp_enabled,
         )
 
         gammas = torch.tensor([cfg.gamma**i for i in range(cfg.data.slice_len)])
-        self.gammas = gammas.to(device)
+        self.gammas = gammas.to(self.device)
         self.final_gamma = cfg.gamma**cfg.data.slice_len
 
         self.agent_eps = self._make_sched(cfg.expl.eps)
@@ -240,7 +244,7 @@ class Runner:
         if isinstance(cfg["every"], dict):
             every, unit = cfg["every"]["n"], cfg["every"]["of"]
         else:
-            every, unit = cfg["every"], self._def_unit
+            every, unit = cfg["every"], "env_step"
 
         return cron.Every2(
             step_fn=lambda: getattr(self, unit),
@@ -253,7 +257,7 @@ class Runner:
         if isinstance(cfg, dict):
             max_value, unit = cfg["n"], cfg["of"]
         else:
-            max_value, unit = cfg, self._def_unit
+            max_value, unit = cfg, "env_step"
 
         return cron.Until(
             step_fn=lambda: getattr(self, unit),
@@ -261,26 +265,41 @@ class Runner:
         )
 
     def _make_sched(self, cfg):
-        desc, unit = cfg["desc"], cfg["of"]
+        if isinstance(cfg, dict):
+            desc, unit = cfg["desc"], cfg["of"]
+        else:
+            desc, unit = cfg, "env_step"
         return sched.Auto(desc, lambda: getattr(self, unit))
+
+    def _make_pbar(self, until: cron.Until, *args, **kwargs):
+        return self.exp.pbar(
+            *args,
+            **kwargs,
+            total=until.max_value,
+            initial=until.step_fn(),
+        )
 
     def do_train_loop(self):
         self.should_log = self._make_every(self.cfg.log)
 
-        should_fetch = self._make_until(self.cfg.warmup)
-        while should_fetch:
-            self.data.step_async()
-            self._step_wait()
+        should_warmup = self._make_until(self.cfg.warmup)
+        with self._make_pbar(should_warmup, desc="Warmup") as self.pbar:
+            while should_warmup:
+                self.data.step_async()
+                self._step_wait()
 
         should_val = self._make_every(self.cfg.val.sched)
         should_opt = self._make_every(self.cfg.opt.sched)
 
         should_train = self._make_until(self.cfg.total)
-        while should_train:
-            if should_val:
-                self._val_epoch()
-            while should_opt:
-                self._opt_step()
+        with self._make_pbar(should_train, desc="Train") as self.pbar:
+            while should_train:
+                if should_val:
+                    self._val_epoch()
+                self.data.step_async()
+                while should_opt:
+                    self._opt_step()
+                self._step_wait()
 
     def _val_epoch(self):
         val_iter = self.exp.pbar(
@@ -341,7 +360,8 @@ class Runner:
             pred = qv.gather(-1, batch.act[0][..., None]).squeeze(-1)
 
             if isinstance(target, ValueDist):
-                prio = q_losses = ValueDist.proj_kl_div(target, pred)
+                # prio = q_losses = ValueDist.proj_kl_div(target, pred)
+                prio = q_losses = ValueDist.apx_w1_div(target, pred)
             else:
                 prio = (pred - target).abs()
                 q_losses = (pred - target).square()
@@ -362,7 +382,7 @@ class Runner:
             self.scaler.step(self.qf_opt)
             self.scaler.update()
 
-        opt_step += 1
+        self.opt_step += 1
 
         if self.should_log:
             self.exp.add_scalar("train/loss", loss)
@@ -373,18 +393,19 @@ class Runner:
 
         if self.cfg.prioritized.enabled:
             prio_exp = self.prio_exp()
-            self.data_.update_prio(idxes, prio.detach(), prio_exp)
+            self.data.update_prio(idxes, prio.detach(), prio_exp)
 
     def _step_wait(self):
-        ep_rets = self.data_.step_wait()
+        ep_rets = self.data.step_wait()
         for env_idx, ep_ret in ep_rets.items():
             if ep_ret is not None:
                 self.exp.add_scalar("train/ep_ret", ep_ret)
 
-            self.frame += self._frame_skip
+            self.env_step += self._frame_skip
             self.agent_step += 1
             if hasattr(self, "pbar"):
-                self.pbar.update(self._frame_skip)
+                self.pbar.n = self.env_step
+                self.pbar.update(0)
 
     def _val_ret_iter(self):
         val_ep_rets = defaultdict(lambda: 0.0)
@@ -394,27 +415,30 @@ class Runner:
                 yield val_ep_rets[env_idx]
                 del val_ep_rets[env_idx]
 
-    def state_dict(self):
+    def _state_dict(self):
         state = {}
-        # state["rng"] = self.rng.save()
+        state["rng"] = self.rng.save()
+        for name in ("qf", "qf_t", "qf_opt"):
+            state[name] = getattr(self, name).state_dict()
         return state
+
+    def _load_state_dict(self, state: dict):
+        self.rng.load(state["rng"])
+        for name in ("qf", "qf_t", "qf_opt"):
+            getattr(self, name).load_state_dict(state[name])
 
     def save(self, ckpt_path: str | Path):
         ckpt_path = Path(ckpt_path)
         ckpt_path.parent.mkdir(parents=True, exist_ok=True)
-        state = self.state_dict()
+        state = self._state_dict()
         with open(ckpt_path, "wb") as f:
             pickle.dump(state, f)
-
-    def load_state_dict(self, state: dict):
-        # self.rng.load(state["rng"])
-        ...
 
     def load(self, ckpt_path: str | Path):
         ckpt_path = Path(ckpt_path)
         with open(ckpt_path, "rb") as f:
             state = pickle.load(f)
-        self.load_state_dict(state)
+        self._load_state_dict(state)
 
 
 def main():

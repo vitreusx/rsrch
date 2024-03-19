@@ -51,7 +51,7 @@ class Piecewise:
 class Auto:
     def __init__(self, desc, step_fn):
         classes = [Constant, Linear, Exp, Piecewise]
-        locals = {cls.__name__: cls for cls in classes}
+        locals = {cls.__name__.lower(): cls for cls in classes}
 
         if isinstance(desc, str):
             self._sched = eval(desc, globals(), locals)

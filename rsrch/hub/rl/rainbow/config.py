@@ -1,12 +1,17 @@
 from dataclasses import dataclass
-from typing import Literal
+from pathlib import Path
+from typing import Any, Literal
 
+from rsrch._exp import Requires
 from rsrch.utils.config import *
-from rsrch.utils.sched import schedule
 
 from .. import env
 from ..utils import Optim
 from . import distq
+
+Every = dict
+Sched = float | dict
+Until = float | dict
 
 
 @dataclass
@@ -20,7 +25,7 @@ class Nets:
     encoder: str
     hidden_dim: int
     dueling: bool
-    polyak: dict
+    polyak: Every
     spectral_norm: Literal["none", "last", "all"]
 
 
@@ -37,7 +42,7 @@ class Expl:
     noisy: bool
     sigma0: float
     factorized: bool
-    eps: schedule
+    eps: Sched
 
 
 @dataclass
@@ -48,20 +53,20 @@ class Aug:
 @dataclass
 class Prioritized:
     enabled: bool
-    prio_exp: schedule
-    is_coef_exp: schedule
+    prio_exp: Sched
+    is_coef_exp: Sched
 
 
 @dataclass
 class Val:
-    sched: dict
+    sched: Every
     episodes: int
     envs: int
 
 
 @dataclass
 class Opt:
-    sched: dict
+    sched: Every
     batch_size: int
     optimizer: Optim
     grad_clip: float | None
@@ -70,20 +75,21 @@ class Opt:
 
 @dataclass
 class Config:
-    device: str
+    requires: Requires
     random: Random
     env: env.Config
     distq: distq.Config
     nets: Nets
     data: Data
-    total_env_steps: int
+    total: Until
     num_envs: int
     expl: Expl
     aug: Aug
     prioritized: Prioritized
-    warmup: int
+    warmup: Until
     val: Val
     opt: Opt
     gamma: float
     log: dict
     double_dqn: bool
+    resume: Path | None
