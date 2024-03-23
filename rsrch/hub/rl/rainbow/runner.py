@@ -158,12 +158,20 @@ class DataWorker:
 
 
 class Runner:
-    def __init__(self, cfg: config.Config):
-        self.cfg = cfg
+    def __init__(self, cfg: dict | config.Config):
+        if isinstance(cfg, dict):
+            self.cfg_dict = cfg
+            self.cfg = config.from_dicts([cfg], config.Config)
+        else:
+            self.cfg_dict = None
+            self.cfg = cfg
 
-    def train(self):
+    def run(self):
         self.prepare()
-        self.do_train_loop()
+        if self.cfg.mode == "train":
+            self.do_train_loop()
+        elif self.cfg.mode == "sample":
+            self.sample()
 
     def prepare(self):
         cfg = self.cfg
@@ -174,6 +182,7 @@ class Runner:
             run=f"{env_id}__{datetime.now():%Y-%m-%d_%H-%M-%S}",
             board=exp.board.Tensorboard,
             requires=cfg.requires,
+            config=self.cfg_dict,
         )
 
         self.rng = repro.RandomState()
@@ -206,36 +215,50 @@ class Runner:
         self.qf_opt = cfg.opt.optimizer(self.qf.parameters())
         self.should_update_q = self._make_every(self.cfg.nets.polyak)
 
-        if cfg.data.parallel:
-            m = Manager(mp.get_context("spawn"))
-            self.q_lock = m.ctx.Lock()
-            q_ref = m.local_ref(self.qf)
-            batch_queue = m.ctx.Queue(maxsize=cfg.data.prefetch_factor)
-            self.data = m.remote(DataWorker)(
-                cfg, q_ref, self.q_lock, batch_queue, self.device
+        if cfg.mode == "train":
+            if cfg.data.parallel:
+                m = Manager(mp.get_context("spawn"))
+                self.q_lock = m.ctx.Lock()
+                q_ref = m.local_ref(self.qf)
+                batch_queue = m.ctx.Queue(maxsize=cfg.data.prefetch_factor)
+                self.data = m.remote(DataWorker)(
+                    cfg, q_ref, self.q_lock, batch_queue, self.device
+                )
+            else:
+                self.q_lock = NoLock()
+                self.data = DataWorker(cfg, self.qf, self.q_lock, None, self.device)
+
+            self.val_envs = env_f.vector_env(cfg.val.envs, mode="val")
+            self.val_agent = QAgent(env_f, self.qf, self.q_lock, val=True)
+
+            amp_enabled = cfg.opt.dtype != "float32"
+            self.scaler = torch.cuda.amp.GradScaler(enabled=amp_enabled)
+            self.autocast = lambda: torch.autocast(
+                device_type=self.device.type,
+                dtype=getattr(torch, cfg.opt.dtype),
+                enabled=amp_enabled,
             )
-        else:
-            self.q_lock = NoLock()
-            self.data = DataWorker(cfg, self.qf, self.q_lock, None, self.device)
 
-        self.val_envs = env_f.vector_env(cfg.val.envs, mode="val")
-        self.val_agent = QAgent(env_f, self.qf, self.q_lock, val=True)
+            gammas = torch.tensor([cfg.gamma**i for i in range(cfg.data.slice_len)])
+            self.gammas = gammas.to(self.device)
+            self.final_gamma = cfg.gamma**cfg.data.slice_len
 
-        amp_enabled = cfg.opt.dtype != "float32"
-        self.scaler = torch.cuda.amp.GradScaler(enabled=amp_enabled)
-        self.autocast = lambda: torch.autocast(
-            device_type=self.device.type,
-            dtype=getattr(torch, cfg.opt.dtype),
-            enabled=amp_enabled,
-        )
-
-        gammas = torch.tensor([cfg.gamma**i for i in range(cfg.data.slice_len)])
-        self.gammas = gammas.to(self.device)
-        self.final_gamma = cfg.gamma**cfg.data.slice_len
-
-        self.agent_eps = self._make_sched(cfg.expl.eps)
-        self.prio_exp = self._make_sched(cfg.prioritized.prio_exp)
-        self.is_coef_exp = self._make_sched(cfg.prioritized.is_coef_exp)
+            self.agent_eps = self._make_sched(cfg.expl.eps)
+            self.prio_exp = self._make_sched(cfg.prioritized.prio_exp)
+            self.is_coef_exp = self._make_sched(cfg.prioritized.is_coef_exp)
+        elif cfg.mode == "sample":
+            self.sample_envs = env_f.vector_env(
+                cfg.sample.num_envs,
+                mode=cfg.sample.env_mode,
+            )
+            self.sample_agent = QAgent(
+                env_f,
+                self.qf,
+                NoLock(),
+                val=cfg.sample.env_mode == "val",
+            )
+            self.sample_iter = iter(rollout.steps(self.sample_envs, self.sample_agent))
+            self.sample_buf = env_f.episode_buffer(cfg.data.buf_cap)
 
         if cfg.resume is not None:
             self.load(cfg.resume)
@@ -289,17 +312,40 @@ class Runner:
                 self._step_wait()
 
         should_val = self._make_every(self.cfg.val.sched)
+        should_save_ckpt = self._make_every(self.cfg.ckpts.sched)
         should_opt = self._make_every(self.cfg.opt.sched)
 
         should_train = self._make_until(self.cfg.total)
         with self._make_pbar(should_train, desc="Train") as self.pbar:
-            while should_train:
-                if should_val:
+            while True:
+                should_stop = not bool(should_train)
+                if should_val or should_stop:
                     self._val_epoch()
+                if should_save_ckpt or should_stop:
+                    self._save_ckpt()
+                if should_stop:
+                    break
                 self.data.step_async()
                 while should_opt:
                     self._opt_step()
                 self._step_wait()
+
+    def sample(self):
+        should_sample = self._make_until(self.cfg.total)
+        seq_ids = defaultdict(lambda: None)
+        with self._make_pbar(should_sample, desc="Sample") as self.pbar:
+            while should_sample:
+                env_idx, step = next(self.sample_iter)
+                seq_ids[env_idx] = self.sample_buf.push(seq_ids[env_idx], step)
+
+                self.env_step += self._frame_skip
+                self.agent_step += 1
+                if hasattr(self, "pbar"):
+                    self.pbar.n = self.env_step
+                    self.pbar.update(0)
+
+        with open(self.exp.dir / self.cfg.sample.dest, "wb") as f:
+            pickle.dump(self.sample_buf, f)
 
     def _val_epoch(self):
         val_iter = self.exp.pbar(
@@ -415,40 +461,53 @@ class Runner:
                 yield val_ep_rets[env_idx]
                 del val_ep_rets[env_idx]
 
-    def _state_dict(self):
-        state = {}
-        state["rng"] = self.rng.save()
-        for name in ("qf", "qf_t", "qf_opt"):
-            state[name] = getattr(self, name).state_dict()
-        return state
-
-    def _load_state_dict(self, state: dict):
-        self.rng.load(state["rng"])
-        for name in ("qf", "qf_t", "qf_opt"):
-            getattr(self, name).load_state_dict(state[name])
+    def _save_ckpt(self):
+        val_ret = self.exp.scalars["val/mean_ret"]
+        path = (
+            self.exp.dir
+            / "ckpts"
+            / f"env_step={self.env_step}-val_ret={val_ret:.2f}.pth"
+        )
+        self.save(path)
 
     def save(self, ckpt_path: str | Path):
         ckpt_path = Path(ckpt_path)
         ckpt_path.parent.mkdir(parents=True, exist_ok=True)
         state = self._state_dict()
         with open(ckpt_path, "wb") as f:
-            pickle.dump(state, f)
+            torch.save(state, f)
+
+    def _state_dict(self):
+        state = {}
+        state["rng"] = self.rng.save()
+        for name in ("qf", "qf_t", "qf_opt"):
+            state[name] = getattr(self, name).state_dict()
+        if self.cfg.ckpts.save_buf:
+            state["env_buf"] = self.data.env_buf
+        return state
 
     def load(self, ckpt_path: str | Path):
         ckpt_path = Path(ckpt_path)
         with open(ckpt_path, "rb") as f:
-            state = pickle.load(f)
+            state = torch.load(f, map_location="cpu")
         self._load_state_dict(state)
+
+    def _load_state_dict(self, state: dict):
+        self.rng.load(state["rng"])
+        for name in ("qf", "qf_t", "qf_opt"):
+            getattr(self, name).load_state_dict(state[name])
+        if self.cfg.ckpts.save_buf:
+            self.data.env_buf = state["env_buf"]
 
 
 def main():
-    presets = ["faster", "der"]
+    presets = ["faster", "der", "sample"]
     cfg = config.from_args(
-        config.Config,
-        argparse.Namespace(presets=presets),
+        cls=None,
+        args=argparse.Namespace(presets=presets),
         config_file=Path(__file__).parent / "config.yml",
         presets_file=Path(__file__).parent / "presets.yml",
     )
 
     runner = Runner(cfg)
-    runner.train()
+    runner.run()

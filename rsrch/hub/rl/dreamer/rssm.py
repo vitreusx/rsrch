@@ -90,12 +90,21 @@ class RSSM(nn.Module):
 
 
 def state_dist_div(p: StateDist, q: StateDist):
-    return F.mse_loss(p.deter, q.deter) + D.kl_divergence(p.stoch, q.stoch)
+    return D.kl_divergence(p.stoch, q.stoch)
 
 
 class VecAgent(gym.VecAgent):
-    def __init__(self, wm: RSSM, obs_enc, act_enc, env_f, num_envs: int):
+    def __init__(
+        self,
+        actor: nn.Module,
+        wm: RSSM,
+        obs_enc: nn.Module,
+        act_enc: nn.Module,
+        env_f,
+        num_envs: int,
+    ):
         super().__init__()
+        self.actor = actor
         self.wm = wm
         self.env_f = env_f
         self.obs_enc, self.act_enc = obs_enc, act_enc
@@ -113,7 +122,8 @@ class VecAgent(gym.VecAgent):
         self._state[idxes] = self.wm.init(obs)
 
     def policy(self, obs):
-        ...
+        act = self.actor(self._state)
+        return self.env_f.move_act(act, to="env")
 
     def step(self, act):
         act = self.env_f.move_act(act, to="net")

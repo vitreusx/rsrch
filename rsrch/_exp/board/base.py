@@ -1,34 +1,49 @@
-from pathlib import Path
-from PIL import Image
-from moviepy.editor import VideoClip
-from numbers import Number
-from typing import TypeAlias
 from abc import ABC, abstractmethod
+from numbers import Number
+from pathlib import Path
+from typing import TypeAlias
+
+from moviepy.editor import VideoClip
+from PIL import Image
 
 Step: TypeAlias = int | str | None
 
 
-class Board(ABC):
-    @abstractmethod
+class Board:
     def add_config(self, config: dict):
-        ...
+        pass
 
-    @abstractmethod
     def log(self, message: str):
-        ...
+        pass
 
-    @abstractmethod
     def register_step(self, name: str, value_fn, default=False):
-        ...
+        pass
 
-    @abstractmethod
     def add_scalar(self, tag: str, value: Number, *, step: Step = None):
-        ...
+        pass
 
-    @abstractmethod
     def add_image(self, tag: str, image: Image.Image, *, step: Step = None):
-        ...
+        pass
 
-    @abstractmethod
     def add_video(self, tag: str, vid: VideoClip, *, fps=30.0, step: Step = None):
-        ...
+        pass
+
+
+class StepMixin:
+    def __init__(self):
+        super().__init__()
+        self._steps = {}
+        self._def_step = None
+
+    def register_step(self, name: str, value_fn, default=False):
+        self._steps[name] = value_fn
+        if default:
+            self._def_step = name
+
+    def _get_step(self, step: int | str | None = None):
+        if step is None:
+            return self._steps[self._def_step]()
+        elif isinstance(step, str):
+            return self._steps[step]()
+        else:
+            return step

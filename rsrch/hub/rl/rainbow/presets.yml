@@ -21,9 +21,10 @@ der:
   total: {n: 400e3, of: env_step}
   data:
     slice_len: 20
-    # buf_cap: 10e3
-  prioritized:
-    enabled: true
   opt:
     sched: {every: {n: 1, of: agent_step}}
     batch_size: 32
+sample:
+  ckpt: "runs/rainbow/ALE-Alien-v5__2024-03-21_11-45-42/ckpts/env_step=400004-val_ret=800.94.pth"
+  mode: sample
+  total: {n: 1e6, of: env_step}

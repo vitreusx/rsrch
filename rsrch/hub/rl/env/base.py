@@ -155,3 +155,11 @@ class Factory(ABC):
         term = torch.as_tensor(term, dtype=bool, device=obs.device)
 
         return SliceBatch(obs, act, reward, term)
+
+    def episode_buffer(self, capacity: int, sampler=None):
+        return EpisodeBuffer(
+            max_size=capacity,
+            obs_space=self.env_obs_space,
+            act_space=self.env_act_space,
+            sampler=sampler,
+        )

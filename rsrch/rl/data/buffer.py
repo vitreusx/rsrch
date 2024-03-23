@@ -150,15 +150,19 @@ class SeqBuffer_(Mapping[int, dict]):
         if seq_id is None:
             seq_id = self._max_id
             self._max_id += 1
-            self._active[seq_id] = defaultdict(lambda: [])
+            self._active[seq_id] = {}
 
         seq = self._active[seq_id]
         added = {k: False for k in self._arrays}
         for k, v in data.items():
+            if k not in seq:
+                seq[k] = []
             seq[k].append(v)
             added[k] = True
         for k, v in added.items():
             if not v:
+                if k not in seq:
+                    seq[k] = []
                 seq[k].append(None)
 
         if done:
@@ -231,19 +235,32 @@ class SeqBuffer(Mapping[int, dict]):
         self._spaces = spaces
         self._store = {}
 
+    def __getstate__(self):
+        state = {**self.__dict__}
+        del state["_array_ctor"]
+        return state
+
+    def __setstate__(self, state):
+        for k, v in state.items():
+            setattr(self, k, v)
+
     def push(self, seq_id: int | None, data: dict, done=False):
         if seq_id is None:
             seq_id = self._max_id
             self._max_id += 1
-            self._store[seq_id] = defaultdict(lambda: [])
+            self._store[seq_id] = {}
 
         seq = self._store[seq_id]
         added = {k: False for k in self._spaces}
         for k, v in data.items():
+            if k not in seq:
+                seq[k] = []
             seq[k].append(v)
             added[k] = True
         for k, v in added.items():
             if not v:
+                if k not in seq:
+                    seq[k] = []
                 seq[k].append(None)
 
         if done:

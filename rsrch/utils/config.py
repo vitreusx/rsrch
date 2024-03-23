@@ -44,7 +44,7 @@ class AttrDict(dict):
 class Expr:
     """An expression object."""
 
-    VAR_PAT = r"^\${(?P<back>\.*)(?P<var>[\w.]+)}"  # e.g. ${..opt.lr}
+    VAR_PAT = r"^\${(?P<back>\.*)(?P<var>[\w\.]+)}"  # e.g. ${..opt.lr}
     EXPR_PAT = r"^\${(?P<expr>.*)}$"  # e.g. $(-1/np.log(2))
 
     def __init__(self, value: str, path: list):
@@ -65,14 +65,17 @@ class Expr:
 
     def _eval_var(self, m: re.Match):
         def _fn(g: dict):
-            cur, local = g, g
-            pivot = len(self._path) - max(len(m["back"]), 1)
-            for k in self._path[:pivot]:
-                cur = cur[k]
-                if isinstance(cur, dict):
-                    local = cur
+            eval_g = g
+            if len(m["back"]) > 0:
+                cur, local = g, g
+                pivot = len(self._path) - len(m["back"])
+                for k in self._path[:pivot]:
+                    cur = cur[k]
+                    if isinstance(cur, dict):
+                        local = cur
+                eval_g = local
 
-            return eval(m["var"], {**g, **local})
+            return eval(m["var"], eval_g)
 
         return _fn
 
@@ -452,8 +455,8 @@ def from_args(
 
 @overload
 def from_args(
-    args: argparse.Namespace,
     cls: None,
+    args: argparse.Namespace,
     config_file: Path | None = None,
     presets_file: Path | None = None,
 ) -> dict:

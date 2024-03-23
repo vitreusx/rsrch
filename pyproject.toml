@@ -65,12 +65,12 @@ fi
 """
 
 [tool.poe.tasks.get-torch]
-help = "Install torch and torchvision."
+help = "Get platform-specific variants of torch and torchvision."
 shell = """
 set -e pipefail
 for NAME in torch torchvision; do
   VER=$(poetry export --only torch --without-hashes \
-        | grep -E "${NAME}==[^ ]*" -o)
+        | grep -E "${NAME}==[^ \\+]*" -o)
   if [ -n "${VER}" ]; then
     pip install ${VER}+${arch} \
       --index-url https://download.pytorch.org/whl/${arch}

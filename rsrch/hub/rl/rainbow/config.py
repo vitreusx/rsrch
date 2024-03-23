@@ -74,7 +74,21 @@ class Opt:
 
 
 @dataclass
+class Ckpts:
+    sched: Sched
+    save_buf: bool
+
+
+@dataclass
+class Sample:
+    num_envs: int
+    env_mode: Literal["train", "val"]
+    dest: str
+
+
+@dataclass
 class Config:
+    mode: Literal["train", "sample"]
     requires: Requires
     random: Random
     env: env.Config
@@ -92,4 +106,6 @@ class Config:
     gamma: float
     log: dict
     double_dqn: bool
+    ckpts: Ckpts
     resume: Path | None
+    sample: Sample

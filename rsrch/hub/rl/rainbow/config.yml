@@ -1,3 +1,4 @@
+mode: train
 requires:
   exec_env:
     type: node
@@ -65,4 +66,11 @@ opt:
 log: {every: {n: 16, of: opt_step}}
 gamma: 0.99
 double_dqn: true
+ckpts:
+  sched: ${val.sched}
+  save_buf: false
 resume: null
+sample:
+  num_envs: ${num_envs}
+  env_mode: train
+  dest: ./samples.pkl

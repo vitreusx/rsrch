@@ -8,7 +8,7 @@ from torch import Tensor
 
 from rsrch import spaces
 from rsrch.rl import gym
-from rsrch.rl.data.buffer import SliceBuffer
+from rsrch.rl.data.buffer import EpisodeBuffer, SliceBuffer
 from rsrch.spaces.utils import from_gym
 
 from . import base
@@ -268,6 +268,15 @@ class Factory(base.Factory):
         return SliceBuffer(
             max_size=capacity,
             slice_len=slice_len,
+            obs_space=self.env_obs_space,
+            act_space=self.env_act_space,
+            sampler=sampler,
+            stack_size=self.cfg.stack,
+        )
+
+    def episode_buffer(self, capacity: int, sampler=None):
+        return EpisodeBuffer(
+            max_size=capacity,
             obs_space=self.env_obs_space,
             act_space=self.env_act_space,
             sampler=sampler,

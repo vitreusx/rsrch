@@ -40,6 +40,15 @@ class rq_tree:
         self._init = init
         self.clear()
 
+    def __getstate__(self):
+        state = {**self.__dict__}
+        del state["reduce_fn"]
+        return state
+
+    def __setstate__(self, state):
+        for k, v in state.items():
+            setattr(self, k, v)
+
     def __len__(self):
         return self.size
 

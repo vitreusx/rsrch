@@ -5,13 +5,15 @@ from numbers import Number
 from pathlib import Path
 from typing import Callable
 
+import numpy as np
 from ruamel.yaml import YAML
+from torch import Tensor
 from tqdm.auto import tqdm
 
 from rsrch.utils.path import sanitize
 
 from . import board, infra
-from .board import Board
+from .board import Board, StepMixin
 from .git import create_exp_commit
 from .infra import Requires
 from .logging import setupLogger
@@ -25,6 +27,22 @@ def str2bool(s: str) -> bool:
         return False
     elif s in ("1", "t", "y", "true", "yes"):
         return True
+
+
+class _Scalars(StepMixin, Board):
+    def __init__(self):
+        super().__init__()
+        self._scalars = {}
+
+    def add_scalar(self, tag, value, *, step=None):
+        step = self._get_step(step)
+
+        if isinstance(value, (Tensor, np.ndarray)):
+            value = value.item()
+        self._scalars[tag] = value
+
+    def __getitem__(self, tag):
+        return self._scalars[tag]
 
 
 class Experiment:
@@ -61,6 +79,9 @@ class Experiment:
         self._boards: list[Board] = []
         if board is not None:
             self._boards.append(board(self.dir / "board"))
+
+        self.scalars = _Scalars()
+        self._boards.append(self.scalars)
 
     def register_step(self, *args, **kwargs):
         for board in self._boards:

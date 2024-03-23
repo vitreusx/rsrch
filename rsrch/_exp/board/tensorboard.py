@@ -1,10 +1,12 @@
 from functools import partial
+from pathlib import Path
+
 import numpy as np
 import torch
-from torch.utils import tensorboard
-from .base import *
-from pathlib import Path
 import torchvision.transforms.functional as tv_F
+from torch.utils import tensorboard
+
+from .base import *
 
 
 def _flatten(x, prefix=[]):
@@ -22,31 +24,15 @@ def _flatten(x, prefix=[]):
         return {".".join(prefix): x}
 
 
-class Tensorboard(Board):
+class Tensorboard(StepMixin, Board):
     def __init__(self, dir: str | Path):
+        super().__init__()
         dir = str(Path(dir))
         self.writer = tensorboard.SummaryWriter(log_dir=dir)
-        self._steps = {}
         self._def_step = None
 
     def add_config(self, config: dict):
         self.writer.add_hparams(hparam_dict=_flatten(config))
-
-    def log(self, message: str):
-        pass
-
-    def register_step(self, name: str, value_fn, default=False):
-        self._steps[name] = value_fn
-        if default:
-            self._def_step = name
-
-    def _get_step(self, step: int | str | None = None):
-        if step is None:
-            return self._steps[self._def_step]()
-        elif isinstance(step, str):
-            return self._steps[step]()
-        else:
-            return step
 
     def add_scalar(self, tag: str, value: Number, *, step: Step = None):
         step = self._get_step(step)
