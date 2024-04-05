@@ -64,7 +64,7 @@ cdef object py_warning_exception = None
 cdef object py_error_exception = None
 
 
-cdef void c_warning_callback(const char *msg) with gil:
+cdef void c_warning_callback(const char *msg) noexcept with gil:
     '''
     Wraps the warning callback so we can raise exceptions.
     Because callbacks can't propagate exceptions, we set a global that has
@@ -101,7 +101,7 @@ def get_warning_callback():
     return py_warning_callback
 
 
-cdef void c_error_callback(const char *msg) with gil:
+cdef void c_error_callback(const char *msg) noexcept with gil:
     '''
     Wraps the error callback so that we can pass a python function to the callback.
     MuJoCo error handlers are expected to terminate the program and never return.

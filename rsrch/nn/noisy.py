@@ -81,14 +81,20 @@ class NoisyLinear(nn.Module):
             return F.linear(x, w)
 
 
-def reset_noise_(module: nn.Module):
-    if isinstance(module, NoisyLinear):
-        module.reset_noise_()
+def reset_noise_(module: nn.Module, recursive=False):
+    if recursive:
+        module.apply(reset_noise_)
+    else:
+        if isinstance(module, NoisyLinear):
+            module.reset_noise_()
 
 
-def zero_noise_(module: nn.Module):
-    if isinstance(module, NoisyLinear):
-        module.zero_noise_()
+def zero_noise_(module: nn.Module, recursive=False):
+    if recursive:
+        module.apply(recursive)
+    else:
+        if isinstance(module, NoisyLinear):
+            module.zero_noise_()
 
 
 def replace_(

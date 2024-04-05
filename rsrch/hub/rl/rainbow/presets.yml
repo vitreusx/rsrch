@@ -1,8 +1,13 @@
 faster:
   random.deterministic: false
+no_noisy:
+  expl:
+    noisy: false
+    eps: {desc: 'linear(1.0, 0.1, ${total.n})', of: '${total.of}'}
 pong:
   env.atari.env_id: ALE/Pong-v5
 dominik:
+  $extends: [faster, no_noisy]
   num_envs: 64
   opt:
     batch_size: 256
@@ -11,12 +16,13 @@ dominik:
       iters: 1
   nets:
     encoder: impala[large,2]
-    spectral_norm: last
-    polyak: {every: 32e3, tau: 0.0}
+    # spectral_norm: last
+    polyak: {every: {n: 32e3, of: env_step}, tau: 0.0}
   distq.enabled: false
-  total: 40e6
-  data.parallel: true
+  total: {n: 40e6, of: env_step}
+  # data.parallel: true
 der:
+  $extends: [faster, no_noisy]
   warmup: {n: 6.4e3, of: env_step}
   total: {n: 400e3, of: env_step}
   data:
@@ -25,6 +31,6 @@ der:
     sched: {every: {n: 1, of: agent_step}}
     batch_size: 32
 sample:
-  ckpt: "runs/rainbow/ALE-Alien-v5__2024-03-21_11-45-42/ckpts/env_step=400004-val_ret=800.94.pth"
+  resume: latest
   mode: sample
   total: {n: 1e6, of: env_step}

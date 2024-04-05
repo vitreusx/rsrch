@@ -463,6 +463,18 @@ def from_args(
     ...
 
 
+def _resolve_preset(preset: str, presets: dict):
+    if preset not in presets:
+        return {}
+
+    d = presets[preset]
+    if "$extends" in d:
+        for ext_preset in d["$extends"]:
+            d.update(_resolve_preset(ext_preset, presets))
+
+    return d
+
+
 def from_args(
     cls: Type[T] | None,
     args: argparse.Namespace,
@@ -481,7 +493,7 @@ def from_args(
         with open(path, "r") as f:
             presets = yaml.load(f) or {}
         for preset in getattr(args, "presets", []):
-            dicts.append(presets.get(preset, {}))
+            dicts.append(_resolve_preset(preset, presets))
 
     if cls is not None:
         opts = {}

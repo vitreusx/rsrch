@@ -1,22 +1,14 @@
 import argparse
-import logging
 import pickle
-import queue
-import threading
-import time
 from collections import defaultdict
-from copy import copy
 from datetime import datetime
-from functools import partial
 from itertools import islice
-from multiprocessing.connection import Connection
 from pathlib import Path
-from threading import Lock, Thread
-from typing import Type, TypeVar
+from queue import Queue
+from threading import Thread
 
 import numpy as np
 import torch
-import torch.multiprocessing as mp
 from torch import Tensor, nn
 
 from rsrch import _exp as exp
@@ -27,7 +19,6 @@ from rsrch.rl.data import _rollout as rollout
 from rsrch.rl.utils import polyak
 from rsrch.utils import _sched as sched
 from rsrch.utils import cron, repro
-from rsrch.utils.parallel import Manager
 
 from .. import env
 from ..utils import infer_ctx
@@ -35,126 +26,21 @@ from . import config, nets
 from .distq import ValueDist
 
 
-class NoLock:
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        return
-
-
 class QAgent(gym.vector.Agent, nn.Module):
-    def __init__(self, env_f: env.Factory, q: nets.Q, q_lock, val=False):
+    def __init__(self, env_f: env.Factory, q: nets.Q, val=False):
         nn.Module.__init__(self)
-        self.q, self.q_lock = q, q_lock
+        self.q = q
         self.env_f = env_f
         self.val = val
 
     def policy(self, obs: np.ndarray):
         obs = self.env_f.move_obs(obs)
-        with self.q_lock:
+        with infer_ctx(self.q):
             q = self.q(obs, val_mode=self.val)
         if isinstance(q, ValueDist):
             q = q.mean
         act = q.argmax(-1)
         return self.env_f.move_act(act, to="env")
-
-
-class DataWorker:
-    def __init__(
-        self,
-        cfg: config.Config,
-        q: nets.Q,
-        q_lock,
-        batch_queue: mp.Queue,
-        device: torch.device,
-    ):
-        self.cfg = cfg
-        self.batch_queue = batch_queue
-        self.q_lock = q_lock
-
-        self.device = device
-        self.env_f = env.make_factory(self.cfg.env, self.device, seed=cfg.random.seed)
-
-        if self.cfg.prioritized.enabled:
-            self.sampler = data.PrioritizedSampler(max_size=self.cfg.data.buf_cap)
-        else:
-            self.sampler = data.UniformSampler()
-
-        self.env_buf = self.env_f.slice_buffer(
-            self.cfg.data.buf_cap,
-            self.cfg.data.slice_len,
-            sampler=self.sampler,
-        )
-        self.buf_lock = threading.Lock()
-
-        self.batch_size = self.cfg.opt.batch_size
-        self.fetch_thr = Thread(target=self._fetch_run)
-
-        self.envs = self.env_f.vector_env(self.cfg.num_envs, mode="train")
-        self.expl_eps = 0.0
-        self.agent = gym.vector.agents.EpsAgent(
-            opt=QAgent(self.env_f, q, q_lock, val=False),
-            rand=gym.vector.agents.RandomAgent(self.envs),
-            eps=self.expl_eps,
-        )
-
-        self.env_iter = rollout.steps(self.envs, self.agent)
-        self.ep_ids = defaultdict(lambda: None)
-        self.ep_rets = defaultdict(lambda: 0.0)
-
-    def fetch_start(self):
-        self.fetch_thr.start()
-
-    def _fetch_run(self):
-        while True:
-            payload = self.fetch_batch()
-            self.batch_queue.put(payload)
-
-    def fetch_batch(self):
-        with self.buf_lock:
-            if isinstance(self.sampler, data.PrioritizedSampler):
-                idxes, is_coefs = self.sampler.sample(self.batch_size)
-                batch = self.env_f.fetch_slice_batch(self.env_buf, idxes)
-                return idxes, is_coefs, batch
-            else:
-                idxes = self.sampler.sample(self.batch_size)
-                batch = self.env_f.fetch_slice_batch(self.env_buf, idxes)
-                return idxes, batch
-
-    def step_async(self):
-        self.env_iter.step_async()
-
-    def step_wait(self):
-        ep_rets = {}
-        for env_idx, step in self.env_iter.step_wait():
-            with self.buf_lock:
-                self.ep_ids[env_idx], slice_id = self.env_buf.push(
-                    self.ep_ids[env_idx], step
-                )
-            self.ep_rets[env_idx] += step.reward
-
-            if isinstance(self.sampler, data.PrioritizedSampler):
-                if slice_id is not None:
-                    with self.buf_lock:
-                        max_prio = self.sampler._max.total
-                        if max_prio == 0.0:
-                            max_prio = 1.0
-                        self.sampler[slice_id] = max_prio
-
-            if step.done:
-                del self.ep_ids[env_idx]
-                ep_rets[env_idx] = self.ep_rets[env_idx]
-                del self.ep_rets[env_idx]
-            else:
-                ep_rets[env_idx] = None
-
-        return ep_rets
-
-    def update_prio(self, idxes, prio, prio_exp):
-        with self.buf_lock:
-            prio = prio.float().cpu().numpy() ** prio_exp
-            self.sampler.update(idxes, prio)
 
 
 class Runner:
@@ -200,68 +86,107 @@ class Runner:
 
         self.device = self.exp.exec_env.device
 
-        env_f = env.make_factory(cfg.env, self.device, seed=cfg.random.seed)
-        assert isinstance(env_f.obs_space, spaces.torch.Image)
-        assert isinstance(env_f.act_space, spaces.torch.Discrete)
-        self._frame_skip = getattr(env_f, "frame_skip", 1)
+        self.env_f = env.make_factory(cfg.env, self.device, seed=cfg.random.seed)
+        assert isinstance(self.env_f.obs_space, spaces.torch.Image)
+        assert isinstance(self.env_f.act_space, spaces.torch.Discrete)
+        self._frame_skip = getattr(self.env_f, "frame_skip", 1)
 
         def make_qf():
-            qf = nets.Q(cfg, env_f.obs_space, env_f.act_space)
+            qf = nets.Q(cfg, self.env_f.obs_space, self.env_f.act_space)
             qf = qf.to(self.device)
             qf = qf.share_memory()
             return qf
 
         self.qf, self.qf_t = make_qf(), make_qf()
         self.qf_opt = cfg.opt.optimizer(self.qf.parameters())
-        self.should_update_q = self._make_every(self.cfg.nets.polyak)
 
         if cfg.mode == "train":
-            if cfg.data.parallel:
-                m = Manager(mp.get_context("spawn"))
-                self.q_lock = m.ctx.Lock()
-                q_ref = m.local_ref(self.qf)
-                batch_queue = m.ctx.Queue(maxsize=cfg.data.prefetch_factor)
-                self.data = m.remote(DataWorker)(
-                    cfg, q_ref, self.q_lock, batch_queue, self.device
-                )
-            else:
-                self.q_lock = NoLock()
-                self.data = DataWorker(cfg, self.qf, self.q_lock, None, self.device)
-
-            self.val_envs = env_f.vector_env(cfg.val.envs, mode="val")
-            self.val_agent = QAgent(env_f, self.qf, self.q_lock, val=True)
-
-            amp_enabled = cfg.opt.dtype != "float32"
-            self.scaler = torch.cuda.amp.GradScaler(enabled=amp_enabled)
-            self.autocast = lambda: torch.autocast(
-                device_type=self.device.type,
-                dtype=getattr(torch, cfg.opt.dtype),
-                enabled=amp_enabled,
-            )
-
-            gammas = torch.tensor([cfg.gamma**i for i in range(cfg.data.slice_len)])
-            self.gammas = gammas.to(self.device)
-            self.final_gamma = cfg.gamma**cfg.data.slice_len
-
-            self.agent_eps = self._make_sched(cfg.expl.eps)
-            self.prio_exp = self._make_sched(cfg.prioritized.prio_exp)
-            self.is_coef_exp = self._make_sched(cfg.prioritized.is_coef_exp)
+            self._prepare_train()
         elif cfg.mode == "sample":
-            self.sample_envs = env_f.vector_env(
-                cfg.sample.num_envs,
-                mode=cfg.sample.env_mode,
-            )
-            self.sample_agent = QAgent(
-                env_f,
-                self.qf,
-                NoLock(),
-                val=cfg.sample.env_mode == "val",
-            )
-            self.sample_iter = iter(rollout.steps(self.sample_envs, self.sample_agent))
-            self.sample_buf = env_f.episode_buffer(cfg.data.buf_cap)
+            self._prepare_sample()
 
         if cfg.resume is not None:
             self.load(cfg.resume)
+
+    def _prepare_train(self):
+        if self.cfg.prioritized.enabled:
+            self.sampler = data.PrioritizedSampler(max_size=self.cfg.data.buf_cap)
+        else:
+            self.sampler = data.UniformSampler()
+
+        self.env_buf = self.env_f.slice_buffer(
+            self.cfg.data.buf_cap,
+            self.cfg.data.slice_len,
+            sampler=self.sampler,
+        )
+
+        self.envs = self.env_f.vector_env(self.cfg.num_envs, mode="train")
+        self.expl_eps = 0.0
+        self.agent = gym.vector.agents.EpsAgent(
+            opt=QAgent(self.env_f, self.qf, val=False),
+            rand=gym.vector.agents.RandomAgent(self.envs),
+            eps=self.expl_eps,
+        )
+
+        self.env_iter = rollout.steps(self.envs, self.agent)
+        self.ep_ids = defaultdict(lambda: None)
+        self.ep_rets = defaultdict(lambda: 0.0)
+
+        self.val_envs = self.env_f.vector_env(self.cfg.val.envs, mode="val")
+        self.val_agent = QAgent(self.env_f, self.qf, val=True)
+
+        amp_enabled = self.cfg.opt.dtype != "float32"
+        self.scaler = torch.cuda.amp.GradScaler(enabled=amp_enabled)
+        self.autocast = lambda: torch.autocast(
+            device_type=self.device.type,
+            dtype=getattr(torch, self.cfg.opt.dtype),
+            enabled=amp_enabled,
+        )
+
+        gammas = torch.tensor(
+            [self.cfg.gamma**i for i in range(self.cfg.data.slice_len)]
+        )
+        self.gammas = gammas.to(self.device)
+        self.final_gamma = self.cfg.gamma**self.cfg.data.slice_len
+
+        self.agent_eps = self._make_sched(self.cfg.expl.eps)
+        self.prio_exp = self._make_sched(self.cfg.prioritized.prio_exp)
+        self.is_coef_exp = self._make_sched(self.cfg.prioritized.is_coef_exp)
+
+        self.should_update_q = self._make_every(self.cfg.nets.polyak)
+        self.tau = self.cfg.nets.polyak["tau"]
+
+        if self.cfg.data.parallel:
+            self._batches = Queue(maxsize=self.cfg.data.prefetch_factor)
+            self._batch_loader = Thread(target=self._batch_loader_fn)
+
+    def _fetch_batch(self):
+        if isinstance(self.sampler, data.PrioritizedSampler):
+            idxes, is_coefs = self.sampler.sample(self.cfg.opt.batch_size)
+            batch = self.env_f.fetch_slice_batch(self.env_buf, idxes)
+            return idxes, is_coefs, batch
+        else:
+            idxes = self.sampler.sample(self.cfg.opt.batch_size)
+            batch = self.env_f.fetch_slice_batch(self.env_buf, idxes)
+            return idxes, batch
+
+    def _batch_loader_fn(self):
+        while True:
+            batch_data = self._fetch_batch()
+            self._batches.put(batch_data)
+
+    def _prepare_sample(self):
+        self.sample_envs = self.env_f.vector_env(
+            self.cfg.sample.num_envs,
+            mode=self.cfg.sample.env_mode,
+        )
+        self.sample_agent = QAgent(
+            self.env_f,
+            self.qf,
+            val=self.cfg.sample.env_mode == "val",
+        )
+        self.sample_iter = iter(rollout.steps(self.sample_envs, self.sample_agent))
+        self.sample_buf = self.env_f.episode_buffer(self.cfg.data.buf_cap)
 
     def _make_every(self, cfg: dict):
         if isinstance(cfg["every"], dict):
@@ -308,8 +233,11 @@ class Runner:
         should_warmup = self._make_until(self.cfg.warmup)
         with self._make_pbar(should_warmup, desc="Warmup") as self.pbar:
             while should_warmup:
-                self.data.step_async()
+                self.env_iter.step_async()
                 self._step_wait()
+
+        if self.cfg.data.parallel:
+            self._batch_loader.start()
 
         should_val = self._make_every(self.cfg.val.sched)
         should_save_ckpt = self._make_every(self.cfg.ckpts.sched)
@@ -319,16 +247,26 @@ class Runner:
         with self._make_pbar(should_train, desc="Train") as self.pbar:
             while True:
                 should_stop = not bool(should_train)
+
                 if should_val or should_stop:
                     self._val_epoch()
+
                 if should_save_ckpt or should_stop:
                     self._save_ckpt()
+
                 if should_stop:
                     break
-                self.data.step_async()
-                while should_opt:
-                    self._opt_step()
-                self._step_wait()
+
+                if self.cfg.data.parallel:
+                    self.env_iter.step_async()
+                    while should_opt:
+                        self._opt_step()
+                    self._step_wait()
+                else:
+                    self.env_iter.step_async()
+                    self._step_wait()
+                    while should_opt:
+                        self._opt_step()
 
     def sample(self):
         should_sample = self._make_until(self.cfg.total)
@@ -354,21 +292,20 @@ class Runner:
             total=self.cfg.val.episodes,
             leave=False,
         )
+        val_rets = [*val_iter]
 
-        with self.q_lock:
-            noisy.zero_noise_(self.qf)
-            self.exp.add_scalar("val/mean_ret", np.mean([*val_iter]))
+        self.exp.add_scalar("val/mean_ret", np.mean(val_rets))
 
     def _opt_step(self):
-        if hasattr(self, "batch_queue"):
-            payload = self.batch_queue.get()
+        if self.cfg.data.parallel:
+            batch_data = self._batches.get()
         else:
-            payload = self.data.fetch_batch()
+            batch_data = self._fetch_batch()
 
         if self.cfg.prioritized.enabled:
-            idxes, is_coefs, batch = payload
+            idxes, is_coefs, batch = batch_data
         else:
-            idxes, batch = payload
+            idxes, batch = batch_data
 
         if self.cfg.aug.rew_clip is not None:
             batch.reward.clamp_(*self.cfg.aug.rew_clip)
@@ -379,8 +316,7 @@ class Runner:
 
                 if isinstance(next_q_eval, ValueDist):
                     if self.cfg.double_dqn:
-                        with self.q_lock:
-                            next_q_act: ValueDist = self.qf(batch.obs[-1])
+                        next_q_act: ValueDist = self.qf(batch.obs[-1])
                     else:
                         next_q_act = next_q_eval
                     act = next_q_act.mean.argmax(-1)
@@ -388,8 +324,7 @@ class Runner:
                     target = target.squeeze(-1)
                 elif isinstance(next_q_eval, Tensor):
                     if self.cfg.double_dqn:
-                        with self.q_lock:
-                            next_q_act: Tensor = self.qf(batch.obs[-1])
+                        next_q_act: Tensor = self.qf(batch.obs[-1])
                         act = next_q_act.argmax(-1)
                         target = next_q_eval.gather(-1, act[..., None])
                         target = target.squeeze(-1)
@@ -401,8 +336,7 @@ class Runner:
                 target = returns + gamma_t * target
 
         with self.autocast():
-            with self.q_lock:
-                qv = self.qf(batch.obs[0])
+            qv = self.qf(batch.obs[0])
             pred = qv.gather(-1, batch.act[0][..., None]).squeeze(-1)
 
             if isinstance(target, ValueDist):
@@ -420,13 +354,12 @@ class Runner:
 
         self.qf_opt.zero_grad(set_to_none=True)
 
-        with self.q_lock:
-            self.scaler.scale(loss).backward()
-            if self.cfg.opt.grad_clip is not None:
-                self.scaler.unscale_(self.qf_opt)
-                nn.utils.clip_grad_norm_(self.qf.parameters(), self.cfg.opt.grad_clip)
-            self.scaler.step(self.qf_opt)
-            self.scaler.update()
+        self.scaler.scale(loss).backward()
+        if self.cfg.opt.grad_clip is not None:
+            self.scaler.unscale_(self.qf_opt)
+            nn.utils.clip_grad_norm_(self.qf.parameters(), self.cfg.opt.grad_clip)
+        self.scaler.step(self.qf_opt)
+        self.scaler.update()
 
         self.opt_step += 1
 
@@ -439,13 +372,30 @@ class Runner:
 
         if self.cfg.prioritized.enabled:
             prio_exp = self.prio_exp()
-            self.data.update_prio(idxes, prio.detach(), prio_exp)
+            prio = prio.float().detach().cpu().numpy() ** prio_exp
+            self.sampler.update(idxes, prio)
+
+        while self.should_update_q:
+            polyak.update(self.qf, self.qf_t, self.tau)
 
     def _step_wait(self):
-        ep_rets = self.data.step_wait()
-        for env_idx, ep_ret in ep_rets.items():
-            if ep_ret is not None:
-                self.exp.add_scalar("train/ep_ret", ep_ret)
+        for env_idx, step in self.env_iter.step_wait():
+            self.ep_ids[env_idx], slice_id = self.env_buf.push(
+                self.ep_ids[env_idx], step
+            )
+            self.ep_rets[env_idx] += step.reward
+
+            if isinstance(self.sampler, data.PrioritizedSampler):
+                if slice_id is not None:
+                    max_prio = self.sampler._max.total
+                    if max_prio == 0.0:
+                        max_prio = 1.0
+                    self.sampler[slice_id] = max_prio
+
+            if step.done:
+                self.exp.add_scalar("train/ep_ret", self.ep_rets[env_idx])
+                del self.ep_rets[env_idx]
+                del self.ep_ids[env_idx]
 
             self.env_step += self._frame_skip
             self.agent_step += 1
@@ -483,7 +433,7 @@ class Runner:
         for name in ("qf", "qf_t", "qf_opt"):
             state[name] = getattr(self, name).state_dict()
         if self.cfg.ckpts.save_buf:
-            state["env_buf"] = self.data.env_buf
+            state["env_buf"] = self.env_buf
         return state
 
     def load(self, ckpt_path: str | Path):
@@ -497,14 +447,13 @@ class Runner:
         for name in ("qf", "qf_t", "qf_opt"):
             getattr(self, name).load_state_dict(state[name])
         if self.cfg.ckpts.save_buf:
-            self.data.env_buf = state["env_buf"]
+            self.env_buf = state["env_buf"]
 
 
 def main():
-    presets = ["faster", "der", "sample"]
     cfg = config.from_args(
         cls=None,
-        args=argparse.Namespace(presets=presets),
+        args=argparse.Namespace(presets=["dominik"]),
         config_file=Path(__file__).parent / "config.yml",
         presets_file=Path(__file__).parent / "presets.yml",
     )

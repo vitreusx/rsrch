@@ -212,7 +212,7 @@ class Q(nn.Module):
     def forward(self, obs: Tensor, val_mode=False):
         if self._noisy:
             if val_mode:
-                noisy.zero_noise_(self.head)
+                noisy.zero_noise_(self.head, recursive=True)
             else:
-                noisy.reset_noise_(self.head)
+                noisy.reset_noise_(self.head, recursive=True)
         return self.head(self.enc(obs))
