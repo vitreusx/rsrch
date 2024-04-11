@@ -13,12 +13,12 @@ from .samplers import *
 X, Y, Idx = TypeVar("X"), TypeVar("Y"), TypeVar("Idx")
 
 
-class Dataset(Generic[X], data.Dataset[X]):
+class Dataset(data.Dataset[X]):
     def map(self, f: Callable[[X], Y]) -> Dataset[Y]:
         return MapDataset(self, f)
 
 
-class IterableDataset(Generic[X], data.IterableDataset[X]):
+class IterableDataset(data.IterableDataset[X]):
     def map(self, f: Callable[[X], Y]) -> IterableDataset[Y]:
         return MapIterableDs(self, f)
 

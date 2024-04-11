@@ -56,7 +56,7 @@ class Factory(base.Factory):
         env = DMCEnv(self.cfg.domain, self.cfg.task)
 
         if self.cfg.obs_type in ("rgb", "grayscale"):
-            env = gym.wrappers.ToVisualEnv(env)
+            env = gym.wrappers.RenderEnv(env)
             if self.cfg.obs_type == "grayscale":
                 env = gym.wrappers.GrayScaleObservation(env, keep_dim=True)
         else:

@@ -34,3 +34,12 @@ def _mp_reducer(arr: shared_ndarray):
 
 
 ForkingPickler.register(shared_ndarray, _mp_reducer)
+
+
+def make_shared(arr):
+    if isinstance(arr, np.ndarray):
+        sh_arr = shared_ndarray(arr.shape, arr.dtype)
+        sh_arr[:] = arr
+        return sh_arr
+    else:
+        raise RuntimeError(f"Cannot make {arr} shared.")

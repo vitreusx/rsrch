@@ -17,8 +17,19 @@ class Space:
         self.shape = tuple(shape)
         self.dtype = dtype
         self.device = torch.device(device or "cpu")
-        self._seed = seed
-        self._gen = seed if isinstance(seed, torch.Generator) else None
+        self.seed(seed)
+
+    def __getstate__(self):
+        d = self.__dict__
+        if self._gen is not None:
+            d["_gen"] = self._gen.get_state()
+        return d
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        if state.get("_gen", None) is not None:
+            self._gen = torch.Generator(self.device)
+            self._gen.set_state(state["_gen"])
 
     @property
     def gen(self):
@@ -27,14 +38,19 @@ class Space:
             self._gen.manual_seed(self._seed)
         return self._gen
 
+    def seed(self, seed: int):
+        if isinstance(seed, torch.Generator):
+            self._seed = None
+            self._gen = seed
+        else:
+            self._seed = seed
+            self._gen = None
+
     def empty(self, shape: tuple[int, ...] = ()):
         return torch.empty([*shape, *self.shape], dtype=self.dtype, device=self.device)
 
     def sample(self, shape: tuple[int, ...] = ()):
         raise NotImplementedError()
-
-    def seed(self, new_seed: int):
-        self._seed, self._gen = new_seed, None
 
     def __repr__(self):
         return f"Space({self.shape!r}, {self.dtype}, {self.device})"

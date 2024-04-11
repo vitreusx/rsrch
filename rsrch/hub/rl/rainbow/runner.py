@@ -283,7 +283,8 @@ class Runner:
                     self.pbar.update(0)
 
         with open(self.exp.dir / self.cfg.sample.dest, "wb") as f:
-            pickle.dump(self.sample_buf, f)
+            data = {"sample_buf": self.sample_buf, "env_f": self.env_f}
+            pickle.dump(data, f)
 
     def _val_epoch(self):
         val_iter = self.exp.pbar(
@@ -451,9 +452,10 @@ class Runner:
 
 
 def main():
+    presets = ["dominik", "sample"]
     cfg = config.from_args(
         cls=None,
-        args=argparse.Namespace(presets=["dominik"]),
+        args=argparse.Namespace(presets=presets),
         config_file=Path(__file__).parent / "config.yml",
         presets_file=Path(__file__).parent / "presets.yml",
     )

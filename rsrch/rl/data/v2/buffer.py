@@ -26,7 +26,6 @@ def default_array_ctor(space, shape: tuple[int, ...]):
 class Buffer(Protocol):
     """Buffer interface."""
 
-    sampler: CyclicSampler
     ids: range
 
     def __getitem__(self, id: int) -> Any:
@@ -42,12 +41,10 @@ class CyclicBuffer(Mapping[int, dict]):
         self,
         max_size: int,
         spaces: dict[str, spaces.np.Space],
-        sampler: CyclicSampler | None = None,
         array_ctor=default_array_ctor,
     ):
         self.max_size = max_size
         self.spaces = spaces
-        self.sampler = sampler or UniformSampler()
 
         self._min_id, self._max_id = 0, 0
 
@@ -73,17 +70,12 @@ class CyclicBuffer(Mapping[int, dict]):
             arr = self._arrays[key]
             arr[step_id % self.max_size] = val
 
-        if self.sampler is not None:
-            self.sampler.append()
-
         self._max_id += 1
 
         return step_id
 
     def popleft(self):
         self._min_id += 1
-        if self.sampler is not None:
-            self.sampler.popleft()
 
     def __iter__(self):
         return iter(range(self._min_id, self._max_id))
@@ -95,49 +87,15 @@ class CyclicBuffer(Mapping[int, dict]):
         return {key: arr[id % self.max_size] for key, arr in self._arrays.items()}
 
 
-class Allocator:
-    def __init__(self, size: int):
-        self._voids = [[0, size]]
-        self._free_id = 0
-        self._allocs = {}
-
-    def try_alloc(self, req_size: int):
-        for idx, (beg, end) in enumerate(self._voids):
-            if end - beg < req_size:
-                continue
-            self._voids[idx] = beg + req_size, end
-            alloc_id = self._free_id
-            self._free_id += 1
-            self._allocs[alloc_id] = beg, beg + req_size
-            return alloc_id, beg, beg + req_size
-
-    def free(self, alloc_id: int):
-        self._voids.append(self._allocs[alloc_id])
-        del self._allocs[alloc_id]
-        self._voids.sort()
-        merged, cur_beg, cur_end = [], 0, 0
-        for beg, end in self._voids:
-            if cur_end == beg:
-                cur_end = end
-            else:
-                merged.append((cur_beg, cur_end))
-                cur_beg, cur_end = beg, end
-        if cur_beg < cur_end:
-            merged.append((cur_beg, cur_end))
-        self._voids = merged
-
-
 class SeqBuffer(Mapping[int, dict]):
     def __init__(
         self,
-        max_size: int,
+        max_steps: int,
         spaces: dict[str, Any],
-        sampler: CyclicSampler | None = None,
         array_ctor=default_array_ctor,
     ):
-        self.max_size = max_size
+        self.max_size = max_steps
         self.spaces = spaces
-        self.sampler = sampler or UniformSampler()
 
         self._min_id, self._max_id = 0, 0
         self._array_ctor = array_ctor
@@ -203,34 +161,24 @@ class SeqBuffer(Mapping[int, dict]):
 
     def reset(self):
         self._min_id, self._max_id = 0, 0
-        self.sampler.reset()
         self._store = {}
 
     def __getitem__(self, seq_id: int):
         return self._store[seq_id]
 
 
-def asarray(x):
-    if not isinstance(x, np.ndarray):
-        x_ = np.empty(len(x), dtype=object)
-        x_[:] = x
-        x = x_
-    return x
-
-
-class EpisodeBuffer(Mapping[int, Seq]):
+class EpisodeBuffer(Mapping[int, dict]):
     """A buffer for episodes."""
 
     def __init__(
         self,
-        max_size: int,
+        max_steps: int,
         obs_space: Any,
         act_space: Any,
-        sampler: CyclicSampler | None = None,
         stack_size: int | None = None,
         array_ctor=default_array_ctor,
     ):
-        self.max_size = max_size
+        self.max_steps = max_steps
         self.obs_space = obs_space
         self.act_space = act_space
         self.stack_size = stack_size
@@ -239,14 +187,13 @@ class EpisodeBuffer(Mapping[int, Seq]):
             obs_space = obs_space[0]
 
         self._seq_buf = SeqBuffer(
-            max_size=max_size,
+            max_steps=max_steps,
             spaces={
                 "obs": obs_space,
                 "act": act_space,
                 "reward": spaces.np.Box((), dtype=np.float32),
                 "term": spaces.np.Box((), dtype=bool),
             },
-            sampler=sampler,
             array_ctor=array_ctor,
         )
 
@@ -297,25 +244,18 @@ class EpisodeBuffer(Mapping[int, Seq]):
 
     def __getitem__(self, id: int):
         seq_d = self._seq_buf[id]
-
-        if self.stack_size is not None:
-            ep_len = len(seq_d["obs"]) - self.stack_size + 1
-            obs_idxes = np.mgrid[:ep_len, : self.stack_size].sum(0)
-            obs = asarray(seq_d["obs"])[obs_idxes]
-            act_idxes = slice(self.stack_size, None)
-        else:
-            obs = seq_d["obs"]
-            act_idxes = slice(1, None)
-
-        return Seq(
-            obs=obs,
-            act=seq_d["act"][act_idxes],
-            reward=seq_d["reward"][act_idxes],
-            term=seq_d["term"][-1],
-        )
+        return {
+            "obs": seq_d["obs"],
+            "obs_space": self.obs_space,
+            "act": seq_d["act"][1:],
+            "act_space": self.act_space,
+            "reward": seq_d["reward"][1:],
+            "term": seq_d["term"][-1],
+            "type": "seq",
+        }
 
 
-class SliceBuffer(Mapping[int, Seq]):
+class SliceBuffer(Mapping[int, dict]):
     """A buffer for equal-length slices of episodes."""
 
     def __init__(
@@ -324,7 +264,6 @@ class SliceBuffer(Mapping[int, Seq]):
         slice_len: int,
         obs_space: Any,
         act_space: Any,
-        sampler: CyclicSampler | None = None,
         stack_size: int | None = None,
         array_ctor=default_array_ctor,
     ):
@@ -339,7 +278,7 @@ class SliceBuffer(Mapping[int, Seq]):
             obs_space = obs_space[0]
 
         self._seq_buf = SeqBuffer(
-            max_size=max_size,
+            max_steps=max_size,
             spaces={
                 "obs": obs_space,
                 "act": act_space,
@@ -355,7 +294,6 @@ class SliceBuffer(Mapping[int, Seq]):
                 "seq_id": spaces.np.Box((), dtype=np.int64),
                 "elem_idx": spaces.np.Box((), dtype=np.int64),
             },
-            sampler=sampler,
             array_ctor=array_ctor,
         )
 
@@ -365,15 +303,13 @@ class SliceBuffer(Mapping[int, Seq]):
     def from_episodes(
         ep_buf: EpisodeBuffer,
         slice_len: int,
-        sampler=None,
         array_ctor=default_array_ctor,
     ):
         slice_buf = SliceBuffer(
-            max_size=ep_buf.max_size,
+            max_size=ep_buf.max_steps,
             slice_len=slice_len,
             obs_space=ep_buf.obs_space,
             act_space=ep_buf.act_space,
-            sampler=sampler,
             stack_size=ep_buf.stack_size,
             array_ctor=array_ctor,
         )
@@ -395,10 +331,6 @@ class SliceBuffer(Mapping[int, Seq]):
                 ep_id, _ = slice_buf.push(ep_id, step)
 
         return slice_buf
-
-    @property
-    def sampler(self):
-        return self._slice_buf.sampler
 
     @property
     def ids(self):
@@ -477,18 +409,23 @@ class SliceBuffer(Mapping[int, Seq]):
             step.trunc,
         )
 
-    def __getitem__(self, id: int):
+    def __getitem__(self, id: int) -> dict:
         slice_d = self._slice_buf[id]
         seq_id, elem_idx = slice_d["seq_id"], slice_d["elem_idx"]
         seq = self._seq_buf[seq_id]
+
+        r = {"type": "seq"}
+
+        asarray = lambda x: np.stack(x) if isinstance(x, list) else x
 
         if self.stack_size is not None:
             subslice = slice(elem_idx, elem_idx + self.slice_len + self.stack_size - 1)
             subseq = asarray(seq["obs"][subslice])
             idxes = np.mgrid[: self.slice_len, : self.stack_size].sum(0)
-            obs = subseq[idxes]
+            r["obs"] = subseq[idxes]
         else:
-            obs = asarray(seq["obs"][elem_idx : elem_idx + self.slice_len])
+            r["obs"] = asarray(seq["obs"][elem_idx : elem_idx + self.slice_len])
+        r["obs_space"] = self.obs_space
 
         if self.stack_size is not None:
             idxes = slice(
@@ -498,22 +435,24 @@ class SliceBuffer(Mapping[int, Seq]):
         else:
             idxes = slice(elem_idx + 1, elem_idx + self.slice_len)
 
-        act = asarray(seq["act"][idxes])
-        reward = asarray(seq["reward"][idxes])
-        term = seq["term"][idxes.stop - 1]
+        r["act"] = asarray(seq["act"][idxes])
+        r["act_space"] = self.act_space
+        r["reward"] = asarray(seq["reward"][idxes])
+        r["term"] = asarray(seq["term"][idxes.stop - 1])
 
-        return Seq(obs, act, reward, term)
+        return r
 
 
-class StepBuffer(Mapping[int, Step]):
+class StepBuffer(Mapping[int, dict]):
     def __init__(
         self,
         max_size: int,
         obs_space: Any,
         act_space: Any,
-        sampler: CyclicSampler | None = None,
         array_fn=default_array_ctor,
     ):
+        self.obs_space = obs_space
+        self.act_space = act_space
         self._buf = CyclicBuffer(
             max_size=max_size,
             spaces={
@@ -523,13 +462,8 @@ class StepBuffer(Mapping[int, Step]):
                 "reward": spaces.np.Box((), dtype=np.float32),
                 "term": spaces.np.Box((), dtype=bool),
             },
-            sampler=sampler,
             array_ctor=array_fn,
         )
-
-    @property
-    def sampler(self):
-        return self._buf.sampler
 
     @property
     def ids(self):
@@ -557,12 +491,10 @@ class StepBuffer(Mapping[int, Step]):
 
         return seq_id, step_id
 
-    def __getitem__(self, id: int) -> Step:
-        step_data: dict = self._buf[id]
-        return Step(
-            step_data["obs"],
-            step_data["act"],
-            step_data["next_obs"],
-            step_data["reward"],
-            step_data["term"],
-        )
+    def __getitem__(self, id: int) -> dict:
+        return {
+            **self._buf[id],
+            "obs_space": self.obs_space,
+            "act_space": self.act_space,
+            "type": "step",
+        }

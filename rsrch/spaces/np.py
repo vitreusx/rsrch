@@ -4,7 +4,7 @@ import numpy as np
 from numpy.lib.mixins import NDArrayOperatorsMixin
 
 
-class Space(NDArrayOperatorsMixin):
+class Space:
     def __init__(
         self,
         shape: tuple[int, ...],
@@ -35,6 +35,17 @@ class Space(NDArrayOperatorsMixin):
 
     def __repr__(self):
         return f"Space({self.shape!r}, {self.dtype})"
+
+    def __array__(self):
+        return np.empty(self.shape, self.dtype)
+
+    def __array_function__(self, func, types, args, kwargs):
+        proto: np.ndarray = func(*(np.asarray(arg) for arg in args), **kwargs)
+        return self.__class__(
+            shape=proto.shape,
+            dtype=proto.dtype,
+            seed=self.gen.spawn(1)[0],
+        )
 
 
 class Box(Space):
@@ -157,3 +168,11 @@ class Image(Box):
         shape = self.low[index].shape
         assert len(shape) >= 3
         return Image(shape=shape, channel_last=self.channel_last, dtype=self.dtype)
+
+    def __array_function__(self, func, types, args, kwargs):
+        r = super().__array_function__(func, types, args, kwargs)
+        if len(args) == 1 and r.shape != self.shape:
+            # This check if done to prevent ops like transpose or moveaxis on
+            # images, which might be invalid ("bleed into" last three axes.)
+            raise RuntimeError(f"Cannot use '{func}' on images.")
+        return r

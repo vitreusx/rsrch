@@ -1,6 +1,36 @@
 {
   "configurations": [
     {
+      "name": "Seq-VQ",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "rsrch.hub.vis.seq_vq",
+      "pythonArgs": [
+        "-O"
+      ],
+      "env": {
+        // "CUDA_LAUNCH_BLOCKING": "1", 
+        // "MUJOCO_GL": "osmesa",
+        "KINETO_LOG_LEVEL": "3", // ERROR
+      },
+      "justMyCode": false
+    },
+    {
+      "name": "VQ",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "rsrch.hub.vis.vq",
+      "pythonArgs": [
+        "-O"
+      ],
+      "env": {
+        // "CUDA_LAUNCH_BLOCKING": "1", 
+        // "MUJOCO_GL": "osmesa",
+        "KINETO_LOG_LEVEL": "3", // ERROR
+      },
+      "justMyCode": false
+    },
+    {
       "name": "cVAE",
       "type": "debugpy",
       "request": "launch",

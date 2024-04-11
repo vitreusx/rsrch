@@ -1,8 +1,9 @@
 import argparse
-from dataclasses import dataclass
 import shlex
-from packaging.version import parse as vp
 import subprocess
+from dataclasses import dataclass
+
+from packaging.version import parse as vp
 
 
 def _guess_torch_tag():
@@ -11,7 +12,7 @@ def _guess_torch_tag():
     env_info = get_env_info()
     torch_v = vp(env_info.torch_version.split("+")[0])
 
-    max_torch_v = "2.2.1"
+    max_torch_v = "2.2.2"
     if torch_v > vp(max_torch_v):
         raise RuntimeError(f"Update the script for torch>={max_torch_v}")
 

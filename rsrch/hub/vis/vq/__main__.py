@@ -1,25 +1,22 @@
-from dataclasses import dataclass
 import os
+from dataclasses import dataclass
 from typing import Literal
+
 import numpy as np
 import torch
-from torch import nn, Tensor
-from rsrch import distributions as D
 import torch.nn.functional as F
-from rsrch.nn.utils import infer_ctx
-from rsrch.utils import data
-from rsrch._exp import Experiment, board
 import torchvision.transforms as T
 import torchvision.transforms.functional as tv_F
-from rsrch.data.imagenet import ImageNet
-from rsrch.data.cifar import CIFAR10, CIFAR100
-from rsrch.utils import cron
-from rsrch.utils.preview import make_grid
 from fast_pytorch_kmeans import KMeans
+from torch import Tensor, nn
 
-import torch
-from torch import nn, Tensor
-import torch.nn.functional as F
+from rsrch import distributions as D
+from rsrch._exp import Experiment, board
+from rsrch.data.cifar import CIFAR10, CIFAR100
+from rsrch.data.imagenet import ImageNet
+from rsrch.nn.utils import infer_ctx
+from rsrch.utils import cron, data
+from rsrch.utils.preview import make_grid
 
 
 class PassGradientOp(torch.autograd.Function):
@@ -41,26 +38,35 @@ class VQLayer(nn.Module):
         self,
         num_embed: int,
         embed_dim: int,
+        dim=1,
         commit_coef=0.25,
-        replace_after=20,
+        replace_after=32,
+        normalize=True,
     ):
         super().__init__()
         self.num_embed = num_embed
         self.embed_dim = embed_dim
         self.commit_coef = commit_coef
+        self.dim = dim
+        self.normalize = normalize
 
         self.replace_after = replace_after
         if self.replace_after is not None:
             self.last_used: Tensor
             self.register_buffer("last_used", torch.zeros(num_embed, dtype=torch.long))
 
-        self.codebook = nn.Parameter(torch.randn(self.num_embed, self.embed_dim))
+        codebook = torch.randn(self.num_embed, self.embed_dim)
+        if self.normalize:
+            mean = codebook.mean(0, keepdim=True)
+            std = codebook.std(0, keepdim=True)
+            codebook = (codebook - mean) / std
+        self.codebook = nn.Parameter(codebook)
 
     def init(self, input: Tensor):
         """Initialize (or reset) the codebook, using K-Means on a given input.
         :param input: Tensor of shape (N, D, ...)."""
 
-        input = input.moveaxis(1, -1).flatten(0, -2)  # [N, D, ...] -> [*, D]
+        input = input.moveaxis(self.dim, -1).flatten(0, -2)  # [N, D, ...] -> [*, D]
         if len(input) < self.num_embed:
             num_rep = (self.num_embed + len(input) - 1) // len(input)
             input = input.repeat(num_rep, 1)
@@ -72,8 +78,14 @@ class VQLayer(nn.Module):
         )
         kmeans.fit(input)
 
+        codebook: Tensor = kmeans.centroids
+        if self.normalize:
+            mean = codebook.mean(0, keepdim=True)
+            std = codebook.std(0, keepdim=True)
+            codebook = (codebook - mean) / std
+
         with torch.no_grad():
-            self.codebook.copy_(kmeans.centroids)
+            self.codebook.copy_(codebook)
 
     def replace_unused(self, input: Tensor, idxes: Tensor):
         """Replace unused code vectors by randomly sampled vectors from the
@@ -87,25 +99,40 @@ class VQLayer(nn.Module):
         self.last_used[~is_used] += 1
         to_replace = torch.where(self.last_used >= self.replace_after)[0]
         if len(to_replace) > 0:
-            samp_idxes = torch.randint(0, len(input), (len(to_replace),))
             with torch.no_grad():
-                self.codebook[to_replace] = input[samp_idxes]
+                samp_idxes = torch.randint(0, len(input), (len(to_replace),))
+                codebook = self.codebook.clone()
+                codebook[to_replace] = input[samp_idxes]
+                if self.normalize:
+                    mean = codebook.mean(0, keepdim=True)
+                    std = codebook.std(0, keepdim=True)
+                    codebook = (codebook - mean) / std
+                self.codebook.copy_(codebook)
 
     def forward(self, input: Tensor, compute_loss=False):
         # input: [N, D, ...]
 
+        if self.replace_after is not None:
+            if hasattr(self, "_input"):
+                self.replace_unused(self._input, self._idxes)
+
         codebook = self.codebook
-        input_ = input.moveaxis(1, -1)  # [N, D, ...] -> [N, ..., D]
+        if self.normalize:
+            mean = codebook.mean(0, keepdim=True)
+            std = codebook.std(0, keepdim=True)
+            codebook = (codebook - mean) / std
+
+        input_ = input.moveaxis(self.dim, -1)  # [N, D, ...] -> [N, ..., D]
         batch_shape = input_.shape[:-1]  # [N, ...]
         input_ = input_.flatten(0, -2)  # [N, ..., D] -> [*, D]
         dists = torch.cdist(input_[None], codebook[None])[0]  # [*, #E]
         idxes = dists.argmin(-1).reshape(batch_shape)  # [N, ...]
 
         embed = codebook[idxes]  # [N, ..., D]
-        embed = embed.moveaxis(-1, 1)  # [N, ..., D] -> [N, D, ...]
+        embed = embed.moveaxis(-1, self.dim)  # [N, ..., D] -> [N, D, ...]
 
-        if self.replace_after is not None:
-            self.replace_unused(input_, idxes)
+        # Save tensors for self.replace_unused
+        self._input, self._idxes = input_, idxes
 
         if compute_loss:
             codebook_loss = F.mse_loss(embed.detach(), input)
@@ -162,7 +189,7 @@ class VQModel(nn.Module):
             nn.ReLU(),
             nn.Conv2d(embed_dim // 4, embed_dim, 4, 2, 1),
             nn.ReLU(),
-            nn.Conv2d(embed_dim , embed_dim, 4, 2, 1),
+            nn.Conv2d(embed_dim, embed_dim, 4, 2, 1),
             ResBlock(embed_dim),
             ResBlock(embed_dim),
         )
@@ -232,7 +259,7 @@ def main():
 
     exp = Experiment(
         project="vq",
-        board=[board.Tensorboard],
+        board=board.Tensorboard,
     )
 
     opt_step = 0
@@ -433,6 +460,7 @@ def main():
                 recon_img = val_img_to_pil(y[idx].mode)
                 samples[idx] = [orig_img, recon_img]
             exp.add_image("train/samples", make_grid(samples))
+
 
 if __name__ == "__main__":
     main()

@@ -46,5 +46,5 @@ class RandomState:
         torch.set_rng_state(torch.as_tensor(state["torch_cpu"]))
         for idx, rs in enumerate(state["torch_cuda"]):
             device = torch.device(f"cuda:{idx}")
-            torch.cuda.set_rng_state(torch.as_tensor(rs, device=device), device)
+            torch.cuda.set_rng_state(torch.as_tensor(rs), device)
         random.setstate(state["random"])

@@ -31,6 +31,6 @@ der:
     sched: {every: {n: 1, of: agent_step}}
     batch_size: 32
 sample:
-  resume: latest
+  resume: 'runs/rainbow/ALE-Alien-v5__2024-04-05_06-40-37/ckpts/env_step=6864128-val_ret=1579.06.pth'
   mode: sample
   total: {n: 1e6, of: env_step}

@@ -174,7 +174,7 @@ class ClipRewardEnv(TransformReward):
         super().__init__(env, np.sign)
 
 
-class ToVisualEnv(Wrapper):
+class RenderEnv(Wrapper):
     """Convert an environment with prioperceptive observations to one with
     visual ones, obtained from render() method."""
 
