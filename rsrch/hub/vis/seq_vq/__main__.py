@@ -2,19 +2,23 @@ import os
 import pickle
 from dataclasses import dataclass
 from functools import cache, wraps
-from typing import Literal
+from numbers import Number
+from typing import Iterable, Literal
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 import torchvision.transforms as T
 import torchvision.transforms.functional as tv_F
+from moviepy.editor import ImageSequenceClip
 from PIL import Image
 from torch import Tensor, nn
 
 from rsrch import distributions as D
 from rsrch import spaces
 from rsrch._exp import Experiment, board
+from rsrch.distributions.utils import sum_rightmost
+from rsrch.nn import dist_head as dh
 from rsrch.nn.utils import infer_ctx
 from rsrch.rl.data import EpisodeBuffer, SliceBuffer, Step
 from rsrch.rl.data.types import Seq, SliceBatch, StepBatch
@@ -22,7 +26,7 @@ from rsrch.types.shared import make_shared
 from rsrch.utils import cron, data
 from rsrch.utils.preview import make_grid
 
-from .vq import VQLayer, pass_gradient
+from .vq import VQLayer, VSQLayer, pass_gradient
 
 
 class ResBlock(nn.Module):
@@ -44,7 +48,6 @@ class VisEncoder(nn.Sequential):
         self,
         space: spaces.torch.Image,
         conv_hidden: int,
-        out_features=None,
         norm_layer=None,
         act_layer=nn.ELU,
     ):
@@ -66,15 +69,8 @@ class VisEncoder(nn.Sequential):
             act_layer(),
             norm_layer(8 * conv_hidden),
             # At this point the size is [2, 2]
+            nn.Flatten(),
         ]
-
-        if out_features is not None:
-            layers.extend(
-                [
-                    nn.Flatten(),
-                    nn.Linear(32 * conv_hidden, out_features),
-                ]
-            )
 
         layers = [x for x in layers if not isinstance(x, nn.Identity)]
         super().__init__(*layers)
@@ -139,7 +135,11 @@ class ResBlock(nn.Module):
 
 
 class VisEncoder2(nn.Sequential):
-    def __init__(self, input_space: spaces.torch.Image, conv_hidden: int):
+    def __init__(
+        self,
+        input_space: spaces.torch.Image,
+        conv_hidden: int,
+    ):
         super().__init__(
             nn.Conv2d(input_space.num_channels, conv_hidden, 4, 2, 1),
             nn.ReLU(),
@@ -154,8 +154,17 @@ class VisEncoder2(nn.Sequential):
 
 
 class VisDecoder2(nn.Module):
-    def __init__(self, input_space: spaces.torch.Image, conv_hidden: int):
+    def __init__(
+        self,
+        output_space: spaces.torch.Image,
+        conv_hidden: int,
+    ):
         super().__init__()
+
+        conv_w, conv_h = output_space.width // 16, output_space.height // 16
+        self.in_shape = (4 * conv_hidden, conv_w, conv_h)
+        self.in_features = int(np.prod(self.in_shape))
+
         self.main = nn.Sequential(
             ResBlock(4 * conv_hidden),
             ResBlock(4 * conv_hidden),
@@ -165,19 +174,28 @@ class VisDecoder2(nn.Module):
             nn.ReLU(),
             nn.ConvTranspose2d(2 * conv_hidden, conv_hidden, 4, 2, 1),
             nn.ReLU(),
-            nn.ConvTranspose2d(conv_hidden, input_space.num_channels, 4, 2, 1),
+            nn.ConvTranspose2d(conv_hidden, output_space.num_channels, 4, 2, 1),
         )
 
     def forward(self, input: Tensor):
+        input = input.reshape(len(input), *self.in_shape)
         out = self.main(input)
         return D.Dirac(out, 3)
 
 
 class Reshape(nn.Module):
-    def __init__(self, in_shape: tuple[int, ...], out_shape: tuple[int, ...]):
+    def __init__(
+        self,
+        in_shape: int | tuple[int, ...],
+        out_shape: int | tuple[int, ...],
+    ):
         super().__init__()
-        self.in_shape = in_shape
-        self.out_shape = out_shape
+        if not isinstance(in_shape, Iterable):
+            in_shape = (in_shape,)
+        self.in_shape = tuple(in_shape)
+        if not isinstance(out_shape, Iterable):
+            out_shape = (out_shape,)
+        self.out_shape = tuple(out_shape)
 
     def forward(self, input: Tensor) -> Tensor:
         new_shape = [*input.shape[: -len(self.in_shape)], *self.out_shape]
@@ -200,24 +218,127 @@ class VQModel(nn.Module):
         #     VisDecoder(input_space, state_dim=state_dim, conv_hidden=32),
         # )
 
-        self.encoder = VisEncoder2(input_space, conv_hidden=64)
-        self.decoder = VisDecoder2(input_space, conv_hidden=64)
+        self.encoder = VisEncoder2(input_space, conv_hidden=32)
+        self.decoder = VisDecoder2(input_space, conv_hidden=32)
 
         with infer_ctx(self.encoder):
-            enc_out = self.encoder(input_space.empty()[None])
+            enc_out = self.encoder(input_space.sample()[None])
             embed_dim = enc_out.shape[1]
 
-        num_embed = 256
+        num_embed = 32
         self.vq = VQLayer(num_embed=num_embed, embed_dim=embed_dim)
 
-        ...
+
+class VQProj(nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        num_tokens: int,
+        embed_dim: int,
+        input_norm=True,
+    ):
+        super().__init__()
+        self.in_features = in_features
+        self.num_tokens = num_tokens
+        self.embed_dim = embed_dim
+
+        self.fc = nn.Linear(in_features, embed_dim * num_tokens)
+        self.input_norm = input_norm
+        if input_norm:
+            self.norm = nn.BatchNorm1d(embed_dim)
+
+    def forward(self, input: Tensor):
+        output = self.fc(input)
+        if self.input_norm:
+            output = output.reshape(-1, self.embed_dim, self.num_tokens)
+            output = self.norm(output)
+            output = output.swapaxes(-2, -1)
+        else:
+            output = output.reshape(-1, self.num_tokens, self.embed_dim)
+        return output
 
 
-def get_recon_loss(x_hat: D.Distribution, x: Tensor):
-    if isinstance(x_hat, D.Dirac):
-        return F.mse_loss(x_hat.value, x)
+class WorldModel(nn.Module):
+    def __init__(
+        self,
+        obs_space: spaces.torch.Image,
+        act_space: spaces.torch.Discrete,
+    ):
+        super().__init__()
+        self.seq_hidden, self.fc_hidden = 1024, 256
+        self.num_tokens, self.vocab_size, self.embed_dim = 32, 32, 128
+
+        dummy_obs = obs_space.sample((1,))
+        dummy_act = act_space.sample((1,))
+
+        vis_enc = VisEncoder2(obs_space, conv_hidden=32)
+        with infer_ctx(vis_enc):
+            out_features = int(np.prod(vis_enc(dummy_obs).shape[1:]))
+
+        self.init_enc = nn.Sequential(
+            vis_enc,
+            nn.Flatten(),
+            nn.Linear(out_features, self.seq_hidden),
+        )
+
+        self.obs_enc = self.init_enc
+        self.act_enc = nn.Embedding(act_space.n, 64)
+
+        with infer_ctx(self.obs_enc, self.act_enc):
+            obs_out = self.obs_enc(dummy_obs)[0]
+            obs_dim = obs_out.shape[-1]
+            act_out = self.act_enc(dummy_act)[0]
+            act_dim = act_out.shape[-1]
+
+        self.seq = nn.GRU(obs_dim + act_dim, self.seq_hidden)
+
+        self.vq_proj = VQProj(self.seq_hidden, self.num_tokens, self.embed_dim)
+
+        # self.vq = VQLayer(
+        #     num_embed=self.num_embed,
+        #     embed_dim=self.embed_dim,
+        #     dim=-1,
+        # )
+
+        self.vq = VSQLayer(
+            num_tokens=self.num_tokens,
+            vocab_size=self.vocab_size,
+            embed_dim=self.embed_dim,
+        )
+
+        vis_dec = VisDecoder2(obs_space, conv_hidden=32)
+        self.obs_dec = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(self.num_tokens * self.embed_dim, vis_dec.in_features),
+            vis_dec,
+        )
+
+        self.reward_dec = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(self.num_tokens * self.embed_dim, self.fc_hidden),
+            nn.ReLU(),
+            dh.Dirac(self.fc_hidden, ()),
+        )
+
+        self.cont_dec = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(self.num_tokens * self.embed_dim, self.fc_hidden),
+            nn.ReLU(),
+            dh.Bernoulli(self.fc_hidden),
+        )
+
+    def pred(self, z_t, enc_act):
+        fc_x = torch.cat((z_t.flatten(1), enc_act), 1)
+        logits = self.pred_fc(fc_x)
+        logits = logits.reshape(-1, self.num_tokens, self.vq.num_embed)
+        return D.Categorical(logits=logits, event_dims=1)
+
+
+def data_loss(dist: D.Distribution, value: Tensor):
+    if isinstance(dist, D.Dirac):
+        return F.mse_loss(dist.value, value)
     else:
-        return -x_hat.log_prob(x).mean()
+        return -dist.log_prob(value).mean()
 
 
 class SampleImages(data.Dataset):
@@ -245,7 +366,8 @@ class SampleImages(data.Dataset):
         item.obs = obs
         item.act = torch.as_tensor(item.act, dtype=torch.long)
         item.reward = torch.as_tensor(item.reward, dtype=torch.float32)
-        item.term = bool(item.term)
+        item.reward = item.reward.sign().float()
+        item.term = float(item.term)
         return item
 
 
@@ -295,9 +417,18 @@ def default_collate_fn(batch: list[Step] | list[Seq]):
 def _over_seq(_func):
     @wraps(_func)
     def _lifted(*args, **kwargs):
-        batch_size = args[0].shape[1]
+        seq_len, batch_size = args[0].shape[:2]
         y = _func(*(x.flatten(0, 1) for x in args), **kwargs)
-        y = y.reshape(-1, batch_size, *y.shape[1:])
+        if isinstance(y, tuple):
+            xs = []
+            for x in y:
+                if len(x.shape) > 0:
+                    x = x.reshape(seq_len, batch_size, *x.shape[1:])
+                xs.append(x)
+            y = tuple(xs)
+        else:
+            if len(y.shape) > 0:
+                y = y.reshape(seq_len, batch_size, *y.shape[1:])
         return y
 
     return _lifted
@@ -356,13 +487,18 @@ def main():
         return tv_F.to_pil_image(img)
 
     input_shape = ds[0].obs.shape[1:]
-    model = VQModel(input_shape).to(device)
-    opt = torch.optim.Adam(model.parameters(), lr=cfg.lr)
+    obs_space = spaces.torch.Image(input_shape, dtype=torch.float32)
+    act_space = spaces.torch.Discrete(ds.env_f.act_space.n)
+
+    wm = WorldModel(obs_space, act_space).to(device)
+    wm_opt = torch.optim.Adam(wm.parameters(), lr=cfg.lr)
 
     should_train = cron.Until(lambda: opt_step, cfg.num_steps)
     should_log_img = cron.Every2(lambda: opt_step, cfg.log_images_every)
 
     pbar = exp.pbar(total=cfg.num_steps, desc="VQ")
+
+    coef = {"obs": 256.0, "pred": 1e-2}
 
     while True:
         if not should_train:
@@ -375,42 +511,79 @@ def main():
             batch_iter = iter(loader)
             batch = next(batch_iter)
 
-        slices = batch
-        obs, act = slices.obs, slices.act  # [L, N, ...]
-        obs, act = obs.to(device), act.to(device)
+        batch = SliceBatch(
+            obs=batch.obs.to(device),
+            act=batch.act.to(device),
+            reward=batch.reward.to(device),
+            term=batch.term.to(device),
+        )
 
-        obs = obs.flatten(0, 1)
-        obs = obs[np.random.randint(len(obs), size=(128,))]
-        e = model.encoder(obs)
-        if opt_step == 0:
-            model.vq.init(e)
-        z_idx, z, vq_loss = model.vq(e, compute_loss=True)
-        y = model.decoder(pass_gradient(z, e))
-        recon_loss = get_recon_loss(y, obs)
-        loss = recon_loss + vq_loss
+        losses = {}
 
-        opt.zero_grad(set_to_none=True)
-        loss.backward()
-        opt.step()
+        h_t = over_seq(wm.init_enc)(batch.obs)  # [L, N, H]
+        h_proj = over_seq(wm.vq_proj)(h_t)
+        h_proj = h_proj.reshape(*h_proj.shape[:-2], wm.num_tokens, wm.embed_dim)
+
+        z_t, z_idx, losses["vq"] = over_seq(wm.vq)(h_proj, compute_loss=True)
+        z_t = pass_gradient(z_t, h_proj)
+
+        obs_rv = over_seq(wm.obs_dec)(z_t)
+        losses["obs"] = data_loss(obs_rv, batch.obs)
+
+        # h0 = wm.init_enc(batch.obs[0])  # [N, D, #VQ]
+        # h0 = h0.flatten(1).unsqueeze(0)  # [1, N, D * #VQ = H]
+        # h0 = h0.repeat(wm.seq.num_layers, 1, 1)  # [#L, N, H]
+
+        # enc_obs = over_seq(wm.obs_enc)(batch.obs[1:])  # [L, N, D_o]
+        # enc_act = over_seq(wm.act_enc)(batch.act)  # [L, N, D_a]
+        # x_t = torch.cat((enc_act, enc_obs), -1)  # [L, N, D_x]
+        # out, _ = wm.seq(x_t, h0)  # [L, N, H]
+        # h_t = torch.cat((h0[-1][None], out), 0)  # [L + 1, N, H]
+
+        # h_proj = over_seq(wm.vq_proj)(h_t)
+        # h_proj = h_proj.reshape(*h_proj.shape[:-2], wm.embed_dim, wm.num_vq)
+
+        # z_t, z_idx, losses["vq"] = wm.vq(h_proj, compute_loss=True)
+        # z_t = pass_gradient(z_t, h_proj)
+
+        # obs_rv = over_seq(wm.obs_dec)(z_t)
+        # losses["obs"] = data_loss(obs_rv, batch.obs)
+
+        # rew_rv = over_seq(wm.reward_dec)(z_t[1:])
+        # losses["rew"] = data_loss(rew_rv, batch.reward)
+
+        # cont_rv = over_seq(wm.cont_dec)(z_t[1:])
+        # losses["cont"] = data_loss(cont_rv, 1.0 - batch.term)
+
+        # pred_rv = over_seq(wm.pred)(z_t[:-1], enc_act)
+        # losses["pred"] = data_loss(pred_rv, z_idx[1:])
+
+        wm_loss = sum(coef.get(k, 1.0) * v for k, v in losses.items())
+        wm_opt.zero_grad(set_to_none=True)
+        wm_loss.backward()
+        wm_opt.step()
         opt_step += 1
         pbar.update()
 
-        exp.add_scalar("train/loss", loss)
-        for k in ("recon", "vq"):
-            exp.add_scalar(f"train/{k}_loss", locals()[f"{k}_loss"])
+        exp.add_scalar("train/loss", wm_loss)
+        for k, v in losses.items():
+            exp.add_scalar(f"train/{k}_loss", v)
 
-        is_used = torch.zeros(model.vq.num_embed, dtype=torch.bool, device=device)
-        is_used.index_fill_(0, z_idx.ravel(), True)
-        vq_usage = is_used.long().sum()
+        vq_usage = (wm.vq._no_use_streak == 0).sum()
         exp.add_scalar("train/vq_usage", vq_usage)
 
         if should_log_img:
-            samples = [None for _ in range(8)]
-            for idx in range(len(samples)):
-                orig_img = obs_to_img(obs[idx])
-                recon_img = obs_to_img(y[idx].mode)
-                samples[idx] = [orig_img, recon_img]
-            exp.add_image("train/samples", make_grid(samples))
+            frames = [
+                np.asarray(obs_to_img(obs).convert("RGB")) for obs in batch.obs[:, 0]
+            ]
+            orig_vid = ImageSequenceClip(frames, fps=4.0)
+            exp.add_video("train/orig_vid", orig_vid)
+
+            frames = [
+                np.asarray(obs_to_img(obs).convert("RGB")) for obs in obs_rv[:, 0].mode
+            ]
+            recon_vid = ImageSequenceClip(frames, fps=4.0)
+            exp.add_video("train/recon_vid", recon_vid)
 
 
 if __name__ == "__main__":

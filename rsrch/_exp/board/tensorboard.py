@@ -43,9 +43,10 @@ class Tensorboard(StepMixin, Board):
         pic_arr = tv_F.to_tensor(image)
         self.writer.add_image(tag, pic_arr, global_step=step)
 
-    def add_video(self, tag: str, vid: VideoClip, *, fps=30.0, step: Step = None):
+    def add_video(self, tag: str, vid: VideoClip, *, step: Step = None):
         step = self._get_step(step)
         vid_arr = np.stack([*vid.iter_frames()])
         vid_tensor = torch.from_numpy(vid_arr)
         vid_tensor = vid_tensor.permute(0, 3, 1, 2)
-        self.writer.add_video(tag, vid_tensor, global_step=step, fps=int(fps))
+        vid_tensor = vid_tensor[None]
+        self.writer.add_video(tag, vid_tensor, global_step=step, fps=int(vid.fps))

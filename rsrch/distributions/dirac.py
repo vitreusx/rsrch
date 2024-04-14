@@ -12,8 +12,8 @@ class Dirac(Distribution, Tensorlike):
         batch_shape = value.shape[: len(value.shape) - event_dims]
         Tensorlike.__init__(self, batch_shape)
 
-        self.value: Tensor
-        self.register("value", value)
+        self.value = self.register("value", value)
+        self.event_dims = event_dims
 
     @property
     def mean(self):

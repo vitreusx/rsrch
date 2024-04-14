@@ -75,7 +75,7 @@ class Normal(nn.Module):
 
 
 class Bernoulli(nn.Module):
-    def __init__(self, in_features: int):
+    def __init__(self, in_features: int | None):
         super().__init__()
         self.in_features = in_features
         if in_features is not None:
@@ -89,7 +89,7 @@ class Bernoulli(nn.Module):
 
 
 class Categorical(nn.Module):
-    def __init__(self, in_features: int, num_classes: int, min_pr=None):
+    def __init__(self, in_features: int | None, num_classes: int, min_pr=None):
         super().__init__()
         self.in_features = in_features
         self.num_classes = num_classes

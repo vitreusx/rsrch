@@ -30,7 +30,7 @@ class ValueDist(Tensorlike, D.Distribution):
     ):
         Tensorlike.__init__(self, ind_rv.shape)
         self.ind_rv = self.register("ind_rv", ind_rv)
-        self.N = ind_rv._num_events
+        self.N = ind_rv.num_events
         v_min = torch.as_tensor(v_min, device=self.device).expand(self.shape)
         self.v_min = self.register("v_min", v_min)
         v_max = torch.as_tensor(v_max, device=self.device).expand(self.shape)

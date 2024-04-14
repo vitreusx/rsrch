@@ -24,7 +24,7 @@ class Piecewise(Tensorlike, Distribution):
     ):
         Tensorlike.__init__(self, dist.shape)
         self.dist = self.register("dist", dist)
-        self.k = self.dist._num_events
+        self.k = self.dist.num_events
         self.low, self.high = low, high
         self.step = (high - low) / self.k
         self.event_dims = event_dims

@@ -14,7 +14,7 @@ class OneHotCategorical(Distribution, Tensorlike):
     def __init__(self, probs: Tensor | None = None, logits: Tensor | None = None):
         index_rv = Categorical(probs=probs, logits=logits)
         Tensorlike.__init__(self, index_rv.shape)
-        self.event_shape = torch.Size([index_rv._num_events])
+        self.event_shape = torch.Size([index_rv.num_events])
 
         self.index_rv: Categorical
         self.register("index_rv", index_rv)
@@ -38,7 +38,7 @@ class OneHotCategorical(Distribution, Tensorlike):
     @property
     def mode(self):
         mode = self.probs.argmax(axis=-1)
-        mode = F.one_hot(mode, num_classes=self.index_rv._num_events)
+        mode = F.one_hot(mode, num_classes=self.index_rv.num_events)
         mode = mode.type_as(self.probs)
         return mode
 
