@@ -163,3 +163,4 @@ cython_debug/
 /runs
 /wandb
 /MUJOCO_LOG.TXT
+/torch_compile_debug

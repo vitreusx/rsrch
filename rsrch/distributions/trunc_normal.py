@@ -73,11 +73,11 @@ class TruncNormal(Distribution, Tensorlike):
         logp = norm_logp + trunc_logp
         return sum_rightmost(logp, len(self.event_shape))
 
-    def sample(self, sample_shape: torch.Size = torch.Size()):
+    def sample(self, sample_shape=()):
         with torch.no_grad():
             return self.rsample(sample_shape)
 
-    def rsample(self, sample_shape: torch.Size = torch.Size()):
+    def rsample(self, sample_shape=()):
         shape = torch.Size([*sample_shape, *self.batch_shape, *self.event_shape])
         u = torch.rand(shape, device=self.device)
         v = self.low_cdf + self.pmf_z * u

@@ -1,7 +1,9 @@
+from torch import Tensor
+
 _KL_DIVS = {}
 
 
-def kl_divergence(p, q):
+def kl_divergence(p, q) -> Tensor:
     if (type(p), type(q)) not in _KL_DIVS:
         dist, func = None, None
         for p_idx, p_super in enumerate(type(p).__mro__):

@@ -1,9 +1,4 @@
 mode: train
-requires:
-  exec_env:
-    type: node
-    node:
-      device: cuda
 random:
   seed: 42
   deterministic: true
@@ -29,14 +24,14 @@ nets:
   encoder: nature
   hidden_dim: 256
   dueling: true
-  polyak: {every: {n: 32e3, of: env_step}, tau: 0.0}
+  polyak: { every: { n: 32e3, of: env_step }, tau: 0.0 }
   spectral_norm: none
 data:
   buf_cap: 1e6
   slice_len: 3
   prefetch_factor: 2
   parallel: false
-total: {n: 250e6, of: env_step}
+total: { n: 250e6, of: env_step }
 num_envs: 1
 expl:
   noisy: true
@@ -48,22 +43,22 @@ aug:
 prioritized:
   enabled: true
   prio_exp: 0.5
-  is_coef_exp: {desc: 'linear(0.4, 1.0, ${total.n})', of: '${total.of}'}
+  is_coef_exp: { desc: "linear(0.4, 1.0, ${total.n})", of: "${total.of}" }
 warmup: 80e3
 val:
-  sched: {every: {n: 128e3, of: env_step}}
+  sched: { every: { n: 128e3, of: env_step } }
   episodes: 32
   envs: ${.episodes}
 opt:
   dtype: float32
-  sched: {every: {n: 4, of: agent_step}}
+  sched: { every: { n: 4, of: agent_step } }
   batch_size: 32
   optimizer:
     type: adam
     lr: 2.5e-4
     eps: ${5e-3 / opt.batch_size}
   grad_clip: 10.0
-log: {every: {n: 16, of: opt_step}}
+log: { every: { n: 16, of: opt_step } }
 gamma: 0.99
 double_dqn: true
 ckpts:
@@ -71,6 +66,6 @@ ckpts:
   save_buf: false
 resume: null
 sample:
-  num_envs: ${num_envs}
+  num_envs: ${..num_envs}
   env_mode: train
   dest: ./samples.pkl

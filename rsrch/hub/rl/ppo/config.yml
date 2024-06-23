@@ -1,9 +1,9 @@
 env:
-  type: gym
+  type: atari
   gym:
     env_id: Humanoid-v4 # CartPole-v1
   atari:
-    env_id: ALE/Pong-v4
+    env_id: ALE/Alien-v5
     screen_size: 84
     frame_skip: 4
     term_on_life_loss: false
@@ -13,10 +13,10 @@ env:
     episodic_life: true
     stack: 4
     time_limit: 108e3
-total_steps: 500e3
+total_steps: 10e6
 lr: 2.5e-4
 opt_eps: 1e-5
-train_envs: 4
+train_envs: 8
 steps_per_epoch: 128
 gamma: 0.99
 gae_lambda: 0.95
@@ -31,9 +31,10 @@ clip_vloss: true
 ent_coeff: 1e-2
 vf_coeff: 0.5
 clip_grad: 0.5
-log_every: 128
+log_every: 16
 val_every: 10e3
 decorrelate: false
 share_encoder: false
 custom_init: true
 seed: 42
+save_ckpt_every: 1e6

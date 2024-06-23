@@ -1,0 +1,57 @@
+seed: 2
+samples_path: samples/ALE-Alien-v5__2024-04-08_08-30-11.v2.pkl
+tokenizer:
+  enabled: false
+  pretrained: null
+  # pretrained: runs/wmx/2024-05-26_18-07-51/ckpts/tokenizer.pth
+  # pretrained: runs/wmx/2024-06-02_11-16-00/ckpts/tokenizer.pth
+  samples_path: runs/wmx/2024-06-02_13-36-04/samples/encoded.pkl
+  batch_size: 256
+  opt_steps: 20e3
+  save_every: null
+  save_final: true
+  preview_every: ${opt_steps/20}
+lm:
+  pretrained: null
+  # samples_path: null
+  batch_size: 16
+  slice_len: 16
+  opt_steps: 1e6
+  preview_every: ${opt_steps/20}
+  save_final: true
+ac:
+  batch_size: 64
+  prefix_len: 8
+  horizon: 16
+  gamma: 0.99
+  gae_lambda: 0.95
+  update_epochs: 4
+  update_batch: 256
+  adv_norm: true
+  clip_coef: 0.1
+  clip_vloss: true
+  v_coef: 0.5
+  ent_coef: 1e-2
+  lr: 3e-4
+  eps: 1e-5
+  clip_grad: 10.0
+  opt_steps: 200e3
+  clip_rew: true
+  test_every: 50e3
+  test_envs: 8
+  test_episodes: 32
+env:
+  type: atari
+  gym:
+    env_id: Humanoid-v4 # CartPole-v1
+  atari:
+    env_id: ALE/Alien-v5
+    screen_size: 84
+    frame_skip: 4
+    term_on_life_loss: false
+    grayscale: true
+    noop_max: 30
+    fire_reset: true
+    episodic_life: true
+    stack: 4
+    time_limit: 108e3

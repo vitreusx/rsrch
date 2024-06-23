@@ -9,7 +9,9 @@ from .ensemble import Ensemble
 from .kl import kl_divergence, register_kl
 from .multihead_ohst import MultiheadOHST
 from .normal import Normal
+from .one_hot import Discrete, OneHot
 from .one_hot_categorical import OneHotCategorical, OneHotCategoricalST
+from .one_of import OneOf
 from .piecewise import Piecewise, Piecewise3, Piecewise4
 from .tanh_normal import TanhNormal
 from .transformed import Transformed

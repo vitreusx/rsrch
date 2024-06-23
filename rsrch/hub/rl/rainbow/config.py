@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from rsrch._exp import Requires
 from rsrch.utils.config import *
 
 from .. import env
@@ -89,7 +88,6 @@ class Sample:
 @dataclass
 class Config:
     mode: Literal["train", "sample"]
-    requires: Requires
     random: Random
     env: env.Config
     distq: distq.Config

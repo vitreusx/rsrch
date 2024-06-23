@@ -1,7 +1,8 @@
+import numpy as np
 import torch.distributions as D
 from gymnasium.envs import *
 
-from .base import Env, Space
+from .base import Env, Space, spaces
 from .dmc import DMCEnv
 from .vector.base import VectorEnv
 
@@ -63,3 +64,32 @@ class FromVectorEnv(Env):
     def step(self, act):
         res = self._venv.step(act[None])
         return tuple(self._squeeze(x) for x in res)
+
+
+class OrdinalEnv(Env):
+    def __init__(self):
+        super().__init__()
+        self._ep_idx, self._step_idx = -1, 0
+        self.observation_space = spaces.Box(
+            low=0,
+            high=int(2**32 - 1),
+            shape=[],
+            dtype=np.uint32,
+        )
+        self.action_space = spaces.Discrete(2)
+
+    def reset(self, *, seed=None, options=None):
+        self._step_idx = 0
+        self._ep_idx += 1
+        obs = np.array([self._ep_idx, self._step_idx], dtype=np.uint32)
+        info = {}
+        return obs, info
+
+    def step(self, action: int):
+        self._step_idx += 1
+        next_obs = np.array([self._ep_idx, self._step_idx], dtype=np.uint32)
+        reward = 0.0
+        term = action == 0
+        trunc = False
+        info = {}
+        return next_obs, reward, term, trunc, info

@@ -28,6 +28,17 @@ class NatureEncoder(nn.Sequential):
         )
 
 
+class DEREncoder(nn.Sequential):
+    def __init__(self, in_channels: int):
+        super().__init__(
+            nn.Conv2d(in_channels, 32, 5, 5),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, 5, 5),
+            nn.ReLU(),
+            nn.Flatten(),
+        )
+
+
 class ImpalaSmall(nn.Sequential):
     def __init__(self, in_channels: int):
         super().__init__(
@@ -161,10 +172,13 @@ class QHead(nn.Module):
 
 def Encoder(cfg: config.Config, obs_space: spaces.torch.Image):
     in_channels = obs_space.num_channels
+    enc_name = cfg.nets.encoder
 
-    NATURE_RE = r"nature"
-    if m := re.match(NATURE_RE, cfg.nets.encoder):
+    if enc_name == "nature":
         return NatureEncoder(in_channels)
+
+    if enc_name == "der":
+        return DEREncoder(in_channels)
 
     IMPALA_RE = r"impala\[(?P<variant>small|(large,(?P<size>[0-9]*)))\]"
     if m := re.match(IMPALA_RE, cfg.nets.encoder):
@@ -176,7 +190,6 @@ def Encoder(cfg: config.Config, obs_space: spaces.torch.Image):
                 model_size=int(m["size"]),
                 use_spectral_norm=cfg.nets.spectral_norm,
             )
-
         return enc
 
 

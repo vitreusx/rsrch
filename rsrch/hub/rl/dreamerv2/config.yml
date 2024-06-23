@@ -1,0 +1,116 @@
+_:
+  act: elu
+  norm: none
+  depth: 48
+  fc: &fc
+    act: ${_.act}
+    norm: ${_.norm}
+    hidden: 400
+    layers: 4
+seed: 42
+device: cuda
+dtype: float16
+env:
+  type: atari
+  atari:
+    env_id: ALE/Alien-v5
+    screen_size: 64
+    frame_skip: 4
+    obs_type: grayscale
+    noop_max: 30
+    fire_reset: true
+    term_on_life_loss: true
+    time_limit: 108e3
+    stack: ~
+    use_envpool: true
+wm:
+  rssm:
+    ensemble: 1
+    deter_size: 1024
+    stoch:
+      $type: Discrete
+      num_tokens: 32
+      token_size: 32
+    act: ${_.act}
+    norm: ${_.norm}
+    hidden_size: 1024
+  opt:
+    $type: Adam
+    lr: 1e-4
+    eps: 1e-5
+    weight_decay: 1e-6
+  kl:
+    free: 0.0
+    forward: false
+    balance: 0.8
+    free_avg: true
+  reward_fn: tanh
+  clip_rew: [-1.0, 1.0]
+  coef: {}
+  clip_grad: 1.0e2
+  encoders:
+    obs:
+      $type: ImageEncoder
+      depth: ${_.depth}
+      kernels: [4, 4, 4, 4]
+      norm: ${_.norm}
+      act: ${_.act}
+    act:
+      $type: DiscreteEncoder
+      embed_dim: 128
+  decoders:
+    obs:
+      $type: ImageDecoder
+      depth: ${_.depth}
+      kernels: [5, 5, 6, 6]
+      norm: ${_.norm}
+      act: ${_.act}
+    reward:
+      $type: BoxDecoder
+      <<: [*fc]
+    term:
+      $type: DiscreteDecoder
+      <<: [*fc]
+ac:
+  actor: *fc
+  critic: *fc
+  target_critic:
+    tau: 0.0
+    every: 100
+  actor_opt:
+    $type: Adam
+    lr: 8e-5
+    eps: 1e-5
+    weight_decay: 1e-6
+  critic_opt:
+    $type: Adam
+    lr: 2e-4
+    eps: 1e-5
+    weight_decay: 1e-6
+  horizon: 15
+  rew_norm:
+    momentum: 1.0
+    scale: 1.0
+    eps: 1e-8
+  gamma: 0.99
+  gae_lambda: 0.95
+  actor_grad: auto
+  actor_grad_mix: 0.1
+  actor_ent: 2e-3
+  clip_grad: 1.0e2
+dataset:
+  capacity: 2e6
+  batch_size: 16
+  slice_len: 50
+  subseq_len: [50, 50]
+  prefill: 10e3
+  prioritize_ends: true
+  ongoing: false
+total: { n: 100e6, of: env_step }
+prefill: { n: 10e3, of: env_step }
+train_every: { n: 5, of: env_step, iters: 1 }
+train_steps: 1
+eval_every: { n: 1e5, of: env_step, iters: 1 }
+agent:
+  expl_noise: 0.0
+  eval_noise: 0.0

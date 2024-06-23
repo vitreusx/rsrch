@@ -61,12 +61,12 @@ class Normal(Distribution, Tensorlike):
     def var(self):
         return self.scale.square()
 
-    def sample(self, sample_shape: torch.Size = torch.Size()):
+    def sample(self, sample_shape=()):
         shape = torch.Size([*sample_shape, *self.batch_shape, *self.event_shape])
         with torch.no_grad():
             return torch.normal(self.loc.expand(shape), self.scale.expand(shape))
 
-    def rsample(self, sample_shape: torch.Size = torch.Size()):
+    def rsample(self, sample_shape=()):
         shape = torch.Size([*sample_shape, *self.batch_shape, *self.event_shape])
         eps = _standard_normal(shape, self.loc.dtype, self.loc.device)
         return self.loc + self.scale * eps

@@ -74,7 +74,7 @@ class Bernoulli(Distribution, Tensorlike):
         with torch.no_grad():
             return torch.bernoulli(self.probs.expand(shape))
 
-    def rsample(self, sample_shape: torch.Size = torch.Size()):
+    def rsample(self, sample_shape=()):
         raise NotImplementedError
 
     def log_prob(self, value):

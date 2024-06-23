@@ -1,17 +1,24 @@
 import torch
 from torch import Tensor
 from torch.nn import *
-
+from typing import Iterable
 from . import ensemble
 
 
 class Reshape(Module):
-    def __init__(self, shape: tuple[int, ...], start_dim=1, end_dim=-1):
+    def __init__(
+        self,
+        in_shape: int | tuple[int, ...],
+        out_shape: int | tuple[int, ...],
+    ):
         super().__init__()
-        self.shape = shape
-        self.start_dim = start_dim
-        self.end_dim = end_dim
+        if not isinstance(in_shape, Iterable):
+            in_shape = (in_shape,)
+        self.in_shape = tuple(in_shape)
+        if not isinstance(out_shape, Iterable):
+            out_shape = (out_shape,)
+        self.out_shape = tuple(out_shape)
 
-    def forward(self, x: Tensor) -> Tensor:
-        new_shape = x.shape[: self.start_dim] + self.shape + x.shape[self.end_dim :][1:]
-        return x.reshape(new_shape)
+    def forward(self, input: Tensor) -> Tensor:
+        new_shape = [*input.shape[: -len(self.in_shape)], *self.out_shape]
+        return input.reshape(new_shape)

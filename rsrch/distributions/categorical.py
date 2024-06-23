@@ -32,7 +32,7 @@ class Categorical(Distribution, Tensorlike):
         elif log_probs is not None:
             logits = torch.as_tensor(log_probs)
             norm = True
-            _param = logits
+            _param = logits = log_probs
 
         batch_shape = _param.shape[: -event_dims - 1]
         event_shape = _param.shape[-event_dims - 1 : -1]
@@ -86,7 +86,7 @@ class Categorical(Distribution, Tensorlike):
     def variance(self):
         raise NotImplementedError
 
-    def sample(self, sample_shape: torch.Size = torch.Size()) -> Tensor:
+    def sample(self, sample_shape=()) -> Tensor:
         if not isinstance(sample_shape, torch.Size):
             sample_shape = torch.Size(sample_shape)
         probs_2d = self.probs.reshape(-1, self.num_events)
@@ -96,7 +96,7 @@ class Categorical(Distribution, Tensorlike):
             samples_2d = torch.multinomial(probs_2d, sample_shape.numel(), True).T
         return samples_2d.reshape([*sample_shape, *self.batch_shape, *self.event_shape])
 
-    def rsample(self, sample_shape: torch.Size = torch.Size()):
+    def rsample(self, sample_shape=()):
         raise NotImplementedError
 
     def _multinomial1(self, probs_2d: torch.Tensor):
@@ -105,11 +105,16 @@ class Categorical(Distribution, Tensorlike):
         return q.argmax(dim=-1, keepdim=True)
 
     def log_prob(self, value: Tensor) -> Tensor:
-        value = value.long().unsqueeze(-1)
-        value, log_pmf = torch.broadcast_tensors(value, self.log_probs)
-        value = value[..., :1]
-        logp = log_pmf.gather(-1, value).squeeze(-1)
-        return sum_rightmost(logp, len(self.event_shape))
+        if value.dtype.is_floating_point:
+            # Value is a set of one-hot vectors
+            return sum_rightmost(value * self.log_probs, len(self.event_shape) + 1)
+        else:
+            # Value is a set of indices
+            value = value.long().unsqueeze(-1)
+            value, log_pmf = torch.broadcast_tensors(value, self.log_probs)
+            value = value[..., :1]
+            logp = log_pmf.gather(-1, value).squeeze(-1)
+            return sum_rightmost(logp, len(self.event_shape))
 
     def entropy(self):
         min_real = torch.finfo(self.logits.dtype).min
@@ -119,7 +124,7 @@ class Categorical(Distribution, Tensorlike):
 
 
 @register_kl(Categorical, Categorical)
-def _kl_categorical(p: Categorical, q: Categorical):
+def _(p: Categorical, q: Categorical):
     t = p.probs * (p.log_probs - q.log_probs)
     t[(q.probs == 0).expand_as(t)] = torch.inf
     t[(p.probs == 0).expand_as(t)] = 0

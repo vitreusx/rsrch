@@ -1,10 +1,72 @@
 {
   "configurations": [
+
     {
-      "name": "Seq-VQ",
+      "name": "DreamerV2",
       "type": "debugpy",
       "request": "launch",
-      "module": "rsrch.hub.vis.seq_vq",
+      "module": "rsrch.hub.rl.dreamerv2",
+      "pythonArgs": [
+        "-O"
+      ],
+      "env": {
+        // "CUDA_LAUNCH_BLOCKING": "1", 
+        // "MUJOCO_GL": "osmesa",
+        "KINETO_LOG_LEVEL": "3", // ERROR
+      },
+      "justMyCode": false
+    },  
+
+    {
+      "name": "StackWM",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "rsrch.hub.vis.stack_wm",
+      "pythonArgs": [
+        "-O"
+      ],
+      "env": {
+        // "CUDA_LAUNCH_BLOCKING": "1", 
+        // "MUJOCO_GL": "osmesa",
+        "KINETO_LOG_LEVEL": "3", // ERROR
+      },
+      "justMyCode": false
+    },  
+    {
+      "name": "AE",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "rsrch.hub.vis.ae",
+      "pythonArgs": [
+        "-O"
+      ],
+      "env": {
+        // "CUDA_LAUNCH_BLOCKING": "1", 
+        // "MUJOCO_GL": "osmesa",
+        "KINETO_LOG_LEVEL": "3", // ERROR
+      },
+      "justMyCode": false
+    },  
+    {
+      "name": "SeqVAE",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "rsrch.hub.vis.seq_vae",
+      "pythonArgs": [
+        "-O"
+      ],
+      "env": {
+        // "CUDA_LAUNCH_BLOCKING": "1", 
+        // "MUJOCO_GL": "osmesa",
+        "KINETO_LOG_LEVEL": "3", // ERROR
+      },
+      "justMyCode": false
+    },
+    {
+      "name": "WMx",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "rsrch.hub.rl.wmx",
       "pythonArgs": [
         "-O"
       ],
@@ -31,10 +93,10 @@
       "justMyCode": false
     },
     {
-      "name": "cVAE",
+      "name": "WMs",
       "type": "debugpy",
       "request": "launch",
-      "module": "rsrch.hub.vis.cvae",
+      "module": "rsrch.hub.rl.wms",
       "pythonArgs": [
         "-O"
       ],

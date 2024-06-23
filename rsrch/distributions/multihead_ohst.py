@@ -64,10 +64,10 @@ class MultiheadOHST(Distribution, Tensorlike):
     def entropy(self):
         return sum_rightmost(self.base.entropy(), 1)
 
-    def sample(self, sample_shape: torch.Size = torch.Size()):
+    def sample(self, sample_shape=()):
         return self._1d(self.base.sample(sample_shape))
 
-    def rsample(self, sample_shape: torch.Size = torch.Size()):
+    def rsample(self, sample_shape=()):
         return self._1d(self.base.rsample(sample_shape))
 
 

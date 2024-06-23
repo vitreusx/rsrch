@@ -1,36 +1,70 @@
-faster:
+no_repro:
   random.deterministic: false
 no_noisy:
   expl:
     noisy: false
-    eps: {desc: 'linear(1.0, 0.1, ${total.n})', of: '${total.of}'}
+    eps: { desc: "linear(1.0, 0.1, ${total.n})", of: "${total.of}" }
+alien:
+  env:
+    type: atari
+    atari.env_id: ALE/Alien-v5
 pong:
-  env.atari.env_id: ALE/Pong-v5
+  env:
+    type: atari
+    atari.env_id: ALE/Pong-v5
 dominik:
-  $extends: [faster, no_noisy]
+  $extends: [no_repro, no_noisy]
   num_envs: 64
   opt:
     batch_size: 256
     sched:
-      every: {n: '${opt.batch_size/8}', of: agent_step} # replay ratio = 8
+      every: { n: "${opt.batch_size/8}", of: agent_step } # replay ratio = 8
       iters: 1
   nets:
     encoder: impala[large,2]
-    # spectral_norm: last
-    polyak: {every: {n: 32e3, of: env_step}, tau: 0.0}
+    spectral_norm: last
+    polyak: { every: { n: 32e3, of: env_step }, tau: 0.0 }
   distq.enabled: false
-  total: {n: 40e6, of: env_step}
+  total: { n: 40e6, of: env_step }
   # data.parallel: true
+quick:
+  total: { n: 4e6, of: env_step }
 der:
-  $extends: [faster, no_noisy]
-  warmup: {n: 6.4e3, of: env_step}
-  total: {n: 400e3, of: env_step}
+  $extends: [no_repro]
+  distq.enabled: true
+  double_dqn: true
+  gamma: 0.99
+  opt:
+    sched.every: { n: 1, of: agent_step }
+    batch_size: 32
+    optimizer:
+      type: adam
+      lr: 1e-4
+      eps: 1.5e-4
+    grad_clip: 10.0
+  prioritized:
+    enabled: true
+    prio_exp: 0.5
+    is_coef_exp:
+      desc: linear(0.4, 1.0, ${total.n})
+      of: ${total.of}
+  expl:
+    noisy: true
+    sigma0: 0.1
+  warmup: { n: 1.6e3, of: env_step }
+  total: { n: 400e3, of: env_step }
   data:
     slice_len: 20
-  opt:
-    sched: {every: {n: 1, of: agent_step}}
-    batch_size: 32
+  nets:
+    encoder: der
+    hidden_dim: 256
+    dueling: true
+    polyak.every: { n: 4e3, of: opt_step }
 sample:
-  resume: 'runs/rainbow/ALE-Alien-v5__2024-04-05_06-40-37/ckpts/env_step=6864128-val_ret=1579.06.pth'
+  resume: runs/rainbow/ALE-Alien-v5__2024-06-10_17-46-32/ckpts/env_step=400004-val_ret=740.00.pth
   mode: sample
-  total: {n: 1e6, of: env_step}
+  total: { n: 400e3, of: env_step }
+sample_pong:
+  resume: "runs/rainbow/ALE-Pong-v5__2024-04-17_06-20-00/ckpts/env_step=6224128-val_ret=16.97.pth"
+  mode: sample
+  total: { n: 1e6, of: agent_step }

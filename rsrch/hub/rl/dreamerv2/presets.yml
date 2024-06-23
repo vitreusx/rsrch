@@ -1,0 +1,17 @@
+atari:
+  wm.rssm:
+    deter_size: 600
+    hidden_size: 600
+    coef: { kl: 0.1, term: 5.0 }
+    opt.lr: 2e-4
+  ac:
+    gamma: 0.999
+    actor_ent: 1e-3
+    actor_opt.lr: 4e-5
+    critic_opt.lr: 1e-4
+  total: { n: 200e6, of: env_step }
+  prefill: { n: 200e3, of: env_step }
+  train_every: { n: 64, of: env_step }
+  eval_every: { n: 1e6, of: env_step }
+debug:
+  prefill.n: 1e3

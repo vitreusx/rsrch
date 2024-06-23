@@ -12,10 +12,6 @@ def _guess_torch_tag():
     env_info = get_env_info()
     torch_v = vp(env_info.torch_version.split("+")[0])
 
-    max_torch_v = "2.2.2"
-    if torch_v > vp(max_torch_v):
-        raise RuntimeError(f"Update the script for torch>={max_torch_v}")
-
     accel_type, arch_v = "cpu", None
     for accel_type_ in ["cuda"]:
         runtime_v = getattr(env_info, f"{accel_type_}_runtime_version", "N/A")

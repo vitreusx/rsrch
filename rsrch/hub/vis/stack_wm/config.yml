@@ -1,0 +1,7 @@
+samples_path: samples/ALE-Alien-v5__2024-06-10_19-06-21.pkl
+seed: 1
+batch_size: 256
+total_steps: 1e6
+test_every: 10e3
+device: cuda
+dtype: float16

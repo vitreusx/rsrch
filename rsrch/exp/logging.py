@@ -52,13 +52,17 @@ class _LoggerMixin:
         self.log(logging.FATAL, msg, *args)
 
 
-class Logger(_LoggerMixin):
-    def __init__(self, name: str, stream=None, level=logging.INFO, no_ansi=True):
-        self._logger = logging.getLogger(name)
-        self._logger.setLevel(level)
+def setupLogger(name: str | None = None, handlers=[], level=logging.INFO, no_ansi=True):
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
 
-        handler = logging.StreamHandler(stream)
-        handler.setLevel(level)
+    for handler in handlers:
+        if isinstance(handler, tuple):
+            handler, handlerLevel = handler
+        else:
+            handlerLevel = handler
+
+        handler.setLevel(handlerLevel)
         if no_ansi:
             fmt = "%(asctime)s - %(name)-13s - %(levelname)-8s - %(message)s"
             formatter = logging.Formatter(fmt)
@@ -66,8 +70,4 @@ class Logger(_LoggerMixin):
             fmt = "%(name)-13s: %(color_on)s%(levelname)-8s%(color_off)s %(message)s"
             formatter = ColorFormatter(fmt)
         handler.setFormatter(formatter)
-
-        self._logger.addHandler(handler)
-
-    def log(self, level: int, msg: str, *args):
-        self._logger.log(level, msg, *args)
+        logger.addHandler(handler)

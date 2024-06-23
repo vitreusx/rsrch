@@ -46,12 +46,12 @@ class OneHotCategorical(Distribution, Tensorlike):
     def variance(self):
         return self.probs * (1 - self.probs)
 
-    def sample(self, sample_shape: torch.Size = torch.Size()):
+    def sample(self, sample_shape=()):
         num_events = self.event_shape[0]
         indices = self.index_rv.sample(sample_shape)
         return torch.nn.functional.one_hot(indices, num_events).type_as(self.probs)
 
-    def rsample(self, sample_shape: torch.Size = torch.Size()):
+    def rsample(self, sample_shape=()):
         raise NotImplementedError
 
     def log_prob(self, value: Tensor):
@@ -71,6 +71,6 @@ def _(p: OneHotCategorical, q: OneHotCategorical):
 
 
 class OneHotCategoricalST(OneHotCategorical):
-    def rsample(self, sample_shape: torch.Size = torch.Size()):
+    def rsample(self, sample_shape=()):
         samples = self.sample(sample_shape)
         return straight_through(samples, self.index_rv._param)

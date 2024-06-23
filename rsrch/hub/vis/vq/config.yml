@@ -1,0 +1,8 @@
+samples_path: samples/ALE-Alien-v5__2024-04-08_08-30-11.v2.pkl
+batch_size: 256
+lr: 3e-4
+eps: 1e-5
+opt_steps: 25e3
+device: cuda
+preview_every: 1e3
+seed: 1

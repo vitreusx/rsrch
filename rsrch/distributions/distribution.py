@@ -26,11 +26,11 @@ class Distribution:
     def mode(self) -> Tensor:
         raise NotImplementedError()
 
-    def sample(self, sample_shape: torch.Size = ()) -> Tensor:
+    def sample(self, sample_shape: tuple[int, ...] = ()):
         with torch.no_grad():
             return self.rsample(sample_shape)
 
-    def rsample(self, sample_shape: torch.Size = ()) -> Tensor:
+    def rsample(self, sample_shape: tuple[int, ...] = ()):
         raise NotImplementedError()
 
     def log_prob(self, value: Tensor) -> Tensor:

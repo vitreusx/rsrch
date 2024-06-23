@@ -1,546 +1,280 @@
-import argparse
-import ast
-import inspect
-import io
+"""Config parsing library."""
+
+import json
 import math
+import os
 import re
-from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import MISSING, dataclass, fields, is_dataclass
+import types
+import typing
+from argparse import Namespace
+from collections import UserDict
+from dataclasses import fields, is_dataclass
 from pathlib import Path
-from types import UnionType
-from typing import (
-    Any,
-    Dict,
-    List,
-    Literal,
-    Optional,
-    Set,
-    Tuple,
-    Type,
-    TypeVar,
-    Union,
-    get_args,
-    get_origin,
-    overload,
-)
+from typing import Any, Mapping, Sequence, Type, TypeVar, get_args, get_origin
 
 import numpy as np
-from mako.template import Template
+import pyparsing as pp
 from ruamel.yaml import YAML
 
 yaml = YAML(typ="safe", pure=True)
 
-__all__ = ["from_dicts", "cli", "parser", "from_args", "parse", "dataclass"]
-
 
 class AttrDict(dict):
-    def __getattr__(self, __name):
-        try:
-            return super().__getattribute__(__name)
-        except AttributeError:
-            return self[__name]
+    def __getattr__(self, name):
+        return self[name]
 
 
-class Expr:
-    """An expression object."""
+def to_attr_dict(x: Any):
+    if isinstance(x, dict):
+        return AttrDict({k: to_attr_dict(v) for k, v in x.items()})
+    elif isinstance(x, list):
+        return [to_attr_dict(v) for v in x]
+    else:
+        return x
 
-    VAR_PAT = r"^\${(?P<back>\.*)(?P<var>[\w\.]+)}"  # e.g. ${..opt.lr}
-    EXPR_PAT = r"^\${(?P<expr>.*)}$"  # e.g. $(-1/np.log(2))
 
-    def __init__(self, value: str, path: list):
-        self._value = value
-        self._path = path
-        self.eval = self._make_eval_fn()
+locator = pp.Empty().setParseAction(lambda s, l, t: l)
 
-    def _make_eval_fn(self):
-        m = re.match(self.VAR_PAT, self._value)
+
+def locatedExpr(expr):
+    return pp.Group(locator("start") + expr("value") + locator("end"))
+
+
+class Resolver:
+    EXPR = locatedExpr(pp.nested_expr("${", "}"))
+
+    VAR_RE = r"(?P<up>\.+)(?P<var>[\w\.]+)"
+    EVAL_RE = r"((?P<resolver>[\w]+):)?(?P<expr>.*)"
+
+    def resolve(self, value: Any):
+        while True:
+            self.stack = [value]
+            value, is_same = self._single_pass(value)
+            if is_same:
+                break
+        return value
+
+    def _single_pass(self, x: Any):
+        is_same = True
+        if isinstance(x, dict):
+            new_x = {}
+            for k, v in x.items():
+                self.stack.append(v)
+                v, is_v_same = self._single_pass(v)
+                self.stack.pop()
+                is_same &= is_v_same
+                new_x[k] = v
+            x = new_x
+        elif isinstance(x, list):
+            new_x = []
+            for i, v in enumerate(x):
+                self.stack.append(v)
+                v, is_v_same = self._single_pass(v)
+                self.stack.pop()
+                is_same &= is_v_same
+                new_x.append(v)
+            x = new_x
+        elif isinstance(x, str):
+            new_x = self._eval_text(x)
+            is_same &= x == new_x
+            x = new_x
+        return x, is_same
+
+    def _eval_text(self, text: str):
+        exprs = []
+        for m in self.EXPR.search_string(text).as_list():
+            beg, _, end = m[0]
+            exprs.append((beg, end))
+
+        if len(exprs) == 1 and exprs[0] == (0, len(text)):
+            return self._eval_expr(text[2:-1])
+        else:
+            cur, res = 0, []
+            for beg, end in exprs:
+                res.append(text[cur:beg])
+                eval_r = self._eval_expr(text[beg + 2 : end - 1])
+                if not isinstance(eval_r, str):
+                    eval_r = str(eval_r)
+                res.append(eval_r)
+                cur = end
+            res.append(text[cur:])
+            return "".join(res)
+
+    def _eval_expr(self, expr: str):
+        m = re.match(self.VAR_RE, expr)
         if m is not None:
-            return self._eval_var(m)
+            backtrack, name = len(m["up"]), m["var"]
+            value = self.stack[-backtrack - 1]
+            for part in name.split("."):
+                value = value[part]
+            return value
 
-        m = re.match(self.EXPR_PAT, self._value)
+        m = re.match(self.EVAL_RE, expr)
         if m is not None:
-            return self._eval_expr(m)
+            resolver = m["resolver"] or "eval"
+            if resolver == "eval":
+                g, cur = self.stack[0], self.stack[-2]
+                g = {**g, **cur, "cfg": g, "math": math, "np": np}
+                g = to_attr_dict(g)
+                return eval(m["expr"], g)
+            elif resolver == "env":
+                return os.environ[m["expr"]]
+            else:
+                raise ValueError(f"Unknown resolver '{resolver}'")
 
-        return self._eval_mako
-
-    def _eval_var(self, m: re.Match):
-        def _fn(g: dict):
-            eval_g = g
-            if len(m["back"]) > 0:
-                cur, local = g, g
-                pivot = len(self._path) - len(m["back"])
-                for k in self._path[:pivot]:
-                    cur = cur[k]
-                    if isinstance(cur, dict):
-                        local = cur
-                eval_g = local
-
-            return eval(m["var"], eval_g)
-
-        return _fn
-
-    def _eval_expr(self, m: re.Match):
-        def _fn(g: dict):
-            cur, local = g, g
-            for k in self._path[:-1]:
-                cur = cur[k]
-                if isinstance(cur, dict):
-                    local = cur
-
-            modules = {"np": np, "math": math}
-            g = {**g, **modules, **local}
-            return eval(m["expr"], g)
-
-        return _fn
-
-    def _eval_mako(self, g: dict):
-        cur, local = g, g
-        for k in self._path[:-1]:
-            cur = cur[k]
-            if isinstance(cur, dict):
-                local = cur
-
-        modules = {"np": np, "math": math}
-        g = {**g, **modules, **local}
-        if "buffer" in g:
-            # Due to a limitation in Mako, we cannot pass "buffer" variable
-            # directly, if it is defined.
-            assert "_buffer" not in g
-            g["_buffer"] = g["buffer"]
-            del g["buffer"]
-
-        return Template(self._value).render(**g)
-
-    def __repr__(self):
-        loc = ".".join(str(x) for x in self._path)
-        return f"Expr({loc}: {self._value})"
-
-
-def replace_str_by_expr(value: Any, path=[]):
-    """Replace string fields in the object by Expr instances."""
-    if isinstance(value, dict):
-        new_value = {}
-        for k, v in [*value.items()]:
-            new_value[k] = replace_str_by_expr(v, [*path, k])
-        value = new_value
-    elif isinstance(value, list):
-        for i, v in enumerate(value):
-            value[i] = replace_str_by_expr(v, [*path, i])
-    elif isinstance(value, str):
-        value = Expr(value, path)
-    return value
-
-
-def resolve_exprs(x: Any):
-    """Convert Expr objects to regular values via evaluation, recursively (that is, expressions can refer to each other.)"""
-
-    def _resolve_once(value: Any, g: dict):
-        """Convert Expr objects to regular values via evaluation, non-recursively."""
-        changed = False
-        if isinstance(value, dict):
-            for k, v in [*value.items()]:
-                new_v, v_changed = _resolve_once(v, g)
-                value[k] = new_v
-                changed |= v_changed
-        elif isinstance(value, list):
-            for i, v in enumerate(value):
-                new_v, v_changed = _resolve_once(v, g)
-                value[i] = new_v
-                changed |= v_changed
-        elif isinstance(value, Expr):
-            try:
-                value = value.eval(g)
-                changed |= not isinstance(value, Expr)
-            except:
-                ...
-
-        return value, changed
-
-    def _g(x):
-        d = {}
-        for k, v in x.items():
-            d[k] = _g(v) if isinstance(v, dict) else v
-            # if not isinstance(v, Expr):
-            #     d[k] = _g(v) if isinstance(v, dict) else v
-        return AttrDict(d)
-
-    while True:
-        x, changed = _resolve_once(x, _g(x))
-        if not changed:
-            break
-
-    return x
+        raise ValueError(f"Could not interpret expression '{expr}'.")
 
 
 def cast(x, t):
-    """Cast `x` to `t`, where `t` may be a Generic (for example Union or Tuple). Raise ValueError, if the value cannot be converted to the specified type."""
+    t_args = get_args(t)
+    t = get_origin(t) or t
 
-    # get_origin gets the generic "type", get_args the arguments in square
-    # brackets. For example, get_origin(Union[str, int]) == Union and
-    # get_args(Union[str, int]) == (str, int)
-    orig = get_origin(t)
-    if t is None or t == type(None):
-        if x is not None:
-            raise ValueError()
+    if t == Any:
         return x
+    elif t in (None, type(None)):
+        if x is not None:
+            raise ValueError(f"Cannot cast {x} to None.")
+        return None
     elif is_dataclass(t):
-        # Allow conversion of dicts to dataclasses
         args = {}
         for field in fields(t):
             if field.name in x:
                 field_t = field.type
                 if isinstance(field_t, str):
+                    # For some insane reason, sometimes field.type is a name
+                    # of the class, like 'str' or 'bool'
                     field_t = eval(field_t)
                 args[field.name] = cast(x[field.name], field_t)
-        try:
-            return t(**args)
-        except:
-            raise ValueError()
-    elif orig is None:
-        return x if t == get_origin(t) and isinstance(x, t) else t(x)
-    elif orig in (Union, Optional, UnionType):
-        # Note: get_args(Optional[t]) == (t, None)
-        # Check if any of the variant types matches the value exactly
-        for ti in get_args(t):
-            if ti == get_origin(ti) and isinstance(x, ti):
+        return t(**args)
+    elif t in (typing.Union, typing.Optional, types.UnionType):
+        for ti in t_args:
+            ti_ = get_origin(ti) or ti
+            if isinstance(ti_, type) and isinstance(x, ti_):
                 return x
-        # Otherwise, try to interpret the value as each of the variant types
-        # and yield the first one to succeed.
-        for ti in get_args(t):
+        for ti in t_args:
             try:
                 return cast(x, ti)
             except:
                 pass
-        raise ValueError()
-    elif orig in (Tuple, tuple):
-        return tuple([cast(xi, ti) for xi, ti in zip(x, get_args(t))])
-    elif orig in (List, Set, list, set):
-        ti = get_args(t)[0]
-        return orig([cast(xi, ti) for xi in x])
-    elif orig in (Dict, dict):
-        kt, vt = get_args(t)
-        return {k: cast(xi, vt) for k, xi in x.items()}
-    elif orig in (Literal,):
+        raise ValueError(f"None of the variant types {t_args} match value {x}")
+    elif t in (typing.Tuple, tuple):
+        return tuple([cast(xi, ti) for xi, ti in zip(x, t_args)])
+    elif t in (typing.List, typing.Set, list, set):
+        elem_t = t_args[0]
+        return t([cast(xi, elem_t) for xi in x])
+    elif t in (typing.Dict, dict):
+        if len(t_args) > 0:
+            kt, vt = t_args
+        else:
+            kt, vt = Any, Any
+        return {cast(k, kt): cast(xi, vt) for k, xi in x.items()}
+    elif t in (typing.Literal,):
         # For Literals, check if the value is one of the allowed values.
-        if x not in get_args(t):
+        if x not in t_args:
             raise ValueError(x)
         return x
+    elif t == bool and isinstance(x, str):
+        x = x.lower()
+        if x in ("0", "f", "false", "n", "no"):
+            return False
+        elif x in ("1", "t", "true", "y", "yes"):
+            return True
+        else:
+            raise ValueError(f"Cannot interpret {x} as bool")
     else:
-        raise NotImplementedError()
-
-
-def update_(dst: dict, *src: dict):
-    """Merge one or more dicts in place."""
-    for d in src:
-        for k, v in d.items():
-            if isinstance(v, dict) and k in dst and isinstance(dst[k], dict):
-                update_(dst[k], v)
-            else:
-                dst[k] = v
-    return dst
-
-
-def merge(*dicts: dict):
-    """Merge one or more dicts into a single one."""
-    merged = {}
-    update_(merged, *dicts)
-    return merged
-
-
-def fix_compound_keys(d: dict) -> dict:
-    """Replace keys of form <k1>.<k2>... to <k1>: {<k2>: ...}."""
-    res = {}
-    for k, v in d.items():
-        if isinstance(v, dict):
-            v = fix_compound_keys(v)
-        if "." in k:
-            cur = res
-            parts = [*k.split(".")]
-            for ki in parts[:-1]:
-                if ki not in cur:
-                    cur[ki] = {}
-                cur = cur[ki]
-            k = parts[-1]
-        else:
-            cur = res
-
-        if isinstance(v, dict):
-            if k not in cur:
-                cur[k] = {}
-            update_(cur[k], v)
-        else:
-            cur[k] = v
-    return res
+        return x if isinstance(t, type) and isinstance(x, t) else t(x)
 
 
 T = TypeVar("T")
 
 
-def remove_attr_dicts(d):
-    if isinstance(d, Mapping):
-        return {k: remove_attr_dicts(v) for k, v in d.items()}
-    elif isinstance(d, List):
-        return [remove_attr_dicts(x) for x in d]
+def unravel(x: Any):
+    """Recursively replace all keys in the dict of form <k1>.<k2>...: v
+    with k1: {k2: ... }."""
+
+    if isinstance(x, dict):
+        r = {}
+        for k, v in x.items():
+            parts = k.split(".")
+            cur = r
+            for part in parts[:-1]:
+                if part not in cur:
+                    cur[part] = {}
+                cur = cur[part]
+            cur[parts[-1]] = unravel(v)
+    elif isinstance(x, list):
+        r = [unravel(xi) for xi in x]
     else:
-        return d
+        r = x
+    return r
 
 
-def from_dicts(dicts: list[dict], cls: Type[T] | None = None) -> T:
-    """Compose a config class or dict from a list of raw dicts.
+def ravel(x: Any):
+    r = {}
 
-    In the process, we:
-    1. Merge the dicts.
-    2. Convert compound keys (like, say, 'opt.lr' to opt: {lr: ... });
-    3. Resolve expressions, such as ${..opt.lr} or $(1/np.log(2)).
-    4. Convert the final dict to class, if provided.
-    """
+    def walk(cur, dest=None):
+        if isinstance(cur, dict):
+            for k, v in cur.items():
+                walk(v, k if dest is None else f"{dest}.{k}")
+        elif isinstance(cur, list):
+            for i, v in enumerate(cur):
+                walk(v, str(i) if dest is None else f"{dest}.{i}")
+        else:
+            r[dest] = cur
 
-    d = merge(*dicts)
-    d = fix_compound_keys(d)
-    d = replace_str_by_expr(d)
-    d = resolve_exprs(d)
-    d = remove_attr_dicts(d)
-    if cls is not None:
-        d = cast(d, cls)
-    return d
+    walk(x)
+    return r
 
 
-def parse(s: str, cls: Type[T]) -> T:
-    """Parse a string into a config object of a given class."""
-    d = yaml.load(io.StringIO(s))
-    return from_dicts([d], cls)
+def parse(data: dict, cls: Type[T]) -> T:
+    """Given a config dict, parse it into a config object of a given type."""
+    data = unravel(data)
+    data = Resolver().resolve(data)
+    return cast(data, cls)
 
 
-def _attr_docstrings(t):
-    """Get attribute docstrings for a dataclass."""
+def merge_(dst: Any, src: Any):
+    src = unravel(src)
 
-    # Get source for t and remove indent
-    t_src: str = inspect.getsource(t)
-    lines = t_src.splitlines()
-    indent = len(lines[0]) - len(lines[0].lstrip())
-    t_src = "\n".join([line[indent:] for line in lines])
+    if not isinstance(src, dict) or not isinstance(dst, dict):
+        return src
 
-    # Parse the source for t and extract class def
-    t_ast = ast.parse(t_src)
-    t_cls_def = next(node for node in ast.walk(t_ast) if isinstance(node, ast.ClassDef))
-
-    # Walk through the class def's body. When encountering an assign
-    # node, i.e. dataclass field, if it is followed by an ast.Expr, then
-    # that expr is the docstring.
-    var_name = None
-    docs = {}
-    for node in t_cls_def.body:
-        if isinstance(node, ast.AnnAssign):
-            var_name = node.target.id
-        elif isinstance(node, ast.Expr):
-            if var_name is not None and isinstance(node.value, ast.Constant):
-                docs[var_name] = node.value.s
-                var_name = None
-
-    return docs
+    for k, v in src.items():
+        cur = dst
+        k_parts = k.split(".")
+        for k_part in k_parts[:-1]:
+            if not isinstance(cur.get(k_part), dict):
+                cur[k_part] = {}
+            cur = cur[k_part]
+        cur[k_parts[-1]] = merge_(cur.get(k_parts[-1]), v)
+    return dst
 
 
-def get_dataclass(t):
-    if is_dataclass(t):
-        return t
-    else:
-        orig = get_origin(t)
-        args = get_args(t)
-        if orig in (Union, Optional, UnionType):
-            dts = [ti for ti in args if is_dataclass(ti)]
-            return dts[0] if len(dts) > 0 else None
+def merge(*dicts: dict):
+    r = {}
+    for d in dicts:
+        r = merge_(r, d)
+    return r
 
 
-def _strtobool(x: str) -> bool:
-    x = x.lower()
-    if x in ("0", "true", "yes", "t", "y"):
-        return True
-    elif x in ("1", "false", "no", "f", "n"):
-        return False
-    else:
-        raise ValueError(x)
+def load(path: str | Path):
+    """Load data from a .json or .yml file."""
 
-
-def from_str(t: type):
-    if isinstance(t, bool):
-        return _strtobool
-    else:
-        return t
-
-
-def parser(
-    cls: Type[T] | None = None,
-    config_file: Path | None = None,
-):
-    p = argparse.ArgumentParser()
-
-    p.add_argument(
-        "-C",
-        "--config-file",
-        type=Path,
-        help="Master config file.",
-    )
-    p.add_argument(
-        "-P",
-        "--preset-file",
-        type=Path,
-        help="Preset file.",
-    )
-    p.add_argument(
-        "-p",
-        "--presets",
-        nargs="*",
-        default=[],
-        help="Presets to use.",
-    )
-
-    yaml = YAML(typ="safe", pure=True)
-
-    if cls is not None:
-        defs = {}
-        if config_file is not None:
-            with open(config_file, "r") as f:
-                defs = yaml.load(f) or {}
-
-        def add_overrides(t, path=[], doc=None, defv=MISSING, cur=defs):
-            dt = get_dataclass(t)
-            if dt is not None:
-                docs = _attr_docstrings(dt)
-                for field in fields(dt):
-                    field_defv = MISSING
-                    if field.name in cur:
-                        field_defv = cur[field.name]
-                    elif field.default != MISSING:
-                        field_defv = field.default
-                    elif field.default_factory != MISSING:
-                        field_defv = field.default_factory()
-
-                    add_overrides(
-                        field.type,
-                        [*path, field.name],
-                        docs.get(field.name),
-                        field_defv,
-                        defs.get(field.name, {}),
-                    )
-            else:
-                opt = "--" + ".".join(path)
-                if defv != MISSING:
-                    if doc is not None:
-                        doc = doc + "\n" + f"[default: {defv}]"
-                    else:
-                        doc = f"[default: {defv}]"
-
-                p.add_argument(
-                    opt,
-                    metavar="...",
-                    type=from_str(t),
-                    default=defv,
-                    help=doc,
-                )
-
-        add_overrides(cls)
-
-    return p
-
-
-@overload
-def from_args(
-    cls: Type[T],
-    args: argparse.Namespace,
-    config_file: Path | None = None,
-    presets_file: Path | None = None,
-) -> T:
-    ...
-
-
-@overload
-def from_args(
-    cls: None,
-    args: argparse.Namespace,
-    config_file: Path | None = None,
-    presets_file: Path | None = None,
-) -> dict:
-    ...
-
-
-def _resolve_preset(preset: str, presets: dict):
-    if preset not in presets:
-        return {}
-
-    d = presets[preset]
-    if "$extends" in d:
-        for ext_preset in d["$extends"]:
-            d.update(_resolve_preset(ext_preset, presets))
-
-    return d
-
-
-def from_args(
-    cls: Type[T] | None,
-    args: argparse.Namespace,
-    config_file: Path | None = None,
-    presets_file: Path | None = None,
-):
-    dicts = []
-
-    path = getattr(args, "config_file", None) or config_file
-    if path is not None:
+    path = Path(path)
+    if path.suffix in (".yml", ".yaml"):
         with open(path, "r") as f:
-            dicts.append(yaml.load(f) or {})
-
-    path = getattr(args, "presets_file", None) or presets_file
-    if path is not None:
+            return yaml.load(f)
+    elif path.suffix in (".json",):
         with open(path, "r") as f:
-            presets = yaml.load(f) or {}
-        for preset in getattr(args, "presets", []):
-            dicts.append(_resolve_preset(preset, presets))
-
-    if cls is not None:
-        opts = {}
-
-        def add_overrides(t, path=[]):
-            dt = get_dataclass(t)
-            if dt is not None:
-                for field in fields(dt):
-                    add_overrides(field.type, [*path, field.name])
-            else:
-                key = ".".join(path)
-                if getattr(args, key) != MISSING:
-                    opts[key] = getattr(args, key)
-
-        dicts.append(opts)
-
-    return from_dicts(dicts, cls)
+            return json.load(f)
 
 
-@overload
-def cli(
-    *,
-    config_file: Path | None = None,
-    presets_file: Path | None = None,
-    args: list[str] | None = None,
-) -> dict:
-    ...
+def add_preset_(cfg: dict, presets: dict, name: str):
+    """Update config dict with a preset. If the preset contains $extends key,
+    the indicated extensions are added as well."""
 
-
-@overload
-def cli(
-    cls: Type[T],
-    *,
-    config_file: Path | None = None,
-    presets_file: Path | None = None,
-    args: list[str] | None = None,
-) -> T:
-    ...
-
-
-def cli(
-    cls: Type[T] | None = None,
-    *,
-    config_file: Path | None = None,
-    presets_file: Path | None = None,
-    args: list[str] | None = None,
-):
-    p = parser(cls, config_file)
-    args = p.parse_args(args)
-    return from_args(cls, args, config_file, presets_file)
+    preset = presets.get(name, {})
+    if "$extends" in preset:
+        for ext in preset["$extends"]:
+            add_preset_(cfg, presets, ext)
+    merge_(cfg, preset)

@@ -28,13 +28,13 @@ class Transformed(Distribution, Tensorlike):
             x = t(x)
         self.event_shape = x.shape[len(base.batch_shape) :]
 
-    def sample(self, sample_shape: torch.Size = torch.Size()) -> Tensor:
+    def sample(self, sample_shape=()) -> Tensor:
         x = self.base.sample(sample_shape)
         for t in self.transforms:
             x = t(x)
         return x
 
-    def rsample(self, sample_shape: torch.Size = torch.Size()) -> Tensor:
+    def rsample(self, sample_shape=()) -> Tensor:
         x = self.base.rsample(sample_shape)
         for t in self.transforms:
             x = t(x)

@@ -14,6 +14,14 @@ T = TypeVar("T")
 
 
 class Tensorlike:
+    """A class for representing complex tensor-like objects.
+
+    The class exposes an interface much like torch.Tensor. Moreover, one can use torch functions such as torch.cat, torch.stack etc. on tensor-likes, and the output shall be a tensor-like of the same type.
+
+    User can register tensor fields via `register`. When using operations such as slicing, stacking, concatenating etc., the output is a tensor-like, with
+    operations being executed over the tensor fields.
+    """
+
     def __init__(self, shape: torch.Size):
         self._fields: set
         super().__setattr__("_fields", set())
@@ -30,6 +38,11 @@ class Tensorlike:
         return super().__setattr__(__name, __value)
 
     def register(self, __name, __value: T, batched=True) -> T:
+        """Register a tensor field.
+
+        A non-tensor may be provided - when assigning to a registered non-tensor, if the setter value is a tensor, the member field becomes a regular tensor field, subject to shape ops etc.
+        """
+
         if hasattr(self, __name):
             raise ValueError(f"Member variable with name '{__name}' already present.")
 
@@ -66,7 +79,7 @@ class Tensorlike:
 
     @property
     def _prototype(self):
-        return torch.empty([]).expand(self.shape)
+        return torch.empty([], device=self.device).expand(self.shape)
 
     def _new(self, shape: torch.Size, fields: dict):
         # copy.copy does not clone Tensors, so, assuming that the other stuff
@@ -159,7 +172,7 @@ class Tensorlike:
         ...
 
     def _expand_arg(self, *sizes: int):
-        return self._expand1([*sizes])
+        return self._expand_seq([*sizes])
 
     def expand(self, *args):
         if len(args) == 1 and isinstance(args[0], Sequence):
@@ -255,7 +268,8 @@ class Tensorlike:
             if isinstance(tensor, torch.Tensor):
                 new = tensor[idx]
             else:
-                new = tensor._getitem(idx, shape)
+                new_shape = tuple((*shape, *tensor.shape[len(shape) :]))
+                new = tensor._getitem(idx, new_shape)
             fields[name] = new
 
         return self._new(shape, fields)
@@ -440,3 +454,10 @@ class Tensorlike:
 
         new_shape = index.shape
         return self._new(new_shape, fields)
+
+    def type_as(self, other: torch.Tensor):
+        fields = {}
+        for name in self._tensors:
+            tensor: Tensorlike = getattr(self, name)
+            fields[name] = tensor.type_as(other)
+        return self._new(self.shape, fields)

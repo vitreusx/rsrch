@@ -1,4 +1,3 @@
-from . import rollout
 from .buffer import *
-from .sampler import *
+from .samplers import *
 from .types import *

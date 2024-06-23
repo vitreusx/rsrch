@@ -7,8 +7,7 @@ import torch
 from torch import Tensor
 
 from rsrch import spaces
-from rsrch.rl import gym
-from rsrch.rl.data.buffer import EpisodeBuffer, SliceBuffer
+from rsrch.rl import gym, data
 from rsrch.spaces.utils import from_gym
 
 from . import base
@@ -245,6 +244,12 @@ class Factory(base.Factory):
         return env
 
     def move_obs(self, obs: np.ndarray) -> torch.Tensor:
+        if obs.dtype == np.object_:
+            # obs is a 'list' (ndarray of dtype object) of frames
+            shape = obs.shape
+            obs = np.stack(obs.ravel())
+            obs = obs.reshape([*shape, *obs.shape[1:]])
+
         obs = torch.as_tensor(obs, device=self.device)
         if self.cfg.obs_type != "ram":
             if self.cfg.stack is not None:
@@ -262,23 +267,12 @@ class Factory(base.Factory):
         else:
             return act.detach().cpu().numpy()
 
-    def slice_buffer(self, capacity: int, slice_len: int, sampler=None) -> SliceBuffer:
-        """Create a slice buffer."""
-
-        return SliceBuffer(
-            max_size=capacity,
-            slice_len=slice_len,
-            obs_space=self.env_obs_space,
-            act_space=self.env_act_space,
-            sampler=sampler,
-            stack_size=self.cfg.stack,
-        )
-
-    def episode_buffer(self, capacity: int, sampler=None):
-        return EpisodeBuffer(
-            max_size=capacity,
-            obs_space=self.env_obs_space,
-            act_space=self.env_act_space,
-            sampler=sampler,
-            stack_size=self.cfg.stack,
+    def buffer(self, capacity: int):
+        return data.Buffer(
+            data=data.BufferData(
+                capacity=capacity,
+                obs_space=self.env_obs_space,
+                act_space=self.env_act_space,
+            ),
+            stack_num=self.cfg.stack,
         )

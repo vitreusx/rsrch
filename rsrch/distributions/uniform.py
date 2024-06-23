@@ -31,10 +31,10 @@ class Uniform(Distribution, Tensorlike):
     def mode(self):
         return self.mean
 
-    def sample(self, sample_shape: torch.Size = torch.Size()):
+    def sample(self, sample_shape=()):
         return self.rsample(sample_shape).detach()
 
-    def rsample(self, sample_shape: torch.Size = torch.Size()):
+    def rsample(self, sample_shape=()):
         shape = [*sample_shape, *self.batch_shape, *self.event_shape]
         shape = torch.Size(shape)
         return self.low + (self.high - self.low) * torch.rand(

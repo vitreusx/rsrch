@@ -1,0 +1,11 @@
+# samples_path: samples/ALE-Alien-v5__2024-06-10_19-06-21.pkl
+samples_path: samples/ALE-Alien-v5__2024-04-08_08-30-11.pkl
+seed: 1
+slice_len: 8
+batch_size: 64
+total_steps: 100e3
+preview_every: 1e3
+resume_from: null
+# resume_from: runs/seq_vae/2024-06-09_12-49-37/ckpts/post_repr.pth
+device: cuda
+dtype: float16

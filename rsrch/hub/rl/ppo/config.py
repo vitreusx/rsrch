@@ -33,3 +33,4 @@ class Config:
     share_encoder: bool
     custom_init: bool
     seed: int
+    save_ckpt_every: int

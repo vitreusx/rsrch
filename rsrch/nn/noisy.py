@@ -91,7 +91,7 @@ def reset_noise_(module: nn.Module, recursive=False):
 
 def zero_noise_(module: nn.Module, recursive=False):
     if recursive:
-        module.apply(recursive)
+        module.apply(zero_noise_)
     else:
         if isinstance(module, NoisyLinear):
             module.zero_noise_()

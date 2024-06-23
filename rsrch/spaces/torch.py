@@ -49,6 +49,14 @@ class Space:
     def empty(self, shape: tuple[int, ...] = ()):
         return torch.empty([*shape, *self.shape], dtype=self.dtype, device=self.device)
 
+    def __contains__(self, x):
+        return (
+            isinstance(x, Tensor)
+            and x.shape == self.shape
+            and x.dtype == self.dtype
+            and x.device == self.device
+        )
+
     def sample(self, shape: tuple[int, ...] = ()):
         raise NotImplementedError()
 
@@ -158,13 +166,45 @@ class Discrete(Space):
         self.n = n
 
     def sample(self, sample_size: tuple[int, ...] = ()):
-        shape = [*sample_size, *self.shape]
         return torch.randint(
-            0, self.n, shape, dtype=self.dtype, device=self.device, generator=self.gen
+            0,
+            self.n,
+            sample_size,
+            dtype=self.dtype,
+            device=self.device,
+            generator=self.gen,
         )
 
     def __repr__(self):
         return f"Discrete({self.n!r}, {self.dtype}, {self.device})"
+
+
+class TokenSeq(Space):
+    def __init__(
+        self,
+        num_tokens: int,
+        vocab_size: int,
+        dtype: torch.dtype = torch.int64,
+        device: torch.device | None = None,
+        seed: torch.Generator | None = None,
+    ):
+        super().__init__((num_tokens,), dtype, device, seed)
+        self.num_tokens, self.vocab_size = num_tokens, vocab_size
+
+    def sample(self, sample_size: tuple[int, ...] = ()):
+        return torch.randint(
+            0,
+            self.vocab_size,
+            (*sample_size, self.num_tokens),
+            dtype=self.dtype,
+            device=self.device,
+            generator=self.gen,
+        )
+
+    def __repr__(self):
+        attrs = ["num_tokens", "vocab_size", "dtype", "device"]
+        arg = ",".join(f"{attr}={getattr(self, attr)!r}" for attr in attrs)
+        return f"{self.__class__.__name__}({arg})"
 
 
 class Image(Box):

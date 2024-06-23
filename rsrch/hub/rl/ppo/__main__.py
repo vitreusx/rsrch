@@ -1,11 +1,13 @@
 from collections import defaultdict
 from datetime import datetime
+from itertools import islice
 from pathlib import Path
 
 import torch
 from tqdm.auto import tqdm
 
-from rsrch.exp.tensorboard import Experiment
+from rsrch.exp import Experiment
+from rsrch.exp.board.tensorboard import Tensorboard
 from rsrch.rl import data, gym
 from rsrch.rl.data import rollout
 from rsrch.utils import cron, repro
@@ -17,16 +19,12 @@ from .utils import gae_adv_est
 
 
 def main():
-    cfg_d = config.cli(
-        config_file=Path(__file__).parent / "config.yml",
-        presets_file=Path(__file__).parent / "presets.yml",
-    )
-    cfg = config.from_dicts([cfg_d], cls=config.Config)
+    cfg = config.load(Path(__file__).parent / "config.yml")
+    cfg = config.parse(cfg, config.Config)
 
     device = torch.device(cfg.device)
 
-    rs = repro.RandomState()
-    rs.init(cfg.seed)
+    repro.fix_seeds(seed=cfg.seed)
 
     env_f = env.make_factory(cfg.env, device, seed=cfg.seed)
 
@@ -52,16 +50,17 @@ def main():
     train_agent = ACAgent()
     val_agent = ACAgent()
 
+    buf = env_f.buffer(capacity=None)
+    view = data.EpisodeView(buf)
+
     ep_ids = defaultdict(lambda: None)
     ep_rets = defaultdict(lambda: 0.0)
-    buf_cap = 2 * cfg.steps_per_epoch * cfg.train_envs
-    buf = data.EpisodeBuffer(buf_cap, env_f.env_obs_space, env_f.env_act_space)
     env_iter = iter(rollout.steps(train_envs, train_agent))
 
     exp = Experiment(
         project="ppo",
         run=f"{cfg.env.id}__{datetime.now():%Y-%m-%d_%H-%M-%S}",
-        config=cfg_d,
+        board=Tensorboard,
     )
 
     env_step = 0
@@ -69,19 +68,27 @@ def main():
 
     pbar = tqdm(total=cfg.total_steps)
 
-    should_val = cron.Every(lambda: env_step, cfg.log_every)
-    should_log = cron.Every(lambda: env_step, cfg.val_every)
-    should_end = cron.Once(lambda: env_step >= cfg.total_steps)
+    should_log = cron.Every(lambda: env_step, cfg.log_every)
+    should_val = cron.Every(lambda: env_step, cfg.val_every)
+    should_save = cron.Every(lambda: env_step, cfg.save_ckpt_every)
+
+    def save_ckpt():
+        ckpt_path = exp.dir / "ckpts" / f"env_step={env_step}.pth"
+        ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(ckpt_path, "wb") as f:
+            state = {"ac": ac.state_dict()}
+            torch.save(state, f)
 
     def val_epoch():
         val_returns = []
-        val_iter = rollout.episodes(val_envs, val_agent, max_episodes=cfg.val_episodes)
+        val_iter = rollout.episodes(val_envs, val_agent)
+        val_iter = islice(val_iter, 0, cfg.val_episodes)
         for _, ep in val_iter:
             val_returns.append(sum(ep.reward))
         exp.add_scalar("val/returns", np.mean(val_returns))
 
     def train_step():
-        buf.reset()
+        buf.clear()
         ep_ids.clear()
         nonlocal env_step
         for _ in range(cfg.steps_per_epoch * cfg.train_envs):
@@ -94,7 +101,7 @@ def main():
             env_step += 1
             pbar.update()
 
-        train_eps = [*buf.values()]
+        train_eps = [*view.values()]
         obs, act, logp, adv, ret, value = [], [], [], [], [], []
 
         with torch.no_grad():
@@ -163,10 +170,13 @@ def main():
             exp.add_scalar("train/mean_v", value.mean())
 
     while True:
+        if should_save:
+            save_ckpt()
+
         if should_val:
             val_epoch()
 
-        if should_end:
+        if env_step >= cfg.total_steps:
             break
 
         train_step()

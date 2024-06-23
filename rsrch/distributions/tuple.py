@@ -30,10 +30,10 @@ class Tuple(Distribution, Tensorlike):
     def mode(self):
         return self._apply(lambda d: d.mode)
 
-    def sample(self, sample_shape: torch.Size = torch.Size()):
+    def sample(self, sample_shape=()):
         return self._apply(lambda d: d.sample(sample_shape))
 
-    def rsample(self, sample_shape: torch.Size = torch.Size()):
+    def rsample(self, sample_shape=()):
         return self._apply(lambda d: d.rsample(sample_shape))
 
     def log_prob(self, value: tuple) -> Tensor:

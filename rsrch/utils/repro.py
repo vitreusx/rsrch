@@ -5,35 +5,28 @@ import numpy as np
 import torch
 
 
-def fix_seeds(seed: int, benchmark=False):
+def fix_seeds(seed: int, deterministic=False):
+    torch.backends.cudnn.benchmark = not deterministic
+    torch.use_deterministic_algorithms(deterministic)
+    if deterministic:
+        os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":16:8"
     torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
     random.seed(seed)
     np.random.seed(seed)
-    if benchmark:
-        torch.backends.cudnn.benchmark = True
-        torch.use_deterministic_algorithms(True)
-        os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":16:8"
 
 
-def seed_worker(worker_id):
+def worker_init_fn(worker_id):
     worker_seed: int = (torch.initial_seed() + worker_id) % 2**32
-    fix_seeds(worker_seed, benchmark=torch.backends.cudnn.benchmark)
+    deterministic = not torch.backends.cudnn.benchmark
+    fix_seeds(worker_seed, deterministic)
 
 
 class RandomState:
     """Random state manager for Python, Numpy and Pytorch."""
 
-    def init(self, seed: int, deterministic=False):
-        torch.backends.cudnn.benchmark = not deterministic
-        torch.use_deterministic_algorithms(deterministic)
-        if deterministic:
-            os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":16:8"
-        torch.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
-        random.seed(seed)
-        np.random.seed(seed)
-
-    def save(self):
+    @staticmethod
+    def save():
         return {
             "np": np.random.get_state(),
             "torch_cpu": torch.get_rng_state().numpy(),
@@ -41,7 +34,8 @@ class RandomState:
             "random": random.getstate(),
         }
 
-    def load(self, state: dict):
+    @staticmethod
+    def load(state: dict):
         np.random.set_state(state["np"])
         torch.set_rng_state(torch.as_tensor(state["torch_cpu"]))
         for idx, rs in enumerate(state["torch_cuda"]):

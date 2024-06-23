@@ -1,4 +1,3 @@
-import argparse
 import pickle
 from collections import defaultdict
 from datetime import datetime
@@ -11,14 +10,14 @@ import numpy as np
 import torch
 from torch import Tensor, nn
 
-from rsrch import _exp as exp
+from rsrch import exp as exp
 from rsrch import spaces
 from rsrch.nn import noisy
 from rsrch.rl import data, gym
-from rsrch.rl.data import _rollout as rollout
+from rsrch.rl.data import rollout
 from rsrch.rl.utils import polyak
-from rsrch.utils import _sched as sched
 from rsrch.utils import cron, repro
+from rsrch.utils import sched as sched
 
 from .. import env
 from ..utils import infer_ctx
@@ -44,38 +43,56 @@ class QAgent(gym.vector.Agent, nn.Module):
 
 
 class Runner:
-    def __init__(self, cfg: dict | config.Config):
-        if isinstance(cfg, dict):
-            self.cfg_dict = cfg
-            self.cfg = config.from_dicts([cfg], config.Config)
-        else:
-            self.cfg_dict = None
-            self.cfg = cfg
+    def __init__(self, cfg: dict):
+        self.cfg_dict = cfg
+        self.cfg = config.parse(cfg, config.Config)
 
-    def run(self):
-        self.prepare()
-        if self.cfg.mode == "train":
-            self.do_train_loop()
-        elif self.cfg.mode == "sample":
-            self.sample()
+    @staticmethod
+    def main():
+        cfg_dicts = []
+
+        def_cfg = config.load(Path(__file__).parent / "config.yml")
+        cfg_dicts += [def_cfg]
+
+        presets = ["der", "alien"]
+        presets += ["sample"]
+
+        all_presets = config.load(Path(__file__).parent / "presets.yml")
+        for preset_name in presets:
+            preset = all_presets.get(preset_name, {})
+            if "$extends" in preset:
+                extends = preset["$extends"]
+                cfg_dicts += [all_presets.get(name, {}) for name in extends]
+                del preset["$extends"]
+            cfg_dicts += [preset]
+
+        cfg = config.merge(*cfg_dicts)
+
+        runner = Runner(cfg)
+
+        runner.prepare()
+        if runner.cfg.mode == "train":
+            runner.train()
+        elif runner.cfg.mode == "sample":
+            runner.sample()
 
     def prepare(self):
         cfg = self.cfg
+
+        repro.fix_seeds(
+            seed=cfg.random.seed,
+            deterministic=cfg.random.deterministic,
+        )
 
         env_id = getattr(cfg.env, cfg.env.type).env_id
         self.exp = exp.Experiment(
             project="rainbow",
             run=f"{env_id}__{datetime.now():%Y-%m-%d_%H-%M-%S}",
-            board=exp.board.Tensorboard,
-            requires=cfg.requires,
             config=self.cfg_dict,
         )
+        self.exp.boards.append(exp.board.Tensorboard(self.exp.dir))
 
-        self.rng = repro.RandomState()
-        self.rng.init(
-            seed=cfg.random.seed,
-            deterministic=cfg.random.deterministic,
-        )
+        self.device = torch.device("cuda")
 
         # torch.autograd.set_detect_anomaly(True)
 
@@ -83,8 +100,6 @@ class Runner:
         self.exp.register_step("env_step", lambda: self.env_step, default=True)
         self.exp.register_step("opt_step", lambda: self.opt_step)
         self.exp.register_step("agent_step", lambda: self.agent_step)
-
-        self.device = self.exp.exec_env.device
 
         self.env_f = env.make_factory(cfg.env, self.device, seed=cfg.random.seed)
         assert isinstance(self.env_f.obs_space, spaces.torch.Image)
@@ -114,14 +129,13 @@ class Runner:
         else:
             self.sampler = data.UniformSampler()
 
-        self.env_buf = self.env_f.slice_buffer(
-            self.cfg.data.buf_cap,
-            self.cfg.data.slice_len,
-            sampler=self.sampler,
-        )
+        self.buf = self.env_f.buffer(self.cfg.data.buf_cap)
+        self.buf_view = data.SliceView(self.buf, self.cfg.data.slice_len)
 
         self.envs = self.env_f.vector_env(self.cfg.num_envs, mode="train")
-        self.expl_eps = 0.0
+
+        self.agent_eps = self._make_sched(self.cfg.expl.eps)
+        self.expl_eps = self.agent_eps()
         self.agent = gym.vector.agents.EpsAgent(
             opt=QAgent(self.env_f, self.qf, val=False),
             rand=gym.vector.agents.RandomAgent(self.envs),
@@ -149,7 +163,6 @@ class Runner:
         self.gammas = gammas.to(self.device)
         self.final_gamma = self.cfg.gamma**self.cfg.data.slice_len
 
-        self.agent_eps = self._make_sched(self.cfg.expl.eps)
         self.prio_exp = self._make_sched(self.cfg.prioritized.prio_exp)
         self.is_coef_exp = self._make_sched(self.cfg.prioritized.is_coef_exp)
 
@@ -163,11 +176,13 @@ class Runner:
     def _fetch_batch(self):
         if isinstance(self.sampler, data.PrioritizedSampler):
             idxes, is_coefs = self.sampler.sample(self.cfg.opt.batch_size)
-            batch = self.env_f.fetch_slice_batch(self.env_buf, idxes)
+            batch = [self.buf_view[i] for i in idxes]
+            batch = self.env_f.collate_fn(batch)
             return idxes, is_coefs, batch
         else:
             idxes = self.sampler.sample(self.cfg.opt.batch_size)
-            batch = self.env_f.fetch_slice_batch(self.env_buf, idxes)
+            batch = [self.buf_view[i] for i in idxes]
+            batch = self.env_f.collate_fn(batch)
             return idxes, batch
 
     def _batch_loader_fn(self):
@@ -186,7 +201,7 @@ class Runner:
             val=self.cfg.sample.env_mode == "val",
         )
         self.sample_iter = iter(rollout.steps(self.sample_envs, self.sample_agent))
-        self.sample_buf = self.env_f.episode_buffer(self.cfg.data.buf_cap)
+        self.sample_buf = self.env_f.buffer(self.cfg.data.buf_cap)
 
     def _make_every(self, cfg: dict):
         if isinstance(cfg["every"], dict):
@@ -194,7 +209,7 @@ class Runner:
         else:
             every, unit = cfg["every"], "env_step"
 
-        return cron.Every2(
+        return cron.Every(
             step_fn=lambda: getattr(self, unit),
             every=every,
             iters=cfg.get("iters", 1),
@@ -227,7 +242,7 @@ class Runner:
             initial=until.step_fn(),
         )
 
-    def do_train_loop(self):
+    def train(self):
         self.should_log = self._make_every(self.cfg.log)
 
         should_warmup = self._make_until(self.cfg.warmup)
@@ -283,7 +298,7 @@ class Runner:
                     self.pbar.update(0)
 
         with open(self.exp.dir / self.cfg.sample.dest, "wb") as f:
-            data = {"sample_buf": self.sample_buf, "env_f": self.env_f}
+            data = {"samples": self.sample_buf.data, "env_f": self.env_f}
             pickle.dump(data, f)
 
     def _val_epoch(self):
@@ -296,6 +311,7 @@ class Runner:
         val_rets = [*val_iter]
 
         self.exp.add_scalar("val/mean_ret", np.mean(val_rets))
+        self._last_val_ret = np.mean(val_rets)
 
     def _opt_step(self):
         if self.cfg.data.parallel:
@@ -374,24 +390,15 @@ class Runner:
         if self.cfg.prioritized.enabled:
             prio_exp = self.prio_exp()
             prio = prio.float().detach().cpu().numpy() ** prio_exp
-            self.sampler.update(idxes, prio)
+            self.sampler[idxes] = prio
 
         while self.should_update_q:
             polyak.update(self.qf, self.qf_t, self.tau)
 
     def _step_wait(self):
         for env_idx, step in self.env_iter.step_wait():
-            self.ep_ids[env_idx], slice_id = self.env_buf.push(
-                self.ep_ids[env_idx], step
-            )
+            self.ep_ids[env_idx] = self.buf.push(self.ep_ids[env_idx], step)
             self.ep_rets[env_idx] += step.reward
-
-            if isinstance(self.sampler, data.PrioritizedSampler):
-                if slice_id is not None:
-                    max_prio = self.sampler._max.total
-                    if max_prio == 0.0:
-                        max_prio = 1.0
-                    self.sampler[slice_id] = max_prio
 
             if step.done:
                 self.exp.add_scalar("train/ep_ret", self.ep_rets[env_idx])
@@ -400,9 +407,20 @@ class Runner:
 
             self.env_step += self._frame_skip
             self.agent_step += 1
+            self.agent.eps = self.agent_eps()
+
             if hasattr(self, "pbar"):
                 self.pbar.n = self.env_step
                 self.pbar.update(0)
+
+        self.buf_view.update()
+        if isinstance(self.sampler, data.PrioritizedSampler):
+            max_prio = self.sampler._max.total
+            if self.sampler._beg >= self.sampler._end:
+                max_prio = 1.0
+            self.sampler.update_ids(self.buf_view.ids, def_prio=max_prio)
+        elif isinstance(self.sampler, data.UniformSampler):
+            self.sampler.update_ids(self.buf_view.ids)
 
     def _val_ret_iter(self):
         val_ep_rets = defaultdict(lambda: 0.0)
@@ -413,7 +431,7 @@ class Runner:
                 del val_ep_rets[env_idx]
 
     def _save_ckpt(self):
-        val_ret = self.exp.scalars["val/mean_ret"]
+        val_ret = self._last_val_ret
         path = (
             self.exp.dir
             / "ckpts"
@@ -430,7 +448,7 @@ class Runner:
 
     def _state_dict(self):
         state = {}
-        state["rng"] = self.rng.save()
+        state["rng"] = repro.RandomState.save()
         for name in ("qf", "qf_t", "qf_opt"):
             state[name] = getattr(self, name).state_dict()
         if self.cfg.ckpts.save_buf:
@@ -444,21 +462,8 @@ class Runner:
         self._load_state_dict(state)
 
     def _load_state_dict(self, state: dict):
-        self.rng.load(state["rng"])
+        repro.RandomState.load(state["rng"])
         for name in ("qf", "qf_t", "qf_opt"):
             getattr(self, name).load_state_dict(state[name])
         if self.cfg.ckpts.save_buf:
             self.env_buf = state["env_buf"]
-
-
-def main():
-    presets = ["dominik", "sample"]
-    cfg = config.from_args(
-        cls=None,
-        args=argparse.Namespace(presets=presets),
-        config_file=Path(__file__).parent / "config.yml",
-        presets_file=Path(__file__).parent / "presets.yml",
-    )
-
-    runner = Runner(cfg)
-    runner.run()

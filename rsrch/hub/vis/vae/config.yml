@@ -1,0 +1,5 @@
+samples_path: samples/ALE-Alien-v5__2024-04-08_08-30-11.v2.pkl
+seed: 1
+batch_size: 256
+total_steps: 100e3
+sample_every: 1e3
