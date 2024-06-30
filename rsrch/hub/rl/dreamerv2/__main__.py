@@ -1,16 +1,22 @@
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
+from multiprocessing.pool import ThreadPool
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import torch
 from tqdm.auto import tqdm
 
+from rsrch import nn
 from rsrch.exp import Experiment, timestamp
 from rsrch.exp.board.tensorboard import Tensorboard
 from rsrch.exp.profile import Profiler
+from rsrch.nn.utils import safe_mode
 from rsrch.rl import data as data_rl
 from rsrch.rl import gym
 from rsrch.rl.data import rollout
+from rsrch.rl.utils import polyak
 from rsrch.utils import cron, data, repro
 
 from . import ac, config, env, wm
@@ -25,6 +31,8 @@ class Dataset(data.IterableDataset):
     - yield batches of consecutive slices of length slice_len from each of the
       B sequences.
     """
+
+    KEYS = Literal["obs", "act", "reward", "term", "first"]
 
     def __init__(
         self,
@@ -59,19 +67,27 @@ class Dataset(data.IterableDataset):
         return ret
 
     def __iter__(self):
-        cur_eps = {}
+        cur_eps: dict[int, dict[self.KEYS, list]] = {}
         free_idx = 0
 
         while True:
             batch = {}
             while len(batch) < self.batch_size:
-                while len(cur_eps) < self.batch_size:
-                    ep_id = np.random.choice(self.eps.ids)
-                    seq = self.eps[ep_id]
-                    if not self.ongoing and not seq.term:
+                for ep_idx in [*cur_eps]:
+                    seq, begin = cur_eps[ep_idx]
+                    end = begin + self.slice_len
+                    if end > len(seq["obs"]):
+                        del cur_eps[ep_idx]
                         continue
 
-                    total = len(seq.obs)
+                while len(cur_eps) < self.batch_size:
+                    ep_id = np.random.choice(self.eps.ids)
+                    seq = vars(self.eps[ep_id])
+                    del seq["info"]
+                    if not self.ongoing and not seq["term"]:
+                        continue
+
+                    total = len(seq["obs"])
                     if total < self.minlen:
                         continue
 
@@ -86,41 +102,60 @@ class Dataset(data.IterableDataset):
                         upper += self.minlen
 
                     index = min(np.random.randint(upper), total - length)
-                    cur_eps[free_idx] = [seq, index, index + length]
+
+                    seq["obs"] = seq["obs"][index : index + length]
+
+                    seq["act"] = seq["act"][max(index - 1, 0) : index + length - 1]
+                    seq["reward"] = seq["reward"][
+                        max(index - 1, 0) : index + length - 1
+                    ]
+                    if index == 0:
+                        seq["act"] = [np.zeros_like(seq["act"][0]), *seq["act"]]
+                        seq["reward"] = [0.0, *seq["reward"]]
+
+                    seq["first"] = np.zeros([length], dtype=bool)
+                    seq["first"][0] = True
+
+                    term_ = seq["term"]
+                    seq["term"] = np.zeros([length], dtype=bool)
+                    seq["term"][-1] = term_ and index + length == total
+
+                    cur_eps[free_idx] = [seq, 0]
                     free_idx += 1
 
-                idxes = {*cur_eps} - {*batch}
-                for ep_idx in idxes:
-                    seq, start, stop = cur_eps[ep_idx]
-                    cur_stop = start + self.slice_len
-                    if cur_stop > stop:
-                        del cur_eps[ep_idx]
-                        continue
+                for ep_idx in [*cur_eps]:
+                    seq, begin = cur_eps[ep_idx]
+                    end = begin + self.slice_len
+                    batch[ep_idx] = {k: v[begin:end] for k, v in seq.items()}
+                    cur_eps[ep_idx] = [seq, end]
 
-                    seq: data_rl.Seq
+            ids = [*batch]
+            batch = self._collate_fn([*batch.values()])
+            yield ids, batch
 
-                    obs = seq.obs[start:cur_stop]
-                    is_first = start == 0
-                    if is_first:
-                        act = seq.act[: cur_stop - 1]
-                        act = [act[0], *act]
-                        reward = seq.reward[: cur_stop - 1]
-                        reward = [reward[0], *reward]
-                    else:
-                        act = seq.act[start - 1 : cur_stop - 1]
-                        reward = seq.reward[start - 1 : cur_stop - 1]
-                    term = seq.term
+    def _collate_fn(self, batch: list[dict[KEYS, list]]):
+        out = {}
 
-                    batch[ep_idx] = {
-                        "seq": data_rl.Seq(obs, act, reward, term),
-                        "is_first": is_first,
-                    }
-                    cur_eps[ep_idx] = [seq, start + length, stop]
+        out["obs"] = np.stack([x["obs"] for x in batch], axis=1)
+        out["obs"] = self.env_f.move_obs(out["obs"])
 
-            yield batch
+        out["act"] = np.stack([x["act"] for x in batch], axis=1)
+        out["act"] = self.env_f.move_act(out["act"], to="net")
+
+        out["reward"] = np.stack([x["reward"] for x in batch], axis=1)
+        device, dtype = out["obs"].device, out["obs"].dtype
+        out["reward"] = torch.as_tensor(out["reward"], device=device, dtype=dtype)
+
+        out["term"] = np.stack([x["term"] for x in batch], axis=1)
+        out["term"] = torch.as_tensor(out["term"], device=device, dtype=torch.bool)
+
+        out["first"] = np.stack([x["first"] for x in batch], axis=1)
+        out["first"] = torch.as_tensor(out["first"], device=device, dtype=torch.bool)
+
+        return out
 
 
-class Runner:
+class Runner(nn.Module):
     def main(self):
         cfg = config.load(Path(__file__).parent / "config.yml")
 
@@ -131,14 +166,16 @@ class Runner:
 
         self.cfg = config.parse(cfg, config.Config)
 
-        repro.fix_seeds(seed=self.cfg.seed, deterministic=False)
+        repro.fix_seeds(
+            seed=self.cfg.seed,
+            deterministic=self.cfg.debug.deterministic,
+        )
         self._seedseq = np.random.SeedSequence(self.cfg.seed)
 
         self.device = torch.device(self.cfg.device)
         self.dtype = getattr(torch, self.cfg.dtype)
-        # torch.autograd.set_detect_anomaly(True)
 
-        self.env_step = self.agent_step = 0
+        self.env_step = self.agent_step = self.opt_step = 0
         self.pbar = tqdm(desc="DreamerV2", total=self.cfg.total.n)
 
         self.exp = Experiment(
@@ -149,13 +186,21 @@ class Runner:
         self.exp.boards += [Tensorboard(self.exp.dir / "board")]
         self.exp.register_step("env_step", lambda: self.env_step, default=True)
 
-        self.prof = Profiler(
-            device=self.device,
-            traces_dir=self.exp.dir / "traces",
-            schedule=dict(wait=5, warmup=1, active=3, repeat=4),
-        )
+        if self.cfg.debug.detect_anomaly:
+            torch.autograd.set_detect_anomaly(True)
 
-        self._opt_step = self.prof.profiled(self._opt_step, "opt_step")
+        if self.cfg.debug.record_memory:
+            torch.cuda.memory._record_memory_history()
+
+        if self.cfg.debug.profile:
+            prof = Profiler(
+                device=self.device,
+                traces_dir=self.exp.dir / "traces",
+                schedule=dict(wait=5, warmup=1, active=3, repeat=4),
+            )
+            # self._opt_step = prof.profiled(self._opt_step, "opt_step")
+            # self._take_step = prof.profiled(self._take_step, "take_step")
+            self._train_step = prof.profiled(self._train_step, "train_step")
 
         self._setup_env()
         self._setup_data()
@@ -164,21 +209,30 @@ class Runner:
             obs_space=self.env_f.obs_space,
             act_space=self.env_f.act_space,
             cfg=self.cfg.wm,
+            device=self.device,
             dtype=self.dtype,
         )
 
         self.ac = ac.ActorCritic(
             wm=self.wm,
             cfg=self.cfg.ac,
+            device=self.device,
             dtype=self.dtype,
         )
 
-        self.wm = self.wm.to(self.device)
-        self.ac = self.ac.to(self.device)
+        self.apply(self._tf_init)
+        polyak.sync(self.ac.critic, self.ac.target_critic)
 
         self._setup_agent()
 
+        self._env_workers = ThreadPoolExecutor(max_workers=1)
+
         self._train()
+
+    def _tf_init(self, module: nn.Module):
+        if isinstance(module, (nn.Linear, nn.Conv2d, nn.ConvTranspose2d)):
+            nn.init.xavier_uniform_(module.weight)
+            nn.init.zeros_(module.bias)
 
     def _setup_env(self):
         self.env_f = env.make_factory(
@@ -186,7 +240,7 @@ class Runner:
             device=self.device,
             seed=self.cfg.seed,
         )
-        self._frame_skip = getattr(self.env_step, "frame_skip", 1)
+        self._frame_skip = getattr(self.env_f, "frame_skip", 1)
         self.train_envs = self.env_f.vector_env(1, mode="train")
 
     def _setup_agent(self):
@@ -218,15 +272,28 @@ class Runner:
 
         do_train = self._make_until(self.cfg.total)
         should_eval = self._make_every(self.cfg.eval_every)
-        should_opt = self._make_every(self.cfg.train_every)
+        self.should_opt = self._make_every(self.cfg.train_every)
+        self.should_log = self._make_every(self.cfg.log_every)
 
         self.train_agent.mode = "train"
         while do_train:
             if should_eval:
                 self._eval_epoch()
-            self._take_step()
-            if should_opt:
-                self._opt_step()
+            self._train_step()
+
+    def _train_step(self):
+        # Idea: interleave env interaction and optimization by squeezing the
+        # former during the periods when torch releases GIL in backward (hence
+        # the thread pool.)
+        batch = next(self.batch_iter)
+        task = self._env_workers.submit(self._take_steps)
+        self._opt_step(batch)
+        task.result()
+
+    def _take_steps(self):
+        with safe_mode(self):
+            while not self.should_opt:
+                self._take_step()
 
     def _make_until(self, cfg: config.Until):
         return cron.Until(lambda: getattr(self, cfg.of), cfg.n)
@@ -251,33 +318,32 @@ class Runner:
     def _eval_epoch(self):
         ...
 
-    def _opt_step(self):
-        batch = next(self.batch_iter)
+    def _opt_step(self, batch):
+        ids, batch = batch
 
-        seq_batch = self.env_f.collate_fn([x["seq"] for x in batch.values()])
-        is_first = np.array([x["is_first"] for x in batch.values()])
-        is_first = torch.asarray(is_first, device=self.device)
+        for k in [*self._states]:
+            if k not in ids:
+                del self._states[k]
 
-        self._states = {k: v for k, v in self._states.items() if k in batch}
-
-        for k in batch:
+        for k in ids:
             if k not in self._states:
                 self._states[k] = self.wm.rssm.initial(self.device, self.dtype)
 
-        state = torch.stack([self._states[k] for k in batch])
+        initial = torch.stack([self._states[k] for k in ids])
+        wm_mets, states = self.wm.opt_step(batch, initial)
 
-        mets, last_state, is_term = self.wm.opt_step(seq_batch, state, is_first)
-
-        for k, s in zip(batch, last_state):
+        for k, s in zip(ids, states[-1]):
             self._states[k] = s
 
-        for k, v in mets.items():
-            self.exp.add_scalar(f"wm/{k}", v)
+        ac_mets = self.ac.opt_step(states.flatten(), batch["term"].flatten())
 
-        mets = self.ac.opt_step(last_state, is_term)
+        if self.should_log:
+            for k, v in wm_mets.items():
+                self.exp.add_scalar(f"wm/{k}", v)
+            for k, v in ac_mets.items():
+                self.exp.add_scalar(f"ac/{k}", v)
 
-        for k, v in mets.items():
-            self.exp.add_scalar(f"ac/{k}", v)
+        self.opt_step += 1
 
 
 if __name__ == "__main__":

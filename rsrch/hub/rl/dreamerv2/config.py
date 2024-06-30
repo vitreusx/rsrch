@@ -51,8 +51,7 @@ class ActorCritic:
     actor: dict
     critic: dict
     target_critic: dict | None
-    actor_opt: dict
-    critic_opt: dict
+    opt: dict
     horizon: int
     rew_norm: dict
     gamma: float
@@ -83,13 +82,28 @@ class Until:
 class Every:
     n: int
     of: str
-    iters: int
+    iters: int = 1
 
 
 @dataclass
 class Agent:
     expl_noise: float
     eval_noise: float
+
+
+@dataclass
+class Debug:
+    enabled: bool
+    profile: bool
+    record_memory: bool
+    deterministic: bool
+    detect_anomaly: bool
+
+    def __post_init__(self):
+        self.profile &= self.enabled
+        self.record_memory &= self.enabled
+        self.deterministic &= self.enabled
+        self.detect_anomaly &= self.enabled
 
 
 @dataclass
@@ -106,4 +120,13 @@ class Config:
     train_every: Every
     train_steps: int
     eval_every: Every
+    log_every: Every
     agent: Agent
+    debug: Debug
+
+
+def get_class(namespace: Any, name: str):
+    """Try to acquire a class from a namespace. The name needs not be exactly
+    the same - in particular, snake_case names are converted to CamelCase."""
+    camel_case = "".join(x.capitalize() for x in name.split("_"))
+    return getattr(namespace, camel_case)

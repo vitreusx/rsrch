@@ -49,10 +49,12 @@ class VecStepRollout(Iterator[tuple[int, types.Step]]):
             info = VectorListInfo.convert(info, self.env.num_envs)
 
         steps: list[tuple[int, types.Step]] = []
+        reset_idxes, next_obs_list = [], []
         for env_idx in range(self.env.num_envs):
             if term[env_idx] or trunc[env_idx]:
                 next_obs_ = info[env_idx]["final_observation"]
                 next_info_ = info[env_idx]["final_info"]
+                reset_idxes.append(env_idx)
             else:
                 next_obs_ = next_obs[env_idx]
                 next_info_ = info[env_idx]
@@ -67,6 +69,23 @@ class VecStepRollout(Iterator[tuple[int, types.Step]]):
                 next_info_,
             )
             steps.append((env_idx, step))
+            next_obs_list.append(next_obs_)
+
+        self.agent.observe(
+            np.arange(self.env.num_envs),
+            np.stack(next_obs_list),
+            term,
+            trunc,
+            info,
+        )
+
+        if len(reset_idxes) > 0:
+            reset_idxes = np.array(reset_idxes)
+            self.agent.reset(
+                reset_idxes,
+                next_obs[reset_idxes],
+                info[reset_idxes],
+            )
 
         self.obs = next_obs
         return steps

@@ -23,45 +23,25 @@ class Tensorlike:
     """
 
     def __init__(self, shape: torch.Size):
-        self._fields: set
-        super().__setattr__("_fields", set())
         self._tensors = set()
-        self._batched = {}
-        self._shape = shape
-
-    def __setattr__(self, __name, __value):
-        if __name in self._fields:
-            if isinstance(__value, (torch.Tensor, Tensorlike)):
-                self._tensors.add(__name)
-            elif __name in self._tensors:
-                self._tensors.pop(__name)
-        return super().__setattr__(__name, __value)
+        self._batched = set()
+        self.shape = shape
 
     def register(self, __name, __value: T, batched=True) -> T:
-        """Register a tensor field.
-
-        A non-tensor may be provided - when assigning to a registered non-tensor, if the setter value is a tensor, the member field becomes a regular tensor field, subject to shape ops etc.
+        """Register a tensor field. The value must be either a torch.Tensor
+        or a Tensorlike.
         """
 
         if hasattr(self, __name):
             raise ValueError(f"Member variable with name '{__name}' already present.")
 
-        super().__setattr__(__name, __value)
-        self._fields.add(__name)
-        if isinstance(__value, (torch.Tensor, Tensorlike)):
-            self._tensors.add(__name)
-        self._batched[__name] = batched
+        assert isinstance(__value, (torch.Tensor, Tensorlike))
+        setattr(self, __name, __value)
+        self._tensors.add(__name)
+        if batched:
+            self._batched.add(__name)
+
         return __value
-
-    @property
-    def _batched_tensors(self):
-        for __name in self._tensors:
-            if self._batched[__name]:
-                yield __name
-
-    @property
-    def shape(self):
-        return self._shape
 
     @property
     def batch_shape(self):
@@ -82,15 +62,14 @@ class Tensorlike:
         return torch.empty([], device=self.device).expand(self.shape)
 
     def _new(self, shape: torch.Size, fields: dict):
-        # copy.copy does not clone Tensors, so, assuming that the other stuff
-        # is just metadata, it "should" be fairly efficient.
         new = copy.copy(self)
-        new._shape = shape
+        new.shape = shape
         new._tensors = copy.copy(self._tensors)
-        new._fields = copy.copy(self._fields)
         new._batched = copy.copy(self._batched)
+
         for name, value in fields.items():
             setattr(new, name, value)
+
         return new
 
     @staticmethod
@@ -120,7 +99,7 @@ class Tensorlike:
     def _reshape(self, shape: tuple[int, ...]):
         fields = {}
         new_shape = self.shape
-        for name in self._batched_tensors:
+        for name in self._batched:
             tensor: Tensorlike = getattr(self, name)
             elem_shape = tensor.shape[len(self.shape) :]
             new = tensor.reshape(*shape, *elem_shape)
@@ -133,7 +112,7 @@ class Tensorlike:
         end_dim = range(len(self.shape))[end_dim]
 
         fields = {}
-        for name in self._batched_tensors:
+        for name in self._batched:
             tensor: Tensorlike = getattr(self, name)
             new = tensor.flatten(start_dim, end_dim)
             fields[name] = new
@@ -158,7 +137,7 @@ class Tensorlike:
 
     def _expand_seq(self, size: Sequence[int]):
         fields = {}
-        for name in self._batched_tensors:
+        for name in self._batched:
             tensor: Tensorlike = getattr(self, name)
             event_dims = len(tensor.shape) - len(self.shape)
             new = tensor.expand([*size, *(-1 for _ in range(event_dims))])
@@ -191,22 +170,28 @@ class Tensorlike:
         new_shape = torch.Size(new_shape)
 
         if out is not None:
-            for name in repr._batched_tensors:
+            for name in repr._batched:
                 _tensors = [getattr(tensor, name) for tensor in tensors]
                 if any(x is None for x in _tensors):
                     continue
                 out_field = getattr(out, name)
-                torch.cat(_tensors, dim, out=out_field)
+                if isinstance(_tensors[0], Tensorlike):
+                    _tensors[0]._torch_cat(_tensors, dim, out=out_field)
+                else:
+                    torch.cat(_tensors, dim, out=out_field)
                 setattr(out, name, out_field)
             out._shape = new_shape
             return out
         else:
             fields = {}
-            for name in repr._batched_tensors:
+            for name in repr._batched:
                 _tensors = [getattr(tensor, name) for tensor in tensors]
                 if any(x is None for x in _tensors):
                     continue
-                new = torch.cat(_tensors, dim)
+                if isinstance(_tensors[0], Tensorlike):
+                    new = _tensors[0]._torch_cat(_tensors, dim)
+                else:
+                    new = torch.cat(_tensors, dim)
                 fields[name] = new
             return repr._new(new_shape, fields)
 
@@ -222,21 +207,27 @@ class Tensorlike:
         new_shape = torch.Size(new_shape)
 
         if out is not None:
-            for name in repr._batched_tensors:
+            for name in repr._batched:
                 _tensors = [getattr(tensor, name) for tensor in tensors]
                 if any(x is None for x in _tensors):
                     continue
                 out_field = getattr(out, name)
-                torch.stack(_tensors, dim, out=out_field)
+                if isinstance(_tensors[0], Tensorlike):
+                    _tensors[0]._torch_stack(_tensors, dim, out=out_field)
+                else:
+                    torch.stack(_tensors, dim, out=out_field)
             out._shape = new_shape
             return out
         else:
             fields = {}
-            for name in repr._batched_tensors:
+            for name in repr._batched:
                 _tensors = [getattr(tensor, name) for tensor in tensors]
                 if any(x is None for x in _tensors):
                     continue
-                new = torch.stack(_tensors, dim)
+                if isinstance(_tensors[0], Tensorlike):
+                    new = _tensors[0]._torch_stack(_tensors, dim)
+                else:
+                    new = torch.stack(_tensors, dim)
                 fields[name] = new
             return repr._new(new_shape, fields)
 
@@ -263,7 +254,7 @@ class Tensorlike:
 
     def _getitem(self, idx, shape):
         fields = {}
-        for name in self._batched_tensors:
+        for name in self._batched:
             tensor: Tensorlike = getattr(self, name)
             if isinstance(tensor, torch.Tensor):
                 new = tensor[idx]
@@ -295,7 +286,7 @@ class Tensorlike:
         return self._setitem(idx, value)
 
     def _setitem(self, idx, value):
-        for name in self._batched_tensors:
+        for name in self._batched:
             tensor: Tensorlike = getattr(self, name)
             if isinstance(tensor, torch.Tensor):
                 tensor[idx] = getattr(value, name)
@@ -332,7 +323,7 @@ class Tensorlike:
 
     def _squeeze(self, dim):
         fields = {}
-        for name in self._batched_tensors:
+        for name in self._batched:
             tensor: Tensorlike = getattr(self, name)
             if isinstance(tensor, torch.Tensor):
                 new = tensor.squeeze(dim)
@@ -353,7 +344,7 @@ class Tensorlike:
             dim = dim + len(self.shape) + 1
 
         fields = {}
-        for name in self._batched_tensors:
+        for name in self._batched:
             tensor: Tensorlike = getattr(self, name)
             new = tensor.unsqueeze(dim)
             fields[name] = new
@@ -368,7 +359,7 @@ class Tensorlike:
 
     # def where(self, cond, value):
     #     fields = {}
-    #     for name in self._batched_tensors:
+    #     for name in self._batched:
     #         tensor: Tensorlike = getattr(self, name)
     #         new = tensor.where(cond, value)
     #         fields[name] = new
@@ -438,7 +429,7 @@ class Tensorlike:
 
     def _gather(self, dim, index, *, sparse_grad=False):
         fields = {}
-        for name in self._batched_tensors:
+        for name in self._batched:
             tensor: torch.Tensor = getattr(self, name)
             if isinstance(tensor, Tensorlike):
                 new = tensor._gather(dim, index, sparse_grad=sparse_grad)
@@ -456,8 +447,4 @@ class Tensorlike:
         return self._new(new_shape, fields)
 
     def type_as(self, other: torch.Tensor):
-        fields = {}
-        for name in self._tensors:
-            tensor: Tensorlike = getattr(self, name)
-            fields[name] = tensor.type_as(other)
-        return self._new(self.shape, fields)
+        return self.to(dtype=other.dtype, device=other.device)

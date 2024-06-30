@@ -7,6 +7,7 @@ from .dirac import Dirac
 from .distribution import Distribution
 from .ensemble import Ensemble
 from .kl import kl_divergence, register_kl
+from .mse_proxy import MSEProxy
 from .multihead_ohst import MultiheadOHST
 from .normal import Normal
 from .one_hot import Discrete, OneHot

@@ -1,16 +1,18 @@
+from functools import partial
 from numbers import Number
 
 import numpy as np
 from numpy.lib.mixins import NDArrayOperatorsMixin
 
 
-class Space:
+class Space(NDArrayOperatorsMixin):
     def __init__(
         self,
         shape: tuple[int, ...],
         dtype: np.dtype | type | None = None,
         seed: np.random.Generator | int | None = None,
     ):
+        super().__init__()
         self.shape = shape
         self.dtype = np.dtype(dtype)
         if isinstance(seed, np.random.Generator):
@@ -33,19 +35,47 @@ class Space:
     def seed(self, new_seed: int):
         self._seed, self._gen = new_seed, None
 
+    def _new_seed(self):
+        if self._gen is None:
+            return None
+        else:
+            return self._gen.spawn(1)[0]
+
     def __repr__(self):
-        return f"Space({self.shape!r}, {self.dtype})"
+        return f"Space(shape={self.shape!r}, dtype={self.dtype})"
 
     def __array__(self):
         return np.empty(self.shape, self.dtype)
 
+    def __array_ufunc__(self, ufunc, method, *args, **kwargs):
+        if method == "__call__":
+            res = ufunc(*(np.asarray(x) for x in args), **kwargs)
+            return Space(
+                shape=res.shape,
+                dtype=res.dtype,
+                seed=self._new_seed(),
+            )
+        else:
+            return NotImplemented
+
     def __array_function__(self, func, types, args, kwargs):
-        proto: np.ndarray = func(*(np.asarray(arg) for arg in args), **kwargs)
-        return self.__class__(
-            shape=proto.shape,
-            dtype=proto.dtype,
-            seed=self.gen.spawn(1)[0],
+        res = func(*(np.asarray(arg) for arg in args), **kwargs)
+        return Space(
+            shape=res.shape,
+            dtype=res.dtype,
+            seed=self._new_seed(),
         )
+
+    def __getitem__(self, index):
+        res = np.asarray(self)[index]
+        return Space(shape=res.shape, dtype=res.dtype, seed=self._new_seed())
+
+    def __getattr__(self, __name):
+        if hasattr(np.ndarray, __name):
+            # This "hack" lets us for example use .sum(...) or .mean(...)
+            return partial(getattr(np, __name), self)
+        else:
+            raise AttributeError()
 
 
 class Box(Space):

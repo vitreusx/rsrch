@@ -60,7 +60,7 @@ def NormLayer2d(type: config.NormType) -> Callable[[int], nn.Module]:
     }[type]
 
 
-class GRUCell(nn.Module):
+class GRUCellLN(nn.Module):
     def __init__(
         self,
         input_size: int,
@@ -158,10 +158,9 @@ class ImageDecoder(nn.Sequential):
 
         super().__init__(*layers)
 
-        with safe_mode(self):
-            test = torch.empty((1, in_features))
-            out: Tensor = self(test)[1:]
-            assert tuple(out.shape) == space.shape
+    def forward(self, input: Tensor):
+        out = super().forward(input)
+        return D.MSEProxy(out, 3)
 
 
 class FC(nn.Sequential):
@@ -220,15 +219,17 @@ class BoxDecoder(nn.Module):
         self,
         in_features: int,
         space: spaces.torch.Box,
-        dist: Literal["none", "auto"] = "auto",
+        dist: Literal["mse", "auto"] = "auto",
         **fc_args,
     ):
         super().__init__()
+        self.in_features = in_features
+        self.space = space
+        self.dist = dist
 
-        if dist == "none":
+        if dist == "mse":
             out_features = int(np.prod(space.shape))
             self.fc = FC(in_features, out_features, **fc_args)
-            self.head = None
         elif dist == "auto":
             self.fc = FC(in_features, None, **fc_args)
             if space.dtype == torch.bool:
@@ -236,22 +237,30 @@ class BoxDecoder(nn.Module):
             elif space.bounded.all():
                 self.head = dh.Beta(self.fc.out_features, space)
             else:
-                self.head = dh.Normal(self.fc.out_features, space.shape)
+                self.head = dh.Normal(
+                    self.fc.out_features, space.shape, std_act="softplus"
+                )
 
     def forward(self, input: Tensor):
         out = self.fc(input)
-        if self.head is not None:
-            out = self.head(out)
-        return out
+        if self.dist == "mse":
+            out = out.reshape(-1, *self.space.shape)
+            return D.MSEProxy(out, len(self.space.shape))
+        else:
+            return self.head(out)
 
 
-class DiscreteEncoder(nn.Embedding):
-    def __init__(self, space: spaces.torch.Discrete, embed_dim: int):
-        super().__init__(space.n, embed_dim)
+class DiscreteEncoder(nn.Module):
+    def __init__(self, space: spaces.torch.Discrete):
+        super().__init__()
         self.space = space
+        self.n = space.n
+
+    def forward(self, input: Tensor):
+        return F.one_hot(input, self.n).float()
 
     def inverse(self, input: Tensor):
-        return torch.cdist(input, self.weight[None]).argmax(-1)[0]
+        return input.argmax(-1)
 
 
 class DiscreteDecoder(nn.Sequential):
@@ -263,6 +272,24 @@ class DiscreteDecoder(nn.Sequential):
             head = dh.Categorical(fc.out_features, space.n)
 
         super().__init__(fc, head)
+
+
+def AutoEncoder(space: spaces.torch.Space, **args):
+    if type(space) == spaces.torch.Image:
+        return ImageEncoder(space, **args.get("image", {}))
+    elif type(space) == spaces.torch.Box:
+        return BoxEncoder(space, **args.get("box", {}))
+    elif type(space) == spaces.torch.Discrete:
+        return DiscreteEncoder(space, **args.get("discrete", {}))
+
+
+def AutoDecoder(in_features: int, space: spaces.torch.Space, **args):
+    if type(space) == spaces.torch.Image:
+        return ImageDecoder(in_features, space, **args.get("image", {}))
+    elif type(space) == spaces.torch.Box:
+        return BoxDecoder(in_features, space, **args.get("box", {}))
+    elif type(space) == spaces.torch.Discrete:
+        return DiscreteDecoder(in_features, space, **args.get("discrete", {}))
 
 
 class StreamNorm(nn.Module):
@@ -300,7 +327,7 @@ class StreamNorm(nn.Module):
         self._mag.copy_(value)
 
 
-class ActorHead(nn.Module):
+class PolicyLayer(nn.Module):
     def __init__(self, in_features: int, act_enc: nn.Module):
         super().__init__()
         self.in_features = in_features
@@ -309,7 +336,7 @@ class ActorHead(nn.Module):
 
         if isinstance(act_enc, DiscreteEncoder):
             self.space: spaces.torch.Discrete
-            self._fc = nn.Linear(in_features, act_enc.num_embeddings)
+            self._fc = nn.Linear(in_features, act_enc.n)
         elif isinstance(act_enc, BoxEncoder):
             self.space: spaces.torch.Box
             self._head = dh.Beta(in_features, act_enc.space)
@@ -317,7 +344,7 @@ class ActorHead(nn.Module):
     def forward(self, state: Tensor) -> D.Distribution:
         if isinstance(self.act_enc, DiscreteEncoder):
             logits = self._fc(state)
-            dist = D.OneOf(self.act_enc.weight, logits=logits)
+            dist = D.OneHot(logits=logits)
         elif isinstance(self.act_enc, BoxEncoder):
             dist = self._head(state)
         return dist

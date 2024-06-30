@@ -1,3 +1,5 @@
+from functools import cached_property
+
 import torch
 import torch.nn.functional as F
 from torch import Tensor
@@ -22,56 +24,66 @@ class Categorical(Distribution, Tensorlike):
             raise ValueError("cannot supply more than 1 param")
 
         if probs is not None:
-            probs = torch.as_tensor(probs)
-            _param = probs
-            norm = False
+            param_type = "probs"
+            param = probs
+            normalized = False
         elif logits is not None:
-            logits = torch.as_tensor(logits)
-            norm = False
-            _param = logits
+            param_type = "logits"
+            param = logits
+            normalized = False
         elif log_probs is not None:
-            logits = torch.as_tensor(log_probs)
-            norm = True
-            _param = logits = log_probs
+            param_type = "log_probs"
+            param = log_probs
+            normalized = True
 
-        batch_shape = _param.shape[: -event_dims - 1]
-        event_shape = _param.shape[-event_dims - 1 : -1]
-        Tensorlike.__init__(self, batch_shape)
+        batch_shape = param.shape[: -event_dims - 1]
+        event_shape = param.shape[-event_dims - 1 : -1]
+        Tensorlike.__init__(self, shape=batch_shape)
 
         self.event_shape = event_shape
-        self.num_events = _param.shape[-1]
+        self.num_events = param.shape[-1]
 
-        self._probs = self.register("_probs", probs)
-        self._logits = self.register("_logits", logits)
-        self._normalized = norm
+        self._param_type = param_type
+        self._normalized = normalized
+        self._param = self.register("_param", param)
+
+        self._reset_aux()
+
+    def _reset_aux(self):
+        if self._param_type == "probs":
+            self._logits, self._probs = None, self._param
+            self._normalized = False
+        else:
+            self._logits, self._probs = self._param, None
+            self._normalized = self._param_type == "log_probs"
+
+    def _new(self, shape: torch.Size, fields: dict):
+        new = super()._new(shape, fields)
+        # super()._new copies the non-registered fields, including _probs and
+        # _logits, which might become "stale". We need to reset them.
+        new._reset_aux()
+        return new
 
     @property
     def logits(self) -> Tensor:
         if self._logits is None:
-            eps = torch.finfo(self._probs.dtype).eps
-            probs = self._probs.clamp(eps, 1 - eps)
-            self._logits = torch.log(probs)
-            self._normalized = True
+            probs = self._param
+            eps = torch.finfo(probs.dtype).eps
+            probs = probs.clamp(eps, 1 - eps)
+            self._logits, self._normalized = probs.log(), True
         return self._logits
 
     @property
-    def _param(self):
-        return self._logits if self._logits is not None else self._probs
-
-    @property
     def log_probs(self) -> Tensor:
-        if self._logits is None or not self._normalized:
+        if not self._normalized:
             self._logits = self.logits - self.logits.logsumexp(-1, keepdim=True)
-            self._normalized = True
+            self.normalized = True
         return self._logits
 
     @property
     def probs(self) -> Tensor:
         if self._probs is None:
-            if self._normalized:
-                self._probs = self._logits.exp()
-            else:
-                self._probs = F.softmax(self.logits, -1)
+            self._probs = self.logits.softmax(-1)
         return self._probs
 
     @property
@@ -87,34 +99,29 @@ class Categorical(Distribution, Tensorlike):
         raise NotImplementedError
 
     def sample(self, sample_shape=()) -> Tensor:
-        if not isinstance(sample_shape, torch.Size):
-            sample_shape = torch.Size(sample_shape)
-        probs_2d = self.probs.reshape(-1, self.num_events)
-        if sample_shape.numel() == 1:
-            samples_2d = self._multinomial1(probs_2d).T
-        else:
-            samples_2d = torch.multinomial(probs_2d, sample_shape.numel(), True).T
-        return samples_2d.reshape([*sample_shape, *self.batch_shape, *self.event_shape])
+        # if not isinstance(sample_shape, torch.Size):
+        #     sample_shape = (sample_shape,)
+        # probs_2d = self.probs.reshape(-1, self.num_events)
+        # if sample_shape.numel() == 1:
+        #     q = torch.empty_like(probs_2d).exponential_(1)
+        #     q = probs_2d / q
+        #     samples_2d = q.argmax(dim=-1, keepdim=True)
+        # else:
+        #     samples_2d = torch.multinomial(probs_2d, sample_shape.numel(), True).T
+        # return samples_2d.reshape([*sample_shape, *self.batch_shape, *self.event_shape])
+        logits = self.logits.expand(*sample_shape, *self.logits.shape)
+        unif = torch.rand_like(logits).clamp(1e-8, 1.0 - 1e-8)
+        return (logits - (-unif.log()).log()).argmax(-1)
 
     def rsample(self, sample_shape=()):
         raise NotImplementedError
 
-    def _multinomial1(self, probs_2d: torch.Tensor):
-        q = torch.empty_like(probs_2d).exponential_(1)
-        q = probs_2d / q
-        return q.argmax(dim=-1, keepdim=True)
-
     def log_prob(self, value: Tensor) -> Tensor:
-        if value.dtype.is_floating_point:
-            # Value is a set of one-hot vectors
-            return sum_rightmost(value * self.log_probs, len(self.event_shape) + 1)
-        else:
-            # Value is a set of indices
-            value = value.long().unsqueeze(-1)
-            value, log_pmf = torch.broadcast_tensors(value, self.log_probs)
-            value = value[..., :1]
-            logp = log_pmf.gather(-1, value).squeeze(-1)
-            return sum_rightmost(logp, len(self.event_shape))
+        value = value.long().unsqueeze(-1)
+        value, log_pmf = torch.broadcast_tensors(value, self.log_probs)
+        value = value[..., :1]
+        logp = log_pmf.gather(-1, value).squeeze(-1)
+        return sum_rightmost(logp, len(self.event_shape))
 
     def entropy(self):
         min_real = torch.finfo(self.logits.dtype).min

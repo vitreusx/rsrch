@@ -27,8 +27,8 @@ class MSEProxy(Distribution, Tensorlike):
         return self.value
 
     def log_prob(self, value: Tensor) -> Tensor:
-        neg_loss = -(value - self.value).square()
+        neg_loss = -0.5 * (value - self.value).square()
         return sum_rightmost(neg_loss, len(self.event_shape))
 
     def rsample(self, sample_shape: Size = ...) -> Tensor:
-        return self.value.expand(*sample_shape, *self.value.shape)
+        raise NotImplementedError()

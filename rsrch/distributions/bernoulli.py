@@ -16,29 +16,42 @@ class Bernoulli(Distribution, Tensorlike):
     event_shape: torch.Size
 
     def __init__(
-        self, probs: Tensor | None = None, logits: Tensor | None = None, event_dims=0
+        self,
+        probs: Tensor | None = None,
+        logits: Tensor | None = None,
+        event_dims=0,
     ):
         if probs is not None and logits is not None:
             raise ValueError("probs and logits cannot be both not-None")
 
         if probs is not None:
-            probs = torch.as_tensor(probs)
-            _param = probs
+            param_type = "probs"
+            param = probs
         else:
-            logits = torch.as_tensor(logits)
-            _param = logits
+            param_type = "logits"
+            param = logits
 
-        pivot = len(_param.shape) - event_dims
-        batch_shape, event_shape = _param.shape[:pivot], _param.shape[pivot:]
+        pivot = len(param.shape) - event_dims
+        batch_shape, event_shape = param.shape[:pivot], param.shape[pivot:]
 
         Tensorlike.__init__(self, batch_shape)
         self.event_shape = event_shape
 
-        self._probs: Tensor | None
-        self.register("_probs", probs)
+        self._param = self.register("_param", param)
+        self._param_type = param_type
 
-        self._logits: Tensor | None
-        self.register("_logits", logits)
+        self.reset_aux()
+
+    def reset_aux(self):
+        if self._param_type == "probs":
+            self._probs, self._logits = self._param, None
+        else:
+            self._probs, self._logits = None, self._param
+
+    def _new(self, shape: torch.Size, fields: dict):
+        new = super()._new(shape, fields)
+        new.reset_aux()
+        return new
 
     @property
     def logits(self) -> Tensor:
@@ -78,8 +91,7 @@ class Bernoulli(Distribution, Tensorlike):
         raise NotImplementedError
 
     def log_prob(self, value):
-        if value.dtype != self.logits.dtype:
-            value = value.to(dtype=self.logits.dtype)
+        value = value.type_as(self.logits)
         logits, value = torch.broadcast_tensors(self.logits, value)
         return -F.binary_cross_entropy_with_logits(logits, value, reduction="none")
 

@@ -1,6 +1,20 @@
 {
   "configurations": [
-
+    {
+      "name": "SeqVQ",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "rsrch.hub.vis.seq_vq",
+      "pythonArgs": [
+        "-O"
+      ],
+      "env": {
+        // "CUDA_LAUNCH_BLOCKING": "1", 
+        // "MUJOCO_GL": "osmesa",
+        "KINETO_LOG_LEVEL": "3", // ERROR
+      },
+      "justMyCode": false
+    },
     {
       "name": "DreamerV2",
       "type": "debugpy",
@@ -15,8 +29,7 @@
         "KINETO_LOG_LEVEL": "3", // ERROR
       },
       "justMyCode": false
-    },  
-
+    },
     {
       "name": "StackWM",
       "type": "debugpy",
@@ -31,7 +44,7 @@
         "KINETO_LOG_LEVEL": "3", // ERROR
       },
       "justMyCode": false
-    },  
+    },
     {
       "name": "AE",
       "type": "debugpy",
@@ -46,7 +59,7 @@
         "KINETO_LOG_LEVEL": "3", // ERROR
       },
       "justMyCode": false
-    },  
+    },
     {
       "name": "SeqVAE",
       "type": "debugpy",

@@ -7,19 +7,27 @@ _:
     norm: ${_.norm}
     hidden: 400
     layers: 4
+  auto_enc: &auto_enc
+    $type: auto
+    image:
+      depth: ${_.depth}
+      kernels: [4, 4, 4, 4]
+      norm: ${_.norm}
+      act: ${_.act}
+    box: *fc
 seed: 42
 device: cuda
 dtype: float16
 env:
   type: atari
   atari:
-    env_id: ALE/Alien-v5
+    env_id: ALE/Pong-v5
     screen_size: 64
     frame_skip: 4
     obs_type: grayscale
     noop_max: 30
     fire_reset: true
-    term_on_life_loss: true
+    term_on_life_loss: false
     time_limit: 108e3
     stack: ~
     use_envpool: true
@@ -28,17 +36,17 @@ wm:
     ensemble: 1
     deter_size: 1024
     stoch:
-      $type: Discrete
+      $type: discrete
       num_tokens: 32
       token_size: 32
     act: ${_.act}
     norm: ${_.norm}
     hidden_size: 1024
   opt:
-    $type: Adam
+    $type: adam_w
     lr: 1e-4
     eps: 1e-5
-    weight_decay: 1e-6
+    weight_decay: "${1e-6/lr}"
   kl:
     free: 0.0
     forward: false
@@ -49,44 +57,38 @@ wm:
   coef: {}
   clip_grad: 1.0e2
   encoders:
-    obs:
-      $type: ImageEncoder
-      depth: ${_.depth}
-      kernels: [4, 4, 4, 4]
-      norm: ${_.norm}
-      act: ${_.act}
-    act:
-      $type: DiscreteEncoder
-      embed_dim: 128
+    obs: *auto_enc
+    act: *auto_enc
   decoders:
     obs:
-      $type: ImageDecoder
-      depth: ${_.depth}
-      kernels: [5, 5, 6, 6]
-      norm: ${_.norm}
-      act: ${_.act}
+      $type: auto
+      image:
+        depth: ${_.depth}
+        kernels: [5, 5, 6, 6]
+        norm: ${_.norm}
+        act: ${_.act}
+      box:
+        dist: mse
+        <<: [*fc]
     reward:
-      $type: BoxDecoder
+      $type: box
+      dist: mse
       <<: [*fc]
     term:
-      $type: DiscreteDecoder
+      $type: discrete
       <<: [*fc]
 ac:
   actor: *fc
-  critic: *fc
+  critic:
+    dist: mse
+    <<: [*fc]
   target_critic:
-    tau: 0.0
     every: 100
-  actor_opt:
-    $type: Adam
-    lr: 8e-5
+  opt:
+    $type: adam_w
+    actor: { lr: 8e-5, weight_decay: "${1e-6/lr}" }
+    critic: { lr: 2e-4, weight_decay: "${1e-6/lr}" }
     eps: 1e-5
-    weight_decay: 1e-6
-  critic_opt:
-    $type: Adam
-    lr: 2e-4
-    eps: 1e-5
-    weight_decay: 1e-6
   horizon: 15
   rew_norm:
     momentum: 1.0
@@ -108,9 +110,16 @@ dataset:
   ongoing: false
 total: { n: 100e6, of: env_step }
 prefill: { n: 10e3, of: env_step }
-train_every: { n: 5, of: env_step, iters: 1 }
+train_every: { n: 5, of: env_step }
 train_steps: 1
-eval_every: { n: 1e5, of: env_step, iters: 1 }
+log_every: { n: 8, of: opt_step }
+eval_every: { n: 1e5, of: env_step }
 agent:
   expl_noise: 0.0
   eval_noise: 0.0
+debug:
+  enabled: false
+  detect_anomaly: false
+  record_memory: false
+  deterministic: false
+  profile: true

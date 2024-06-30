@@ -1,0 +1,13 @@
+# samples: samples/ALE-Alien-v5__2024-06-24_14-51-12.pkl
+samples: samples/ALE-Alien-v5__2024-04-08_08-30-11.pkl
+device: cuda
+dtype: float16
+seed: 42
+dataset:
+  slice_len: 32
+  batch_size: 32
+  ongoing: true
+  subseq_len: 32
+  min_term_prob: 1e-2
+prefix_len: 16
+test_every: 1e3

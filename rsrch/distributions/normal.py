@@ -24,7 +24,7 @@ def _standard_normal(shape, dtype, device):
 class Normal(Distribution, Tensorlike):
     MSE_SIGMA = 1.0 / math.sqrt(2.0 * math.pi)
     r"""This value of \sigma for the normal distribution makes log prob equal 
-    (to a scale factor) to (x-\mu)^2. """
+    (up to a scale factor) to (x-\mu)^2. """
 
     def __init__(
         self,

@@ -100,22 +100,9 @@ class PassGradientOp(torch.autograd.Function):
         return None, grad_output
 
 
+# def pass_gradient(value: Tensor, to: Tensor) -> Tensor:
+#     return PassGradientOp.apply(value, to)
+
+
 def pass_gradient(value: Tensor, to: Tensor) -> Tensor:
-    return PassGradientOp.apply(value, to)
-
-
-class ScaleGradientOp(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, value: Tensor, scale: Number | Tensor):
-        scale = torch.as_tensor(scale).type_as(value)
-        ctx.save_for_backward(scale)
-        return value
-
-    @staticmethod
-    def backward(ctx, grad_value: Tensor):
-        (scale,) = ctx.saved_tensors
-        return scale * grad_value
-
-
-def scale_gradient(value: Tensor, scale: Number | Tensor):
-    return ScaleGradientOp.apply(value, scale)
+    return value.detach() + (to - to.detach())

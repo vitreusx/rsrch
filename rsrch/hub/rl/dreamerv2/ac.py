@@ -16,44 +16,55 @@ from rsrch.utils import sched
 from . import config, env, nets, rssm, wm
 
 
+@contextmanager
+def no_grad(enabled=True):
+    if enabled:
+        with torch.no_grad():
+            yield
+    else:
+        yield
+
+
 class ActorCritic(nn.Module):
     def __init__(
         self,
         wm: wm.WorldModel,
         cfg: config.ActorCritic,
+        device: torch.device,
         dtype: torch.dtype,
     ):
         super().__init__()
         self.dtype = dtype
         self.wm = wm
         self.cfg = cfg
+        self.device, self.dtype = device, dtype
 
-        fc = nets.FC(wm.state_size, None, **cfg.actor)
         self.actor = nn.Sequential(
-            fc,
-            nets.ActorHead(fc.out_features, wm.act_enc),
+            (fc := nets.FC(wm.state_size, None, **cfg.actor)),
+            nets.PolicyLayer(fc.out_features, wm.act_enc),
         )
 
-        self.critic = nn.Sequential(
-            nets.FC(wm.state_size, 1, **cfg.critic),
-            nn.Flatten(0),
+        self.critic = nets.BoxDecoder(
+            in_features=wm.state_size,
+            space=spaces.torch.Box(shape=(), dtype=torch.float32),
+            **cfg.critic,
         )
 
         if cfg.target_critic is not None:
-            self.target_critic = nn.Sequential(
-                nets.FC(wm.state_size, 1, **cfg.critic),
-                nn.Flatten(0),
+            self.target_critic = nets.BoxDecoder(
+                in_features=wm.state_size,
+                space=spaces.torch.Box(shape=(), dtype=torch.float32),
+                **cfg.critic,
             )
             polyak.sync(self.critic, self.target_critic)
             self.update_target = polyak.Polyak(
-                self.critic, self.target_critic, **cfg.target_critic
+                source=self.critic,
+                target=self.target_critic,
+                **cfg.target_critic,
             )
         else:
             self.target_critic = self.critic
             self.update_target = None
-
-        self.actor_opt = self._make_optim(cfg.actor_opt)(self.actor.parameters())
-        self.critic_opt = self._make_optim(cfg.critic_opt)(self.critic.parameters())
 
         self.rew_norm = nets.StreamNorm(**cfg.rew_norm)
 
@@ -68,11 +79,29 @@ class ActorCritic(nn.Module):
 
         self.actor_ent = self._make_sched(cfg.actor_ent)
 
+        self.to(device)
+
+        self.opt = self._make_optim(cfg.opt)
+
     def _make_optim(self, cfg: dict):
         cfg = {**cfg}
-        cls = getattr(torch.optim, cfg["$type"])
+
+        cls = config.get_class(torch.optim, cfg["$type"])
         del cfg["$type"]
-        return partial(cls, **cfg)
+
+        actor, critic = cfg["actor"], cfg["critic"]
+        del cfg["actor"]
+        del cfg["critic"]
+
+        common = cfg
+
+        return cls(
+            [
+                {"params": self.actor.parameters(), **actor},
+                {"params": self.critic.parameters(), **critic},
+            ],
+            **common,
+        )
 
     def _make_sched(self, cfg: float | dict):
         if isinstance(cfg, float):
@@ -84,16 +113,8 @@ class ActorCritic(nn.Module):
             return cls(**cfg)
 
     @cached_property
-    def actor_scaler(self):
+    def scaler(self):
         return getattr(torch, self.device.type).amp.GradScaler()
-
-    @cached_property
-    def critic_scaler(self):
-        return getattr(torch, self.device.type).amp.GradScaler()
-
-    @cached_property
-    def device(self):
-        return next(self.parameters()).device
 
     def autocast(self):
         return torch.autocast(device_type=self.device.type, dtype=self.dtype)
@@ -102,35 +123,41 @@ class ActorCritic(nn.Module):
         mets = {}
 
         with self.autocast():
-            states, acts, policies = self._imagine(init, self.cfg.horizon)
-            state_t = states.to_tensor()
+            states, acts = self._imagine(init, self.cfg.horizon)
+            feats = states.to_tensor()
 
-            rew_dist = over_seq(self.wm.reward_dec)(state_t)
-            reward = self.rew_norm(rew_dist.mode)
+        # For reinforce, we detach `target` variable, so requiring gradients on
+        # any computation leading up to it will cause autograd to leak memory
+        with no_grad(enabled=(self.actor_grad == "reinforce")):
+            with torch.no_grad():
+                rew_dist = over_seq(self.wm.reward_dec)(feats)
+                reward = self.rew_norm(rew_dist.mode)
 
-            term_dist = over_seq(self.wm.term_dec)(state_t)
-            term = term_dist.mean
-            term[0] = is_terminal.float()
-            gamma = self.cfg.gamma * (1.0 - term)
+                term_dist = over_seq(self.wm.term_dec)(feats)
+                term = term_dist.mean
+                term[0] = is_terminal.float()
+                gamma = self.cfg.gamma * (1.0 - term)
 
-            weight = torch.cat([torch.ones_like(gamma[:1]), gamma[:-1]]).cumprod(0)
+                vt = over_seq(self.target_critic)(feats).mode
+                target = self._lambda_return(
+                    reward[:-1], vt[:-1], gamma[:-1], bootstrap=vt[-1]
+                )
 
         with torch.no_grad():
             with self.autocast():
-                vt = over_seq(self.target_critic)(state_t)
+                weight = torch.cat([torch.ones_like(gamma[:1]), gamma[:-1]])
+                weight = weight.cumprod(0)
 
         with self.autocast():
-            target = self._gae_returns(reward[:-1], vt, gamma[:-1])
-
-            policies = policies[:-1]
+            policies = self.actor(feats[:-2].detach())
             if self.actor_grad == "dynamics":
                 objective = target[1:]
             elif self.actor_grad == "reinforce":
-                baseline = vt[:-2]
+                baseline = over_seq(self.target_critic)(feats[:-2]).mode
                 adv = (target[1:] - baseline).detach()
                 objective = adv * policies.log_prob(acts[:-1].detach())
             elif self.actor_grad == "both":
-                baseline = vt[:-2]
+                baseline = over_seq(self.target_critic)(feats[:-2]).mode
                 adv = (target[1:] - baseline).detach()
                 objective = adv * policies.log_prob(acts[:-1].detach())
                 mix = self.actor_grad_mix(self.opt_iter)
@@ -138,47 +165,30 @@ class ActorCritic(nn.Module):
                 objective = mix * target[1:] + (1.0 - mix) * objective
 
             ent_scale = self.actor_ent(self.opt_iter)
-            policy_ent = policies.entropy()
-            objective = objective + ent_scale * policy_ent
-            actor_loss = -(weight[:-2].detach() * objective).mean()
-
-            mets["policy_ent"] = policy_ent.mean()
             mets["policy_ent_scale"] = ent_scale
+            policy_ent = policies.entropy()
+            mets["policy_ent"] = policy_ent.mean()
+            objective = objective + ent_scale * policy_ent
+            actor_loss = -(weight[:-2] * objective).mean()
             mets["actor_loss"] = actor_loss
 
-        opt, scaler = self.actor_opt, self.actor_scaler
-        opt.zero_grad(set_to_none=True)
-        scaler.scale(actor_loss).backward(retain_graph=True)
-        if self.cfg.clip_grad is not None:
-            scaler.unscale_(opt)
-            nn.utils.clip_grad_norm_(
-                self.actor.parameters(),
-                max_norm=self.cfg.clip_grad,
-            )
-        scaler.step(opt)
-        scaler.update()
-
-        with self.autocast():
-            state_ = state_t.detach().clone()
-            value = over_seq(self.critic)(state_[:-1])
-            mets["value"] = value.mean()
-            target_ = target.detach().clone()
-            weight_ = weight.detach().clone()
-            error = (value - target_).square()
-            critic_loss = -(weight_[:-1] * error).mean()
+            value_dist = over_seq(self.critic)(feats[:-1].detach())
+            mets["value"] = value_dist.mean.mean()
+            critic_loss = (weight[:-1] * -value_dist.log_prob(target)).mean()
             mets["critic_loss"] = critic_loss
 
-        opt, scaler = self.critic_opt, self.critic_scaler
-        opt.zero_grad(set_to_none=True)
-        scaler.scale(critic_loss).backward()
+        loss = actor_loss + critic_loss
+
+        self.opt.zero_grad(set_to_none=True)
+        self.scaler.scale(loss).backward()
         if self.cfg.clip_grad is not None:
-            scaler.unscale_(opt)
+            self.scaler.unscale_(self.opt)
             nn.utils.clip_grad_norm_(
-                self.critic.parameters(),
+                [*self.actor.parameters(), *self.critic.parameters()],
                 max_norm=self.cfg.clip_grad,
             )
-        scaler.step(opt)
-        scaler.update()
+        self.scaler.step(self.opt)
+        self.scaler.update()
 
         self.opt_iter += 1
         if self.update_target is not None:
@@ -188,31 +198,36 @@ class ActorCritic(nn.Module):
 
     def _imagine(self, init: rssm.State, horizon: int):
         state = init
-        states, acts, policies = [state], [], []
+        states, acts = [state], []
 
         for _ in range(horizon):
             policy: D.Distribution = self.actor(state.to_tensor().detach())
-            policies.append(policy)
-
             act: Tensor = policy.rsample()
             acts.append(act)
 
-            state_dist: rssm.StateDist = self.wm.rssm.img_step(state, act)
-            state = state_dist.rsample()
+            state = self.wm.rssm.img_step(state, act)
             states.append(state)
 
         states: rssm.State = torch.stack(states)
         acts: Tensor = torch.stack(acts)
-        policies: D.Distribution = torch.stack(policies)
 
-        return states, acts, policies
+        return states, acts
 
-    def _gae_returns(self, rewards: Tensor, values: Tensor, gammas: Tensor):
-        inputs = rewards + gammas * values[1:] * (1.0 - self.cfg.gae_lambda)
-        returns, cur = [], values[-1]
+    def _lambda_return(
+        self,
+        reward: Tensor,
+        value: Tensor,
+        gamma: Tensor,
+        bootstrap: Tensor,
+    ):
+        next_values = torch.cat((value[1:], bootstrap[None]), 0)
+        inputs = reward + gamma * next_values * (1.0 - self.cfg.gae_lambda)
+
+        returns, cur = [], bootstrap
         for t in reversed(range(len(inputs))):
-            cur = inputs[t] + gammas[t] * self.cfg.gae_lambda * cur
+            cur = inputs[t] + gamma[t] * self.cfg.gae_lambda * cur
             returns.append(cur)
+
         returns.reverse()
         return torch.stack(returns)
 
@@ -238,8 +253,8 @@ class Agent(gym.vector.Agent, nn.Module):
 
     @contextmanager
     def autocast(self):
-        with torch.autocast(device_type=self.ac.device.type, dtype=self.ac.dtype):
-            with safe_mode(self):
+        with torch.no_grad():
+            with torch.autocast(device_type=self.ac.device.type, dtype=self.ac.dtype):
                 yield
 
     def reset(self, idxes, obs, info):
@@ -262,16 +277,9 @@ class Agent(gym.vector.Agent, nn.Module):
                 dtype=dtype,
                 device=device,
             )
-            is_first = torch.ones(
-                [len(idxes)],
-                dtype=torch.bool,
-                device=device,
-            )
 
-            prior, post = self._wm.rssm.obs_step(
-                self._state[idxes], enc_act, enc_obs, is_first
-            )
-            self._state[idxes] = post.sample().to(dtype)
+            value = self._wm.rssm.obs_step(self._state[idxes], enc_act, enc_obs)
+            self._state[idxes] = value.type_as(self._state)
 
     def policy(self, obs):
         if self.mode == "prefill":
@@ -314,7 +322,7 @@ class Agent(gym.vector.Agent, nn.Module):
         with self.autocast():
             enc_act = self._enc_act[idxes]
             next_obs = self.env_f.move_obs(next_obs)
-            next_obs = self._wm.obs_enc(next_obs)
+            enc_next_obs = self._wm.obs_enc(next_obs)
 
-            prior, post = self._wm.rssm.obs_step(self._state[idxes], enc_act, next_obs)
-            self._state[idxes] = post.sample().to(self.ac.dtype)
+            value = self._wm.rssm.obs_step(self._state[idxes], enc_act, enc_next_obs)
+            self._state[idxes] = value.type_as(self._state)

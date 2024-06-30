@@ -10,7 +10,7 @@ from rsrch import spaces
 from rsrch.nn.utils import over_seq, safe_mode
 from rsrch.rl import data
 
-from . import config, nets, rssm
+from . import config, nets, rssm, rssm_opt
 
 
 class WorldModel(nn.Module):
@@ -19,17 +19,18 @@ class WorldModel(nn.Module):
         obs_space: spaces.torch.Space,
         act_space: spaces.torch.Space,
         cfg: config.WorldModel,
+        device: torch.device,
         dtype: torch.dtype,
     ):
         super().__init__()
         self.obs_space = obs_space
         self.act_space = act_space
         self.cfg = cfg
-        self.dtype = dtype
+        self.device, self.dtype = device, dtype
 
-        self.obs_enc = self._make_net(cfg.encoders.obs)(obs_space)
-        self.act_enc = self._make_net(cfg.encoders.act)(act_space)
-        self.act_dec = self._make_decoder(self.act_enc)
+        self.obs_enc = self._make_encoder(cfg.encoders.obs)(obs_space)
+        self.act_enc = self._make_encoder(cfg.encoders.act)(act_space)
+        self.act_dec = self._make_inv(self.act_enc)
 
         with safe_mode(self):
             obs: Tensor = obs_space.sample([1])
@@ -37,12 +38,15 @@ class WorldModel(nn.Module):
             act: Tensor = act_space.sample([1])
             act_size: int = self.act_enc(act).shape[1]
 
-        self.rssm = rssm.EnsembleRSSM(cfg.rssm, obs_size, act_size)
+        # self.rssm = rssm.EnsembleRSSM(cfg.rssm, obs_size, act_size)
+        self.rssm = rssm_opt.EnsembleRSSM(cfg.rssm, obs_size, act_size).to(device)
+        self.rssm: rssm_opt.EnsembleRSSM = torch.jit.script(self.rssm)
+
         self.state_size = self.rssm.stoch_size + self.rssm.deter_size
 
-        self.obs_dec = self._make_net(cfg.decoders.obs)(
-            self.state_size,
-            obs_space,
+        self.obs_dec = self._make_decoder(cfg.decoders.obs)(
+            in_features=self.state_size,
+            space=obs_space,
         )
 
         if cfg.reward_fn == "clip":
@@ -54,40 +58,47 @@ class WorldModel(nn.Module):
         else:
             rew_space = spaces.torch.Box((), -torch.inf, +torch.inf)
 
-        self.reward_dec = self._make_net(cfg.decoders.reward)(
-            self.state_size,
-            rew_space,
+        self.reward_dec = self._make_decoder(cfg.decoders.reward)(
+            in_features=self.state_size,
+            space=rew_space,
         )
 
-        term_space = spaces.torch.Discrete(2, dtype=torch.bool)
-        self.term_dec = self._make_net(cfg.decoders.term)(self.state_size, term_space)
+        self.term_dec = self._make_decoder(cfg.decoders.term)(
+            in_features=self.state_size,
+            space=spaces.torch.Discrete(2, dtype=torch.bool),
+        )
 
-        self.opt = self._make_opt(cfg.opt)(self.parameters())
+        self.to(device)
+
+        self.opt = self._make_optim(cfg.opt)(self.parameters())
 
     @cached_property
     def scaler(self):
         return getattr(torch, self.device.type).amp.GradScaler()
 
-    @cached_property
-    def device(self):
-        return next(self.parameters()).device
-
     def autocast(self):
-        return torch.autocast(device_type=self.device.type, dtype=self.dtype)
+        enabled = self.dtype != torch.float32
+        return torch.autocast(self.device.type, self.dtype, enabled)
 
-    def _make_net(self, cfg: dict) -> Callable[..., nn.Module]:
+    def _make_encoder(self, cfg: dict) -> Callable[..., nn.Module]:
         cfg = {**cfg}
-        cls = getattr(nets, cfg["$type"])
+        cls = config.get_class(nets, cfg["$type"] + "_encoder")
         del cfg["$type"]
         return partial(cls, **cfg)
 
-    def _make_opt(self, cfg: dict) -> Callable[..., torch.optim.Optimizer]:
+    def _make_decoder(self, cfg: dict) -> Callable[..., nn.Module]:
         cfg = {**cfg}
-        cls = getattr(torch.optim, cfg["$type"])
+        cls = config.get_class(nets, cfg["$type"] + "_decoder")
         del cfg["$type"]
         return partial(cls, **cfg)
 
-    def _make_decoder(self, encoder: nn.Module):
+    def _make_optim(self, cfg: dict) -> Callable[..., torch.optim.Optimizer]:
+        cfg = {**cfg}
+        cls = config.get_class(torch.optim, cfg["$type"])
+        del cfg["$type"]
+        return partial(cls, **cfg)
+
+    def _make_inv(self, encoder: nn.Module):
         if isinstance(encoder, nets.DiscreteEncoder):
             return encoder.inverse
         elif isinstance(encoder, nets.Identity):
@@ -95,8 +106,47 @@ class WorldModel(nn.Module):
         else:
             raise ValueError(f"Cannot create a decoder for {type(encoder)}")
 
-    def opt_step(self, batch: data.SliceBatch, state: rssm.State, is_first: Tensor):
-        loss, ret = self._loss_fn(batch, state, is_first)
+    def opt_step(self, batch: dict, state: rssm.State):
+        mets = {}
+        losses = {}
+
+        with self.autocast():
+            enc_obs = over_seq(self.obs_enc)(batch["obs"])
+            enc_act = over_seq(self.act_enc)(batch["act"]).type_as(enc_obs)
+            enc_act[torch.where(batch["first"])].zero_()
+
+            states, post, prior = self.rssm.observe(enc_obs, enc_act, state)
+            mets["prior_ent"] = prior.detach().entropy().mean()
+            mets["post_ent"] = post.detach().entropy().mean()
+            kl_loss, kl_value = self._kl_loss(post, prior, **self.cfg.kl)
+            losses["kl"] = kl_loss
+            mets["kl_value"] = kl_value.detach().mean()
+
+            feats = states.to_tensor()
+
+            obs_dist = over_seq(self.obs_dec)(feats)
+            obs = batch["obs"]
+            losses["obs"] = -obs_dist.log_prob(obs).mean()
+
+            rew_dist = over_seq(self.reward_dec)(feats)
+            reward = self.reward_fn(batch["reward"])
+            losses["reward"] = -rew_dist.log_prob(reward).mean()
+
+            term_dist = over_seq(self.term_dec)(feats)
+            term = batch["term"]
+            losses["term"] = -term_dist.log_prob(term).mean()
+
+            coef = self.cfg.coef
+            loss: Tensor = sum(
+                coef[k] * v if k in coef else v for k, v in losses.items()
+            )
+
+        mets.update(
+            {
+                "loss": loss.detach(),
+                **{f"{k}_loss": v.detach() for k, v in losses.items()},
+            }
+        )
 
         self.opt.zero_grad(set_to_none=True)
         self.scaler.scale(loss).backward()
@@ -106,50 +156,9 @@ class WorldModel(nn.Module):
         self.scaler.step(self.opt)
         self.scaler.update()
 
-        return ret
+        states = states.detach()
 
-    def _loss_fn(self, batch: data.SliceBatch, state: rssm.State, is_first: Tensor):
-        losses = {}
-
-        with self.autocast():
-            enc_obs = over_seq(self.obs_enc)(batch.obs)
-            enc_act = over_seq(self.act_enc)(batch.act).type_as(enc_obs)
-
-            post, prior = self.rssm.observe(enc_obs, enc_act, state, is_first)
-            kl_loss, kl_value = self._kl_loss(post, prior, **self.cfg.kl)
-            losses["kl"] = kl_loss
-
-            state = post.rsample()
-            state_t = state.to_tensor()
-
-            obs_out = over_seq(self.obs_dec)(state_t)
-            obs = batch.obs
-            losses["obs"] = self._recon_loss(obs_out, obs)
-
-            reward_out = over_seq(self.reward_dec)(state_t)
-            reward = self.reward_fn(batch.reward)
-            losses["reward"] = self._recon_loss(reward_out, reward)
-
-            term_out = self.term_dec(state_t[-1])
-            term = batch.term.float()
-            losses["term"] = self._recon_loss(term_out, term)
-
-            coef = self.cfg.coef
-            loss: Tensor = sum(
-                coef[k] * v if k in coef else v for k, v in losses.items()
-            )
-
-            mets = {
-                "loss": loss,
-                "kl_value": kl_value.mean(),
-                "prior_ent": prior.entropy().mean(),
-                "post_ent": post.entropy().mean(),
-                **{f"{k}_loss": v for k, v in losses.items()},
-            }
-
-        ret = mets, state[-1].detach(), batch.term[-1]
-
-        return loss, ret
+        return mets, states
 
     def reward_fn(self, reward: Tensor):
         if self.cfg.reward_fn == "sign":
@@ -185,9 +194,3 @@ class WorldModel(nn.Module):
                 loss_rhs = value_rhs.clamp_min(free).mean()
             loss = mix * loss_lhs + (1.0 - mix) * loss_rhs
         return loss, value
-
-    def _recon_loss(self, input: Tensor | D.Distribution, target: Tensor):
-        if isinstance(input, Tensor):
-            return F.mse_loss(input, target)
-        else:
-            return -input.log_prob(target).mean()

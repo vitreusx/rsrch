@@ -34,4 +34,4 @@ class OneOf(Tensorlike, Distribution):
 
     def log_prob(self, value: Tensor):
         indices = torch.cdist(value[None], self.choices[None]).argmax(-1)[0]
-        return self.onehot.ind_rv.log_prob(indices)
+        return self.onehot.index_dist.log_prob(indices)

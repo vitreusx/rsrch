@@ -120,6 +120,7 @@ class Factory(base.Factory):
             obs = np.moveaxis(obs, -1, -3)
             if isinstance(obs.dtype, np.uint8):
                 obs = obs / 255.0
+            obs = obs - 0.5
         obs = torch.tensor(obs, dtype=torch.float32, device=self.device)
         return obs
 

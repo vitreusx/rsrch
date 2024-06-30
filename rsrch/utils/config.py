@@ -8,7 +8,7 @@ import types
 import typing
 from argparse import Namespace
 from collections import UserDict
-from dataclasses import fields, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence, Type, TypeVar, get_args, get_origin
 
