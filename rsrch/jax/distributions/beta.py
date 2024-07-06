@@ -1,5 +1,5 @@
 from rsrch import jax
-from rsrch.jax import numpy as jnp
+import jax.numpy as jnp
 
 from .distribution import Distribution
 

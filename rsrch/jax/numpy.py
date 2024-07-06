@@ -1,9 +1,8 @@
 from jax.numpy import *
 
-from rsrch.jax import amp
+from . import amp
 
 matmul = amp.autocast_to_fp16(matmul)
-
 acos = amp.autocast_to_fp32(acos)
 asin = amp.autocast_to_fp32(asin)
 cosh = amp.autocast_to_fp32(cosh)

@@ -4,8 +4,8 @@ from torch import Tensor
 from rsrch.types import Tensorlike
 
 from .categorical import Categorical
+from .discrete import OneHot
 from .distribution import Distribution
-from .one_hot import OneHot
 
 
 class OneOf(Tensorlike, Distribution):

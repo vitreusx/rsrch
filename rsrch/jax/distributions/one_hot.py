@@ -1,4 +1,3 @@
-import rsrch.jax.nn.functional as F
 from rsrch import jax
 from rsrch.jax import numpy as jnp
 

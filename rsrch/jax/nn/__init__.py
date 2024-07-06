@@ -1,11 +1,12 @@
+import jax
+from jax import Array
+from jax.nn import *
+
 import math
 from typing import Literal
 
 from equinox import Module, field
 from equinox.nn import *
-
-from rsrch import jax
-from rsrch.jax import Array
 
 from . import functional as F
 

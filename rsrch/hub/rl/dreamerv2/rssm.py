@@ -82,7 +82,7 @@ class EnsembleRSSM(nn.Module):
             act_layer(),
         )
 
-        self._cell = GRUCellLN(
+        self._cell = GRUCell(
             input_size=hidden_size,
             hidden_size=self.deter_size,
             norm=True,

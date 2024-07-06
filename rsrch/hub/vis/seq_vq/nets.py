@@ -79,20 +79,25 @@ class LayerNorm2d(nn.Module):
         return input
 
 
+def layer_init(module):
+    if isinstance(module, (nn.Linear, nn.Conv2d, nn.ConvTranspose2d)):
+        nn.init.orthogonal_(module.weight)
+        nn.init.constant_(module.bias, 0.0)
+
+
 class ResBlock(nn.Module):
     def __init__(
         self,
         num_features: int,
-        norm_layer: Callable[[int], nn.Module] | None,
         act_layer: Callable[[], nn.Module],
     ):
         super().__init__()
         self.net = nn.Sequential(
             nn.Conv2d(num_features, num_features, 3, 1, 1),
-            *([norm_layer(num_features)] if norm_layer else []),
+            nn.BatchNorm2d(num_features),
             act_layer(),
             nn.Conv2d(num_features, num_features, 3, 1, 1),
-            *([norm_layer(num_features)] if norm_layer else []),
+            nn.BatchNorm2d(num_features),
         )
         self.act = act_layer()
 
@@ -107,7 +112,6 @@ class Encoder_v1(nn.Sequential):
         *,
         conv_hidden: int = 32,
         scale_factor: int = 16,
-        norm_layer: Callable[[int], nn.Module] | None = nn.BatchNorm2d,
         act_layer: Callable[[], nn.Module] = nn.ReLU,
         res_blocks: int = 2,
         flatten: bool = True,
@@ -121,20 +125,18 @@ class Encoder_v1(nn.Sequential):
         channels.extend(2**stage * conv_hidden for stage in range(num_stages))
 
         layers = []
-        for idx, (in_ch, out_ch) in enumerate(zip(channels, channels[1:])):
-            if idx > 0:
-                if norm_layer is not None:
-                    layers.append(norm_layer(in_ch))
-                layers.append(act_layer())
+        for in_ch, out_ch in enumerate(zip(channels, channels[1:])):
             layers.append(nn.Conv2d(in_ch, out_ch, 4, 2, 1))
+            layers.append(act_layer())
 
         for _ in range(res_blocks):
-            layers.append(ResBlock(channels[-1], norm_layer, act_layer))
+            layers.append(ResBlock(channels[-1], act_layer))
 
         if flatten:
             layers.append(nn.Flatten())
 
         super().__init__(*layers)
+        self.apply(layer_init)
 
 
 class Decoder_v1(nn.Module):
@@ -145,7 +147,6 @@ class Decoder_v1(nn.Module):
         *,
         conv_hidden: int = 48,
         scale_factor: int = 32,
-        norm_layer: Callable[[int], nn.Module] | None = nn.BatchNorm2d,
         act_layer: Callable[[], nn.Module] = nn.ReLU,
         res_blocks: int = 2,
     ):
@@ -174,18 +175,19 @@ class Decoder_v1(nn.Module):
         channels += [obs_space.num_channels]
 
         for _ in range(res_blocks):
-            layers += [ResBlock(channels[0], norm_layer, act_layer)]
+            layers.append(ResBlock(channels[0], act_layer))
 
         for in_channels, out_channels in zip(channels, channels[1:]):
-            layers += [nn.ConvTranspose2d(in_channels, out_channels, 4, 2, 1)]
-            if norm_layer is not None:
-                layers += [norm_layer(out_channels)]
-            layers += [act_layer()]
+            layers += [
+                nn.ConvTranspose2d(in_channels, out_channels, 4, 2, 1),
+                act_layer(),
+            ]
 
         while not isinstance(layers[-1], nn.ConvTranspose2d):
             layers.pop()
 
         self.main = nn.Sequential(*layers)
+        self.apply(layer_init)
 
     def forward(self, input: Tensor):
         return self.main(input)

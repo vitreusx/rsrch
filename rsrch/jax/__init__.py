@@ -1,8 +1,9 @@
 from jax import *
 
-del numpy, lax, nn, random
-from . import lax, nn, numpy, random
-from .amp import autocast
+del nn, random
+from . import nn, random
 
 PyTree = nn.Module
 final = nn.final
+
+from . import distributions

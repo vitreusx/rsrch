@@ -3,6 +3,8 @@ from typing import Callable, ParamSpec, TypeVar
 
 import jax.numpy as jnp
 import jmp
+from jax import lax, nn
+from optax import losses
 
 policy = jmp.Policy(
     param_dtype=jnp.float32,

@@ -1,7 +1,7 @@
 from functools import partial
 
-import rsrch.jax.numpy as jnp
 from rsrch import jax
+from rsrch.jax import numpy as jnp
 
 from .distribution import Distribution
 

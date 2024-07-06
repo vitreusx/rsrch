@@ -48,7 +48,7 @@ class MapIterableDs(IterableDataset[Y]):
 
 
 class Subset(Dataset[X]):
-    def __init__(self, ds: Dataset[X], idxes: torch.Tensor):
+    def __init__(self, ds: Dataset[X], idxes: list[int]):
         super().__init__()
         self._ds = ds
         self._idxes = idxes

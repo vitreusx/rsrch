@@ -1,3 +1,4 @@
+import math
 from functools import partial
 from typing import Any, Callable, Literal
 
@@ -60,7 +61,7 @@ def NormLayer2d(type: config.NormType) -> Callable[[int], nn.Module]:
     }[type]
 
 
-class GRUCellLN(nn.Module):
+class GRUCell(nn.Module):
     def __init__(
         self,
         input_size: int,
@@ -77,9 +78,7 @@ class GRUCellLN(nn.Module):
         self.update_bias = update_bias
 
         self._layer = nn.Linear(
-            input_size + hidden_size,
-            3 * hidden_size,
-            bias=not norm,
+            input_size + hidden_size, 3 * hidden_size, bias=not norm
         )
 
         if self.norm:
@@ -163,7 +162,7 @@ class ImageDecoder(nn.Sequential):
         return D.MSEProxy(out, 3)
 
 
-class FC(nn.Sequential):
+class FullyConnected(nn.Sequential):
     def __init__(
         self,
         in_features: int,
@@ -209,7 +208,7 @@ class BoxEncoder(nn.Sequential):
         in_features = int(np.prod(space.shape))
         super().__init__(
             nn.Flatten(1),
-            FC(in_features, None, **fc_args),
+            FullyConnected(in_features, None, **fc_args),
         )
         self.space = space
 
@@ -229,17 +228,15 @@ class BoxDecoder(nn.Module):
 
         if dist == "mse":
             out_features = int(np.prod(space.shape))
-            self.fc = FC(in_features, out_features, **fc_args)
+            self.fc = FullyConnected(in_features, out_features, **fc_args)
         elif dist == "auto":
-            self.fc = FC(in_features, None, **fc_args)
-            if space.dtype == torch.bool:
+            self.fc = FullyConnected(in_features, None, **fc_args)
+            if space.dtype == torch.bool and space.shape == ():
                 self.head = dh.Bernoulli(self.fc.out_features)
             elif space.bounded.all():
                 self.head = dh.Beta(self.fc.out_features, space)
             else:
-                self.head = dh.Normal(
-                    self.fc.out_features, space.shape, std_act="softplus"
-                )
+                self.head = dh.Normal(self.fc.out_features, space.shape)
 
     def forward(self, input: Tensor):
         out = self.fc(input)
@@ -265,7 +262,7 @@ class DiscreteEncoder(nn.Module):
 
 class DiscreteDecoder(nn.Sequential):
     def __init__(self, in_features: int, space: spaces.torch.Discrete, **fc_args):
-        fc = FC(in_features, None, **fc_args)
+        fc = FullyConnected(in_features, None, **fc_args)
         if space.dtype == torch.bool:
             head = dh.Bernoulli(fc.out_features)
         else:

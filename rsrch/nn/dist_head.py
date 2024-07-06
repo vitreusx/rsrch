@@ -1,3 +1,4 @@
+import math
 from functools import partial
 from typing import Literal, Sequence
 
@@ -21,7 +22,7 @@ class Normal(nn.Module):
         self,
         in_features: int,
         out_shape: int | tuple[int, ...],
-        std_act: Literal["mse", "softplus", "sigmoid", "sigmoid2"] = "mse",
+        std_act: Literal["mse", "softplus", "sigmoid", "sigmoid2"] = "softplus",
         min_std: float = 0.1,
     ):
         super().__init__()
@@ -47,7 +48,8 @@ class Normal(nn.Module):
             mean = mean.reshape(-1, *self.out_shape)
             std = std.reshape(-1, *self.out_shape)
             if self.std_act == "softplus":
-                std = F.softplus(std)
+                beta = 1.0 / self.min_std if self.min_std > 0.0 else 1.0
+                std = F.softplus(std, beta)
             elif self.std_act == "sigmoid":
                 std = F.sigmoid(std)
             elif self.std_act == "sigmoid2":
@@ -103,11 +105,11 @@ class Dirac(nn.Module):
     ):
         super().__init__()
         self.in_features = in_features
-        if not isinstance(out_shape, Sequence):
+        if isinstance(out_shape, int):
             out_shape = (out_shape,)
         self.out_shape = out_shape
 
-        self.fc = nn.Linear(in_features, int(np.prod(out_shape)))
+        self.fc = nn.Linear(in_features, math.prod(out_shape))
 
     def forward(self, x: Tensor) -> D.Dirac:
         out = self.fc(x).reshape(-1, *self.out_shape)
@@ -156,6 +158,7 @@ class Discrete(nn.Module):
     def __init__(
         self,
         in_features: int,
+        *,
         num_tokens: int,
         token_size: int,
         uniform_init: bool = False,

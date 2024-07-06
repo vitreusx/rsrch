@@ -11,18 +11,14 @@ class Linear(nn.Module):
     """An ensemble of nn.Linear layers - allows one to do the entire
     computation in a single pass."""
 
-    class Slice(nn.Module):
-        """A proxy for a single model within the ensemble."""
-
-        def __init__(self, weight: Tensor, bias: Tensor | None):
-            super().__init__()
-            self.weight = weight
-            self.bias = bias
-
-        def forward(self, input: Tensor):
-            return F.linear(input, self.weight, self.bias)
-
-    def __init__(self, in_features: int, out_features: int, num_models=1, bias=True):
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        bias=True,
+        *,
+        num_models=1,
+    ):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
@@ -42,9 +38,6 @@ class Linear(nn.Module):
 
         self.reset_parameters()
 
-    def __getitem__(self, idx):
-        return self.slices[idx]
-
     def reset_parameters(self):
         for idx in range(self.num_models):
             # This section is virtually the same as in nn.Linear
@@ -54,10 +47,10 @@ class Linear(nn.Module):
                 bound = 1.0 / math.sqrt(fan_in) if fan_in > 0 else 0
                 nn.init.uniform_(self.bias[idx][0], -bound, bound)
 
-    def forward(self, input: Tensor) -> Tensor:
+    def forward(self, input: Tensor, models=slice(None)) -> Tensor:
         # input.shape = [num_models, batch_size, in_features]
         # output.shape = [num_models, batch_size, out_features]
-        output = torch.bmm(input, self.weight)
+        output = torch.bmm(input, self.weight[models])
         if self.bias is not None:
             output = output + self.bias
         return output

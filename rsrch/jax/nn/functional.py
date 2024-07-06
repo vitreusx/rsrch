@@ -1,12 +1,13 @@
 from functools import partial
 from typing import Literal
 
+import jax
+from jax import Array, lax
+from jax import numpy as jnp
 from jax.nn import *
 from optax.losses import *
 
-import rsrch.jax.numpy as jnp
-from rsrch import jax
-from rsrch.jax import Array, amp, lax
+from rsrch.jax import amp
 
 softmax = amp.autocast_to_fp32(softmax)
 log_softmax = amp.autocast_to_fp32(log_softmax)

@@ -2,13 +2,13 @@ from functools import partial
 from numbers import Number
 
 import numpy as np
-from numpy.lib.mixins import NDArrayOperatorsMixin
 
 
-class Space(NDArrayOperatorsMixin):
+class Space:
     def __init__(
         self,
         shape: tuple[int, ...],
+        *,
         dtype: np.dtype | type | None = None,
         seed: np.random.Generator | int | None = None,
     ):
@@ -35,53 +35,15 @@ class Space(NDArrayOperatorsMixin):
     def seed(self, new_seed: int):
         self._seed, self._gen = new_seed, None
 
-    def _new_seed(self):
-        if self._gen is None:
-            return None
-        else:
-            return self._gen.spawn(1)[0]
-
     def __repr__(self):
         return f"Space(shape={self.shape!r}, dtype={self.dtype})"
-
-    def __array__(self):
-        return np.empty(self.shape, self.dtype)
-
-    def __array_ufunc__(self, ufunc, method, *args, **kwargs):
-        if method == "__call__":
-            res = ufunc(*(np.asarray(x) for x in args), **kwargs)
-            return Space(
-                shape=res.shape,
-                dtype=res.dtype,
-                seed=self._new_seed(),
-            )
-        else:
-            return NotImplemented
-
-    def __array_function__(self, func, types, args, kwargs):
-        res = func(*(np.asarray(arg) for arg in args), **kwargs)
-        return Space(
-            shape=res.shape,
-            dtype=res.dtype,
-            seed=self._new_seed(),
-        )
-
-    def __getitem__(self, index):
-        res = np.asarray(self)[index]
-        return Space(shape=res.shape, dtype=res.dtype, seed=self._new_seed())
-
-    def __getattr__(self, __name):
-        if hasattr(np.ndarray, __name):
-            # This "hack" lets us for example use .sum(...) or .mean(...)
-            return partial(getattr(np, __name), self)
-        else:
-            raise AttributeError()
 
 
 class Box(Space):
     def __init__(
         self,
         shape: tuple[int, ...],
+        *,
         low: np.ndarray | Number | None = None,
         high: np.ndarray | Number | None = None,
         dtype: np.dtype | None = None,
@@ -113,7 +75,7 @@ class Box(Space):
                 high = 1
         high = np.asarray(high, dtype)
 
-        super().__init__(shape, dtype, seed)
+        super().__init__(shape, dtype=dtype, seed=seed)
         self.low = np.broadcast_to(low, shape)
         self.high = np.broadcast_to(high, shape)
 
@@ -155,11 +117,12 @@ class Discrete(Box):
     def __init__(
         self,
         n: int,
+        *,
         dtype: np.dtype = np.int64,
         seed: np.random.Generator | None = None,
     ):
         assert np.issubdtype(dtype, np.integer)
-        super().__init__((), 0, n, dtype, seed)
+        super().__init__((), low=0, high=n, dtype=dtype, seed=seed)
         self.n = n
 
     def sample(self, sample_size: tuple[int, ...] = ()):
@@ -174,15 +137,16 @@ class Image(Box):
     def __init__(
         self,
         shape: tuple[int, ...],
-        channel_last=True,
+        *,
         dtype: np.dtype = np.uint8,
+        channel_last=True,
         seed: np.random.Generator | None = None,
     ):
         if dtype == np.uint8:
             low, high = 0, 255
         elif dtype == np.float32:
             low, high = 0.0, 1.0
-        super().__init__(shape, low, high, dtype, seed)
+        super().__init__(shape, low=low, high=high, dtype=dtype, seed=seed)
 
         self.channel_last = channel_last
         if channel_last:

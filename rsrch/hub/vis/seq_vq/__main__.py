@@ -25,7 +25,7 @@ class WorldModel(nn.Module):
     def __init__(self):
         super().__init__()
 
-        obs_space = spaces.torch.Image((1, 64, 64), torch.float32)
+        obs_space = spaces.torch.Image((1, 64, 64), dtype=torch.float32)
         act_space = spaces.torch.Discrete(18)
 
         self.obs_norm = nets.Normalize()
@@ -39,7 +39,7 @@ class WorldModel(nn.Module):
             act = act_space.sample([1])
             self.act_size = self.act_enc(act).shape[1]
 
-        self.seq_hidden, self.seq_layers = 1024, 2
+        self.seq_hidden, self.seq_layers = 512, 2
 
         self._infer_h0 = nn.Parameter(torch.randn(self.seq_layers, 1, self.seq_hidden))
 
@@ -55,7 +55,7 @@ class WorldModel(nn.Module):
             num_layers=self.seq_layers,
         )
 
-        self.z_tokens, self.z_vocab, self.z_embed = 8, 128, 256
+        self.z_tokens, self.z_vocab, self.z_embed = 8, 64, 64
         self.z_vq = vq.VSQLayer(
             num_tokens=self.z_tokens,
             vocab_size=self.z_vocab,

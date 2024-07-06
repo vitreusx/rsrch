@@ -1,4 +1,5 @@
 from functools import cached_property, partial
+from threading import Lock
 from typing import Callable
 
 import torch
@@ -9,8 +10,10 @@ import rsrch.distributions as D
 from rsrch import spaces
 from rsrch.nn.utils import over_seq, safe_mode
 from rsrch.rl import data
+from rsrch.utils import cron
 
 from . import config, nets, rssm, rssm_opt
+from .amp import autocast
 
 
 class WorldModel(nn.Module):
@@ -19,14 +22,13 @@ class WorldModel(nn.Module):
         obs_space: spaces.torch.Space,
         act_space: spaces.torch.Space,
         cfg: config.WorldModel,
-        device: torch.device,
-        dtype: torch.dtype,
     ):
         super().__init__()
+
         self.obs_space = obs_space
         self.act_space = act_space
         self.cfg = cfg
-        self.device, self.dtype = device, dtype
+        self.fwd_lock = Lock()
 
         self.obs_enc = self._make_encoder(cfg.encoders.obs)(obs_space)
         self.act_enc = self._make_encoder(cfg.encoders.act)(act_space)
@@ -38,9 +40,8 @@ class WorldModel(nn.Module):
             act: Tensor = act_space.sample([1])
             act_size: int = self.act_enc(act).shape[1]
 
-        # self.rssm = rssm.EnsembleRSSM(cfg.rssm, obs_size, act_size)
-        self.rssm = rssm_opt.EnsembleRSSM(cfg.rssm, obs_size, act_size).to(device)
-        self.rssm: rssm_opt.EnsembleRSSM = torch.jit.script(self.rssm)
+        self.rssm = rssm_opt.EnsembleRSSM(cfg.rssm, obs_size, act_size)
+        self.rssm = torch.jit.script(self.rssm)
 
         self.state_size = self.rssm.stoch_size + self.rssm.deter_size
 
@@ -51,12 +52,10 @@ class WorldModel(nn.Module):
 
         if cfg.reward_fn == "clip":
             rew_space = spaces.torch.Box((), *cfg.clip_rew)
-        elif cfg.reward_fn == "sign":
-            rew_space = spaces.torch.OneOf(torch.tensor([-1.0, 0.0, 1.0]))
-        elif cfg.reward_fn == "tanh":
-            rew_space = spaces.torch.Box((), -1.0, +1.0)
+        elif cfg.reward_fn in ("tanh", "sign"):
+            rew_space = spaces.torch.Box((), low=-1.0, high=+1.0)
         else:
-            rew_space = spaces.torch.Box((), -torch.inf, +torch.inf)
+            rew_space = spaces.torch.Box((), low=-torch.inf, high=+torch.inf)
 
         self.reward_dec = self._make_decoder(cfg.decoders.reward)(
             in_features=self.state_size,
@@ -68,33 +67,9 @@ class WorldModel(nn.Module):
             space=spaces.torch.Discrete(2, dtype=torch.bool),
         )
 
-        self.to(device)
-
-        self.opt = self._make_optim(cfg.opt)(self.parameters())
-
-    @cached_property
-    def scaler(self):
-        return getattr(torch, self.device.type).amp.GradScaler()
-
-    def autocast(self):
-        enabled = self.dtype != torch.float32
-        return torch.autocast(self.device.type, self.dtype, enabled)
-
     def _make_encoder(self, cfg: dict) -> Callable[..., nn.Module]:
         cfg = {**cfg}
         cls = config.get_class(nets, cfg["$type"] + "_encoder")
-        del cfg["$type"]
-        return partial(cls, **cfg)
-
-    def _make_decoder(self, cfg: dict) -> Callable[..., nn.Module]:
-        cfg = {**cfg}
-        cls = config.get_class(nets, cfg["$type"] + "_decoder")
-        del cfg["$type"]
-        return partial(cls, **cfg)
-
-    def _make_optim(self, cfg: dict) -> Callable[..., torch.optim.Optimizer]:
-        cfg = {**cfg}
-        cls = config.get_class(torch.optim, cfg["$type"])
         del cfg["$type"]
         return partial(cls, **cfg)
 
@@ -106,21 +81,94 @@ class WorldModel(nn.Module):
         else:
             raise ValueError(f"Cannot create a decoder for {type(encoder)}")
 
-    def opt_step(self, batch: dict, state: rssm.State):
-        mets = {}
-        losses = {}
+    def _make_decoder(self, cfg: dict) -> Callable[..., nn.Module]:
+        cfg = {**cfg}
+        cls = config.get_class(nets, cfg["$type"] + "_decoder")
+        del cfg["$type"]
+        return partial(cls, **cfg)
 
-        with self.autocast():
+    @property
+    def device(self):
+        return next(self.parameters()).device
+
+    @cached_property
+    def opt(self):
+        return self._make_optim(self.cfg.opt)(self.parameters())
+
+    @cached_property
+    def scaler(self) -> torch.cpu.amp.GradScaler:
+        return getattr(torch, self.device.type).amp.GradScaler()
+
+    def _make_optim(self, cfg: dict) -> Callable[..., torch.optim.Optimizer]:
+        cfg = {**cfg}
+        cls = config.get_class(torch.optim, cfg["$type"])
+        del cfg["$type"]
+        return partial(cls, **cfg)
+
+    def train_step(self, batch, start, is_first):
+        with self.fwd_lock:
+            if not self.training:
+                self.train()
+            losses, mets, states = self._loss_fn(batch, start, is_first)
+
+        coef = self.cfg.coef
+        loss = sum(coef.get(k, 1.0) * v for k, v in losses.items())
+
+        mets.update(
+            loss=loss.detach(),
+            **{f"{k}_loss": v.detach() for k, v in losses.items()},
+        )
+
+        self.opt.zero_grad(set_to_none=True)
+        self.scaler.scale(loss).backward()
+        self.scaler.unscale_(self.opt)
+        if self.cfg.clip_grad is not None:
+            nn.utils.clip_grad_norm_(self.parameters(), max_norm=self.cfg.clip_grad)
+        self.scaler.step(self.opt)
+        self.scaler.update()
+
+        states = states.detach()
+        return mets, states
+
+    def val_step(self, batch, start, is_first) -> float:
+        with self.fwd_lock:
+            if self.training:
+                self.eval()
+
+            with torch.inference_mode():
+                return self._loss_fn(batch, start, is_first)
+
+    def get_states(self, batch, start, is_first):
+        with self.fwd_lock:
+            if self.training:
+                self.eval()
+
+            with autocast(self.device):
+                enc_obs = over_seq(self.obs_enc)(batch["obs"])
+                enc_act = over_seq(self.act_enc)(batch["act"]).type_as(enc_obs)
+                start[is_first].zero_()
+                enc_act[0, is_first].zero_()
+                states = self.rssm.observe(enc_obs, enc_act, start)[0]
+
+        return states
+
+    def _loss_fn(self, batch, start, is_first):
+        mets, losses = {}, {}
+
+        with autocast(self.device):
             enc_obs = over_seq(self.obs_enc)(batch["obs"])
             enc_act = over_seq(self.act_enc)(batch["act"]).type_as(enc_obs)
-            enc_act[torch.where(batch["first"])].zero_()
+            start[is_first].zero_()
+            enc_act[0, is_first].zero_()
 
-            states, post, prior = self.rssm.observe(enc_obs, enc_act, state)
-            mets["prior_ent"] = prior.detach().entropy().mean()
-            mets["post_ent"] = post.detach().entropy().mean()
+            states, post, prior = self.rssm.observe(enc_obs, enc_act, start)
+            if self.training:
+                mets["prior_ent"] = prior.detach().entropy().mean()
+                mets["post_ent"] = post.detach().entropy().mean()
             kl_loss, kl_value = self._kl_loss(post, prior, **self.cfg.kl)
             losses["kl"] = kl_loss
-            mets["kl_value"] = kl_value.detach().mean()
+            if self.training:
+                mets["kl_value"] = kl_value.detach().mean()
 
             feats = states.to_tensor()
 
@@ -136,29 +184,12 @@ class WorldModel(nn.Module):
             term = batch["term"]
             losses["term"] = -term_dist.log_prob(term).mean()
 
+        if self.training:
+            return losses, mets, states
+        else:
             coef = self.cfg.coef
-            loss: Tensor = sum(
-                coef[k] * v if k in coef else v for k, v in losses.items()
-            )
-
-        mets.update(
-            {
-                "loss": loss.detach(),
-                **{f"{k}_loss": v.detach() for k, v in losses.items()},
-            }
-        )
-
-        self.opt.zero_grad(set_to_none=True)
-        self.scaler.scale(loss).backward()
-        self.scaler.unscale_(self.opt)
-        if self.cfg.clip_grad is not None:
-            nn.utils.clip_grad_norm_(self.parameters(), max_norm=self.cfg.clip_grad)
-        self.scaler.step(self.opt)
-        self.scaler.update()
-
-        states = states.detach()
-
-        return mets, states
+            loss = sum(coef.get(k, 1.0) * v for k, v in losses.items())
+            return loss, states[-1]
 
     def reward_fn(self, reward: Tensor):
         if self.cfg.reward_fn == "sign":

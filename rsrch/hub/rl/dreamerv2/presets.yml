@@ -12,7 +12,19 @@ atari:
     opt.critic.lr: 1e-4
   total: { n: 200e6, of: env_step }
   prefill: { n: 200e3, of: env_step }
-  train_every: { n: 64, of: env_step }
-  eval_every: { n: 1e6, of: env_step }
-# debug:
-#   prefill.n: 40e3
+  trainer:
+    basic:
+      sched: { n: 64, of: env_step }
+    iterative:
+      wm_sched: { n: 64, of: env_step }
+      ac_sched: { n: 64, of: env_step }
+atari_der:
+  trainer:
+    steps.train_every: { n: 16, of: env_step }
+debug:
+  prefill.n: 20e3
+  trainer:
+    mode: iterative
+    iterative:
+      enable_for_wm: true
+      wm_sched: { n: 50e3, of: env_step }

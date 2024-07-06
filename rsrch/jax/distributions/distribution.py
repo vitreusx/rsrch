@@ -1,4 +1,4 @@
-from rsrch import jax
+import jax
 
 
 class Distribution:

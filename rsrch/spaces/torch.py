@@ -10,6 +10,7 @@ class Space:
     def __init__(
         self,
         shape: tuple[int, ...],
+        *,
         dtype: torch.dtype | None = None,
         device: torch.device | None = None,
         seed: torch.Generator | int | None = None,
@@ -38,7 +39,7 @@ class Space:
             self._gen.manual_seed(self._seed)
         return self._gen
 
-    def seed(self, seed: int):
+    def seed(self, seed: int | torch.Generator):
         if isinstance(seed, torch.Generator):
             self._seed = None
             self._gen = seed
@@ -48,14 +49,6 @@ class Space:
 
     def empty(self, shape: tuple[int, ...] = ()):
         return torch.empty([*shape, *self.shape], dtype=self.dtype, device=self.device)
-
-    def __contains__(self, x):
-        return (
-            isinstance(x, Tensor)
-            and x.shape == self.shape
-            and x.dtype == self.dtype
-            and x.device == self.device
-        )
 
     def sample(self, shape: tuple[int, ...] = ()):
         raise NotImplementedError()
@@ -75,6 +68,7 @@ class Box(Space):
     def __init__(
         self,
         shape: tuple[int, ...],
+        *,
         low: Tensor | Number | None = None,
         high: Tensor | Number | None = None,
         dtype: torch.dtype | None = None,
@@ -99,7 +93,7 @@ class Box(Space):
                 high = torch.iinfo(dtype).max
         high = to_tensor(high, dtype=dtype, device=device)
 
-        super().__init__(shape, dtype, device, seed)
+        super().__init__(shape, dtype=dtype, device=device, seed=seed)
         self.low = low.expand(shape)
         self.high = high.expand(shape)
 
@@ -119,13 +113,19 @@ class Box(Space):
         shape = [*sample_size, *self.shape]
         if self.dtype.is_floating_point:
             u = torch.rand(
-                shape, dtype=self.dtype, device=self.device, generator=self.gen
+                shape,
+                dtype=self.dtype,
+                device=self.device,
+                generator=self.gen,
             )
             u = torch.where(self.bounded, u * (self.high - self.low), u)
             u = torch.where(self.bounded_below, self.low + u, u)
         else:
             u = torch.rand(
-                shape, dtype=torch.float32, device=self.device, generator=self.gen
+                shape,
+                dtype=torch.float32,
+                device=self.device,
+                generator=self.gen,
             )
             u = (self.high - self.low).float() * u + self.low
             u = u.clamp(self.low, self.high - 1e-8)
@@ -157,12 +157,13 @@ class Discrete(Space):
     def __init__(
         self,
         n: int,
+        *,
         dtype: torch.dtype = torch.int64,
         device: torch.device | None = None,
         seed: torch.Generator | None = None,
     ):
         assert not dtype.is_floating_point
-        super().__init__((), dtype, device, seed)
+        super().__init__((), dtype=dtype, device=device, seed=seed)
         self.n = n
 
     def sample(self, sample_size: tuple[int, ...] = ()):
@@ -184,11 +185,12 @@ class TokenSeq(Space):
         self,
         num_tokens: int,
         vocab_size: int,
+        *,
         dtype: torch.dtype = torch.int64,
         device: torch.device | None = None,
         seed: torch.Generator | None = None,
     ):
-        super().__init__((num_tokens,), dtype, device, seed)
+        super().__init__((num_tokens,), dtype=dtype, device=device, seed=seed)
         self.num_tokens, self.vocab_size = num_tokens, vocab_size
 
     def sample(self, sample_size: tuple[int, ...] = ()):
@@ -211,20 +213,26 @@ class Image(Box):
     def __init__(
         self,
         shape: tuple[int, ...],
-        dtype: torch.dtype = torch.uint8,
+        *,
+        dtype: torch.dtype = torch.float32,
+        low: Tensor | Number | None = None,
+        high: Tensor | Number | None = None,
         device: torch.device | None = None,
         channel_first: bool = True,
         seed: torch.Generator | int | None = None,
     ):
-        if dtype == torch.uint8:
-            low, high = 0, 255
-        elif dtype == torch.float32:
-            low, high = 0.0, 1.0
-        else:
-            err = f"dtype must be uint8 or float32, is {dtype}"
-            raise NotImplementedError(err)
+        if low is None:
+            if dtype == torch.uint8:
+                low, high = 0, 255
+            elif dtype == torch.float32:
+                low, high = 0.0, 1.0
+            else:
+                err = f"dtype must be uint8 or float32, is {dtype}"
+                raise NotImplementedError(err)
 
-        super().__init__(shape, low, high, dtype, device, seed)
+        super().__init__(
+            shape, low=low, high=high, dtype=dtype, device=device, seed=seed
+        )
         self.channel_first = channel_first
         if channel_first:
             self.num_channels, self.height, self.width = shape

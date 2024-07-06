@@ -6,9 +6,19 @@ from . import np
 def from_gym(space: gym.Space) -> np.Space:
     """Convert a space from OpenAI's gym to space from here."""
     if isinstance(space, gym.spaces.Box):
-        return np.Box(space.shape, space.low, space.high, space.dtype, space._np_random)
+        return np.Box(
+            space.shape,
+            low=space.low,
+            high=space.high,
+            dtype=space.dtype,
+            seed=space._np_random,
+        )
     elif isinstance(space, gym.spaces.Discrete):
-        return np.Discrete(space.n, space.dtype, space._np_random)
+        return np.Discrete(
+            space.n,
+            dtype=space.dtype,
+            seed=space._np_random,
+        )
     else:
         raise NotImplementedError(type(space))
 

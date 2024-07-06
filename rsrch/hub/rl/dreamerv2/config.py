@@ -11,6 +11,19 @@ NormType: TypeAlias = Literal["none", "batch", "layer"]
 
 
 @dataclass
+class Until:
+    n: int
+    of: str | None = None
+
+
+@dataclass
+class Every:
+    n: int
+    of: str | None = None
+    iters: int | None = 1
+
+
+@dataclass
 class RSSM:
     ensemble: int
     deter_size: int
@@ -31,6 +44,13 @@ class Decoders:
     obs: dict
     reward: dict
     term: dict
+
+
+@dataclass
+class EarlyStop:
+    margin: float
+    patience: int
+    min_steps: int
 
 
 @dataclass
@@ -73,19 +93,6 @@ class Dataset:
 
 
 @dataclass
-class Until:
-    n: int
-    of: str
-
-
-@dataclass
-class Every:
-    n: int
-    of: str
-    iters: int = 1
-
-
-@dataclass
 class Agent:
     expl_noise: float
     eval_noise: float
@@ -107,6 +114,26 @@ class Debug:
 
 
 @dataclass
+class Trainer:
+    @dataclass
+    class Basic:
+        sched: Every
+
+    @dataclass
+    class Iterative:
+        wm_sched: Every
+        enable_for_wm: bool
+        ac_sched: Every
+        enable_for_ac: bool
+        stop_criteria: EarlyStop
+        val_every: int
+
+    mode: Literal["basic", "iterative"]
+    basic: Basic
+    iterative: Iterative
+
+
+@dataclass
 class Config:
     seed: int
     device: str
@@ -117,12 +144,10 @@ class Config:
     dataset: Dataset
     total: Until
     prefill: Until
-    train_every: Every
-    train_steps: int
-    eval_every: Every
     log_every: Every
     agent: Agent
     debug: Debug
+    trainer: Trainer
 
 
 def get_class(namespace: Any, name: str):

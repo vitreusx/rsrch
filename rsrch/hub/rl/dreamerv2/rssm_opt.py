@@ -131,10 +131,10 @@ class EnsembleRSSM(nn.Module):
         self._obs_proj = nn.Linear(hidden_size, self.stoch_size)
 
     @torch.jit.ignore
-    def initial(self, device, dtype):
+    def initial(self, device):
         return State(
-            deter=torch.zeros([self.deter_size], device=device, dtype=dtype),
-            stoch=torch.zeros([self.stoch_size], device=device, dtype=dtype),
+            deter=torch.zeros([self.deter_size], device=device),
+            stoch=torch.zeros([self.stoch_size], device=device),
         )
 
     @torch.jit.ignore
