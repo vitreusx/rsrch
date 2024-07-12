@@ -1,9 +1,11 @@
+import pickle
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
+from itertools import islice
 from multiprocessing.pool import ThreadPool
 from pathlib import Path
-from typing import Literal, Sequence
+from typing import Literal, Mapping, MutableMapping, Sequence
 
 import numpy as np
 import torch
@@ -195,6 +197,120 @@ class Dataset(data.IterableDataset):
         return out
 
 
+class map_view(MutableMapping):
+    """A kind of a subset of a dict which references entries in another dict."""
+
+    def __init__(self, map: Mapping):
+        self._map = map
+        self._keys = set()
+
+    def __len__(self):
+        return len(self._keys)
+
+    def __iter__(self):
+        return iter(self._keys)
+
+    def __delitem__(self, key):
+        self._keys.remove(key)
+
+    def __getitem__(self, key):
+        return self._map[key]
+
+    def __setitem__(self, key, _):
+        self._keys.add(key)
+
+
+class Sampler(nn.Module):
+    def __init__(self, cfg: config.Config):
+        super().__init__()
+        self.cfg = cfg
+        self._setup_core()
+        self._setup_env()
+        self._setup_nets()
+        self._load_ckpt()
+        self._setup_agent()
+        self.run()
+
+    def _setup_core(self):
+        repro.fix_seeds(
+            seed=self.cfg.seed,
+            deterministic=self.cfg.debug.deterministic,
+        )
+        self.repro = repro.RandomState()
+
+        self.device = torch.device(self.cfg.device)
+        amp.set_policy(compute_dtype=getattr(torch, self.cfg.dtype))
+
+        self.exp = Experiment(
+            project="dreamerv2",
+            run=f"{self.cfg.env.id}__{timestamp()}",
+            config=asdict(self.cfg),
+        )
+
+        self.pbar = tqdm(desc="DreamerV2")
+
+    def _setup_env(self):
+        self.env_f = env.make_factory(
+            cfg=self.cfg.env,
+            device=self.device,
+            seed=self.cfg.seed,
+        )
+        self._frame_skip = getattr(self.env_f, "frame_skip", 1)
+        self.sample_envs = self.env_f.vector_env(1, mode=self.cfg.sampler.env_mode)
+
+    def _setup_nets(self):
+        self.wm = wm.WorldModel(
+            obs_space=self.env_f.obs_space,
+            act_space=self.env_f.act_space,
+            cfg=self.cfg.wm,
+        )
+
+        self.ac = ac.ActorCritic(
+            wm=self.wm,
+            cfg=self.cfg.ac,
+        )
+
+        self.to(self.device)
+
+    def _load_ckpt(self):
+        with open(self.cfg.sampler.ckpt_path, "rb") as f:
+            ckpt = torch.load(f, map_location="cpu")
+            self.load(ckpt)
+
+    def load(self, ckpt):
+        self.wm.load(ckpt["wm"])
+        self.ac.load(ckpt["ac"])
+        self.repro.load(ckpt["repro"])
+
+    def _setup_agent(self):
+        self.sample_agent = ac.Agent(
+            env_f=self.env_f,
+            ac=self.ac,
+            cfg=self.cfg.agent,
+            mode=self.cfg.sampler.agent_mode,
+        )
+        self.env_iter = iter(rollout.steps(self.sample_envs, self.sample_agent))
+        self.ep_ids, self.ep_rets = defaultdict(lambda: None), defaultdict(lambda: 0.0)
+
+    def run(self):
+        cfg = self.cfg.sampler
+        buf = self.env_f.buffer(cfg.num_samples)
+
+        for _ in range(cfg.num_samples):
+            env_idx, step = next(self.env_iter)
+            self.ep_ids[env_idx] = buf.push(self.ep_ids[env_idx], step)
+            self.ep_rets[env_idx] += step.reward
+            if step.done:
+                del self.ep_ids[env_idx]
+                del self.ep_rets[env_idx]
+            self.pbar.update()
+
+        dst = self.exp.dir / "samples.pkl"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        with open(dst, "wb") as f:
+            pickle.dump(buf.data, f)
+
+
 class TrainerBase(nn.Module):
     def __init__(self, cfg: config.Config):
         super().__init__()
@@ -212,12 +328,12 @@ class TrainerBase(nn.Module):
             seed=self.cfg.seed,
             deterministic=self.cfg.debug.deterministic,
         )
+        self.repro = repro.RandomState()
 
         self.device = torch.device(self.cfg.device)
         amp.set_policy(compute_dtype=getattr(torch, self.cfg.dtype))
 
         self.env_step = self.agent_step = self.opt_step = 0
-        self.pbar = tqdm(desc="DreamerV2", total=self.cfg.total.n)
 
         self.exp = Experiment(
             project="dreamerv2",
@@ -226,6 +342,10 @@ class TrainerBase(nn.Module):
         )
         self.exp.boards += [Tensorboard(self.exp.dir / "board")]
         self.exp.register_step("env_step", lambda: self.env_step, default=True)
+
+        self.pbar = self.exp.pbar(desc="DreamerV2", total=self.cfg.total.n)
+
+        self.should_save = self._make_every(self.cfg.save_every)
 
     def _setup_debug(self):
         if self.cfg.debug.detect_anomaly:
@@ -315,6 +435,9 @@ class TrainerBase(nn.Module):
         diff = getattr(self, self.cfg.total.of) - self.pbar.n
         self.pbar.update(diff)
 
+    def save(self):
+        return {"wm": self.wm.save(), "ac": self.ac.save(), "repro": self.repro.save()}
+
 
 class BasicTrainer(TrainerBase):
     def __init__(self, cfg: config.Config):
@@ -357,13 +480,13 @@ class BasicTrainer(TrainerBase):
         # Idea: interleave env interaction and optimization by squeezing the
         # former during the periods when torch releases GIL in backward (hence
         # the thread pool.)
+        self.eps.update()
         batch = next(self.batch_iter)
         task = self._env_thr.submit(self._take_steps)
         states, term = self._train_wm(batch)
         self._train_ac(states, term)
         task.result()
         self.opt_step += 1
-        self.eps.update()
 
     def _take_steps(self):
         while not self.should_opt:
@@ -424,38 +547,95 @@ class IterativeTrainer(TrainerBase):
         self._wm_opt_step, self._ac_opt_step = 0, 0
 
     def _setup_data(self):
-        cfg = vars(self.cfg.dataset)
-        self.buf = self.env_f.buffer(cfg["capacity"])
-        del cfg["capacity"]
+        cfg = self.cfg.dataset
+        self.buf = self.env_f.buffer(cfg.capacity)
+
+        if cfg.preload is not None:
+            with open(cfg.preload, "rb") as f:
+                samp_data: data_rl.BufferData = pickle.load(f)
+
+            samp_steps = data_rl.StepView(
+                data_rl.Buffer(samp_data, self.buf.stack_num),
+            )
+            ep_id = None
+            for step in samp_steps.values():
+                ep_id = self.buf.push(ep_id, step)
+
+        cfg = {**vars(cfg)}
+        del cfg["capacity"], cfg["preload"]
         self._dataset_cfg = cfg
 
-        self.eps = data_rl.EpisodeView(self.buf)
-        self.dataset = Dataset(env_f=self.env_f, eps=self.eps, **cfg)
+        self.all_eps = data_rl.EpisodeView(self.buf)
+        self._cur_eps = self.all_eps.ids
+        self.train_eps, self.val_eps = map_view(self.all_eps), map_view(self.all_eps)
+        self.val_g = np.random.default_rng(seed=self.cfg.seed + 42)
+
+        self.train_ds = Dataset(
+            env_f=self.env_f,
+            eps=self.train_eps,
+            mode="train",
+            **cfg,
+        )
+        self.val_ds = Dataset(
+            env_f=self.env_f,
+            eps=self.val_eps,
+            mode="val",
+            **cfg,
+        )
 
         self._states = {}
-        self.batch_iter = iter(self.dataset)
+        self.train_iter = iter(self.train_ds)
 
     def run(self):
-        do_prefill = self._make_until(self.cfg.prefill)
-
-        self.train_agent.mode = "prefill"
-        while do_prefill:
-            self.take_env_step()
-        self.train_agent.mode = "train"
+        if self.cfg.dataset.preload is None:
+            do_prefill = self._make_until(self.cfg.prefill)
+            self.train_agent.mode = "prefill"
+            while do_prefill:
+                self.take_env_step()
+                self._update_eps()
 
         self.should_run = self._make_until(self.cfg.total)
         self.should_log = self._make_every(self.cfg.log_every, iters=None)
 
         cfg = self.cfg.trainer.iterative
-        self.should_train_ac = self._make_every(cfg.ac_sched)
-        self.should_train_wm = self._make_every(cfg.wm_sched)
 
+        self.should_train_ac = self._make_every(cfg.wm.opt_every)
+        self.should_train_wm = self._make_every(cfg.ac.opt_every)
+
+        self.should_val_wm = cron.Every(
+            step_fn=lambda: self._wm_opt_step,
+            every=cfg.wm.val_every,
+        )
+
+        if cfg.wm.reset_every is not None:
+            self.should_reset_wm = cron.Every(
+                step_fn=lambda: self._wm_opt_step,
+                every=cfg.wm.reset_every,
+            )
+        else:
+            self.should_reset_wm = cron.Never()
+
+        if cfg.ac.reset_every is not None:
+            self.should_reset_ac = cron.Every(
+                step_fn=lambda: self._ac_opt_step,
+                every=cfg.ac.reset_every,
+            )
+        else:
+            self.should_reset_ac = cron.Never()
+
+        self.train_agent.mode = "train"
         while self.should_run:
             # We wish to interleave env interaction and opt steps, if possible.
             # The way we do it is as follows: figure out how many env steps to
             # take until we do an optimization step, schedule them in another
             # thread, and run the opt steps. The env thread's going to run when
             # torch releases GIL in the backward call.
+
+            if self.should_save:
+                ckpt_path = self.exp.dir / "ckpts" / f"env_step={self.env_step}.pth"
+                ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(ckpt_path, "wb") as f:
+                    torch.save(self.save(), ckpt_path)
 
             num_steps = 0
             while True:
@@ -471,98 +651,122 @@ class IterativeTrainer(TrainerBase):
             self.env_step -= num_steps * self._frame_skip
             self.agent_step -= num_steps
 
-            if not (cfg.enable_for_wm and cfg.enable_for_ac):
-                batch = next(self.batch_iter)
+            if not (cfg.wm.iterative and cfg.wm.iterative):
+                batch = next(self.train_iter)
 
             task = self._env_thr.submit(self._take_steps, num_steps)
 
             ac_batch = None
             if train_wm_:
-                if cfg.enable_for_wm:
-                    self._train_wm_iter()
+                if cfg.wm.iterative:
+                    self._wm_train_iter()
                 else:
-                    ac_batch = self._train_wm_step(batch)
+                    if self.should_val_wm:
+                        self._wm_val_epoch(limit=16)
+
+                    if self.should_reset_wm:
+                        self._periodic_reset(self.wm, cfg.wm.reset_coef)
+
+                    ac_batch = self._wm_train_step(batch)
 
             if train_ac_:
-                if cfg.enable_for_ac:
-                    self._train_ac_iter()
+                if cfg.ac.iterative:
+                    self._ac_train_iter()
                 else:
+                    if self.should_reset_ac:
+                        self._periodic_reset(self.ac, cfg.ac.reset_coef)
+                        polyak.sync(self.ac.critic, self.ac.target_critic)
+
                     if ac_batch is None:
                         with torch.no_grad():
                             ac_batch = self._get_ac_batch(batch)
-                    self._train_ac_step(ac_batch)
+                    self._ac_train_step(ac_batch)
 
             task.result()
-            self.eps.update()
+            self._update_eps()
 
     def _take_steps(self, num_steps: int):
         for _ in range(num_steps):
             self.take_env_step()
 
-    def _train_wm_iter(self):
-        cfg = self.cfg.trainer.iterative
+    def _update_eps(self):
+        if self._cur_eps != self.all_eps.ids:
+            x1, y1 = self._cur_eps.start, self._cur_eps.stop
+            x2, y2 = self.all_eps.ids.start, self.all_eps.ids.stop
+
+            for removed in range(x1, x2):
+                if removed in self.train_eps:
+                    del self.train_eps[removed]
+                if removed in self.val_eps:
+                    del self.val_eps[removed]
+
+            for added in range(y1, y2):
+                is_val = added == 0 or self.val_g.random() < 0.15
+                eps = self.val_eps if is_val else self.train_eps
+                eps[added] = self.all_eps[added]
+
+            self._cur_eps = self.all_eps.ids
+
+    def _wm_train_iter(self):
+        cfg = self.cfg.trainer.iterative.wm
         has_converged = EarlyStopping(**vars(cfg.stop_criteria))
-
-        # NOTE: torch.rand(n)[:m] = torch.rand(m). Because of this, subsequent
-        # training iterations will never assign episodes previously used for
-        # training into the validation set.
-
-        g = np.random.default_rng(seed=self.cfg.seed + 3)
-
-        slice_ = slice(self.eps.ids.start, self.eps.ids.stop)
-        is_val_ep = g.random(slice_.stop)[slice_] < 0.15
-        if not is_val_ep.any():
-            is_val_ep[0] = True
-
-        val_ids = {*np.where(is_val_ep)[0]}
-        train_eps, val_eps = {}, {}
-        for ep_id, ep in self.eps.items():
-            if ep_id in val_ids:
-                val_eps[ep_id] = ep
-            else:
-                train_eps[ep_id] = ep
-
-        train_ds = Dataset(self.env_f, train_eps, **self._dataset_cfg, mode="train")
-        batch_iter = iter(train_ds)
-        val_ds = Dataset(self.env_f, val_eps, **self._dataset_cfg, mode="val")
 
         pbar = self.exp.pbar(desc="(WM train iter)", initial=self._wm_opt_step)
 
+        if cfg.reset_every is not None:
+            self._periodic_reset(self, alpha=cfg.reset_coef)
+
         while True:
             if self._wm_opt_step % cfg.val_every == 0:
-                val_loss, val_n = 0.0, 0
-
-                self._states.clear()
-                for batch in val_ds:
-                    start, is_first, start_pos = self._get_start_states(batch)
-                    batch_loss, final = self.wm.val_step(batch, start, is_first)
-                    self._update_start_states(final, start_pos, val_ds.slice_len)
-                    val_loss += batch_loss
-                    val_n += 1
-                self._states.clear()
-
-                val_loss /= val_n
-                self.exp.add_scalar("wm/val_loss", val_loss, step=self._wm_opt_step)
+                val_loss = self._wm_val_epoch()
                 if has_converged(val_loss, self._wm_opt_step):
                     break
 
-            batch = next(batch_iter)
-            self._train_wm_step(batch, step=self._wm_opt_step)
-            self._wm_opt_step += 1
+            batch = next(self.train_iter)
+            self._wm_train_step(batch, step=self._wm_opt_step)
             self.opt_step += 1
             pbar.update()
 
-    def _train_wm_step(self, batch, step=None):
+    def _wm_val_epoch(self, limit=None):
+        val_loss, val_n = 0.0, 0
+
+        self._states.clear()
+        for batch in islice(self.val_ds, 0, limit):
+            start, is_first, start_pos = self._get_start_states(batch)
+            batch_loss, final = self.wm.val_step(batch, start, is_first)
+            self._update_start_states(final, start_pos, self.val_ds.slice_len)
+            val_loss += batch_loss
+            val_n += 1
+        self._states.clear()
+
+        val_loss /= val_n
+        self.exp.add_scalar("wm/val_loss", val_loss, step=self._wm_opt_step)
+        return val_loss
+
+    def _wm_train_step(self, batch, step=None):
         start, is_first, pos = self._get_start_states(batch)
         mets, states = self.wm.train_step(batch, start, is_first)
 
-        self._update_start_states(states[-1], pos, self.dataset.slice_len)
+        self._update_start_states(states[-1], pos, self.train_ds.slice_len)
 
         if self.should_log:
             for k, v in mets.items():
                 self.exp.add_scalar(f"wm/{k}", v, step=step)
 
+        self._wm_opt_step += 1
+
         return states.flatten(), batch["term"].flatten()
+
+    def _ac_train_iter(self):
+        ...
+
+    def _ac_train_step(self, batch, step=None):
+        mets = self.ac.train_step(*batch)
+        self._ac_opt_step += 1
+
+        if self.should_log:
+            for k, v in mets.items():
+                self.exp.add_scalar(f"ac/{k}", v, step=step)
 
     def _get_start_states(self, batch):
         batch_size = batch["obs"].shape[1]
@@ -593,41 +797,78 @@ class IterativeTrainer(TrainerBase):
             index += slice_len
             self._states[seq_idx, index] = state
 
-    def _train_ac_iter(self):
-        ...
-
     def _get_ac_batch(self, batch):
         start, is_first = self._get_start_states(batch)[:2]
         states = self.wm.get_states(batch, start, is_first)
         return states.flatten(), batch["term"].flatten()
 
-    def _train_ac_step(self, batch, step=None):
-        mets = self.ac.train_step(*batch)
+    def _periodic_reset(self, module: nn.Module, alpha: float = 0.8):
+        def _reset(module: nn.Module):
+            if isinstance(module, (nn.Linear, nn.Conv2d, nn.ConvTranspose2d)):
+                old_ = module.weight.clone()
+                nn.init.xavier_uniform_(module.weight)
+                module.weight.data = alpha * old_ + (1.0 - alpha) * module.weight
+                if module.bias is not None:
+                    old_ = module.bias.clone()
+                    nn.init.zeros_(module.bias)
+                    module.bias.data = alpha * old_ + (1.0 - alpha) * module.bias
 
-        if self.should_log:
-            for k, v in mets.items():
-                self.exp.add_scalar(f"ac/{k}", v, step=step)
+        module.apply(_reset)
+
+
+class V2:
+    def __init__(self, cfg: config.Config):
+        self.cfg = cfg
+
+    def _setup_core(self):
+        repro.fix_seeds(
+            seed=self.cfg.seed,
+            deterministic=self.cfg.debug.deterministic,
+        )
+        self.repro = repro.RandomState()
+
+        self.device = torch.device(self.cfg.device)
+        amp.set_policy(compute_dtype=getattr(torch, self.cfg.dtype))
+
+        self.exp = Experiment(
+            project="dreamerv2",
+            run=f"{self.cfg.env.id}__{timestamp()}",
+            config=asdict(self.cfg),
+        )
+
+        self.env_f = env.make_factory(
+            cfg=self.cfg.env,
+            device=self.device,
+            seed=self.cfg.seed,
+        )
+        self._frame_skip = getattr(self.env_f, "frame_skip", 1)
+
+    def save(self):
+        return ...
 
 
 def main():
     cfg = config.load(Path(__file__).parent / "config.yml")
 
     presets = config.load(Path(__file__).parent / "presets.yml")
-    preset_names = ["atari", "debug"]
-    # preset_names = ["atari", "debug", "atari_der"]
+    # preset_names = ["atari", "debug"]
+    preset_names = ["atari", "fast", "preload"]
     for preset in preset_names:
         config.add_preset_(cfg, presets, preset)
 
     cfg = config.parse(cfg, config.Config)
 
-    if cfg.trainer.mode == "basic":
-        trainer = BasicTrainer(cfg)
-    elif cfg.trainer.mode == "iterative":
-        trainer = IterativeTrainer(cfg)
-    else:
-        raise NotImplementedError(cfg.trainer.mode)
-
-    trainer.run()
+    if cfg.mode == "train":
+        if cfg.trainer.mode == "basic":
+            trainer = BasicTrainer(cfg)
+        elif cfg.trainer.mode == "iterative":
+            trainer = IterativeTrainer(cfg)
+        else:
+            raise NotImplementedError(cfg.trainer.mode)
+        trainer.run()
+    elif cfg.mode == "sample":
+        sampler = Sampler(cfg)
+        sampler.run()
 
 
 if __name__ == "__main__":

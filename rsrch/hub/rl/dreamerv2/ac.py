@@ -77,6 +77,22 @@ class ActorCritic(nn.Module):
 
         self.actor_ent = self._make_sched(cfg.actor_ent)
 
+    def save(self, state_only=False):
+        ckpt = {"state": self.state_dict()}
+        if not state_only:
+            ckpt = {
+                **ckpt,
+                "opt": self.opt.state_dict(),
+                "scaler": self.scaler.state_dict(),
+            }
+        return ckpt
+
+    def load(self, ckpt):
+        if "scaler" in ckpt:
+            self.scaler.load_state_dict(ckpt["scaler"])
+            self.opt.load_state_dict(ckpt["opt"])
+        self.load_state_dict(ckpt["state"])
+
     @property
     def device(self):
         return next(self.parameters()).device

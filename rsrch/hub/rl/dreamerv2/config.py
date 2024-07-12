@@ -90,6 +90,7 @@ class Dataset:
     subseq_len: int | tuple[int, int] | None
     ongoing: bool
     prioritize_ends: bool
+    preload: str | None
 
 
 @dataclass
@@ -121,16 +122,29 @@ class Trainer:
 
     @dataclass
     class Iterative:
-        wm_sched: Every
-        enable_for_wm: bool
-        ac_sched: Every
-        enable_for_ac: bool
-        stop_criteria: EarlyStop
-        val_every: int
+        @dataclass
+        class Slice:
+            iterative: bool
+            reset_every: int | None
+            reset_coef: float
+            opt_every: Every
+            val_every: int
+            stop_criteria: EarlyStop
+
+        wm: Slice
+        ac: Slice
 
     mode: Literal["basic", "iterative"]
     basic: Basic
     iterative: Iterative
+
+
+@dataclass
+class Sampler:
+    env_mode: Literal["train", "val"]
+    agent_mode: Literal["train", "val"]
+    ckpt_path: str
+    num_samples: int
 
 
 @dataclass
@@ -144,10 +158,13 @@ class Config:
     dataset: Dataset
     total: Until
     prefill: Until
+    save_every: Every
     log_every: Every
     agent: Agent
     debug: Debug
-    trainer: Trainer
+    mode: Literal["train", "sample"]
+    trainer: Trainer | None
+    sampler: Sampler | None
 
 
 def get_class(namespace: Any, name: str):

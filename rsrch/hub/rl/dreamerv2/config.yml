@@ -111,20 +111,26 @@ agent:
 total: { n: 100e6, of: env_step }
 prefill: { n: 10e3, of: env_step }
 log_every: { n: 8, of: opt_step }
+save_every: { n: "${total.n/10}", of: "${total.of}" }
+mode: train
 trainer:
-  mode: basic
+  mode: iterative
   basic:
     sched: { n: 5, of: env_step }
   iterative:
-    enable_for_wm: false
-    wm_sched: ${..basic.sched}
-    enable_for_ac: false
-    ac_sched: ${..basic.sched}
-    stop_criteria:
-      margin: 0.0
-      patience: 1024
-      min_steps: 10e3
-    val_every: 256
+    _: &iterative
+      iterative: false
+      reset_every: ~
+      reset_coef: 0.8
+      opt_every: ${...basic.sched}
+      val_every: 256
+      stop_criteria:
+        margin: 0.0
+        patience: 1024
+        min_steps: 10e3
+    wm: *iterative
+    ac: *iterative
+sampler: ~
 dataset:
   capacity: 2e6
   batch_size: 16
@@ -133,6 +139,7 @@ dataset:
   prefill: 10e3
   prioritize_ends: true
   ongoing: false
+  preload: ~
 debug:
   enabled: true
   detect_anomaly: false

@@ -53,3 +53,8 @@ class Until:
 
     def __bool__(self):
         return self.step_fn() <= self.max_value
+
+
+class Never:
+    def __bool__(self):
+        return False

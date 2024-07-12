@@ -13,13 +13,13 @@ class EarlyStopping:
         self._best_v, self._best_t = None, None
 
     def __call__(self, value: float, opt_step: int):
-        if opt_step < self.min_steps:
-            return False
-
         if self._best_v is None:
             self._best_v, self._best_t = value, opt_step
             return False
         else:
+            if opt_step - self._best_t < self.min_steps:
+                return False
+
             improv = (self._best_v - value) / self._best_v
             if self.maximize:
                 improv = -improv
