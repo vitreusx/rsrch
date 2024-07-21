@@ -10,30 +10,20 @@ class Space:
         shape: tuple[int, ...],
         *,
         dtype: np.dtype | type | None = None,
-        seed: np.random.Generator | int | None = None,
     ):
         super().__init__()
         self.shape = shape
         self.dtype = np.dtype(dtype)
-        if isinstance(seed, np.random.Generator):
-            self._gen = seed
-        else:
-            self._seed, self._gen = seed, None
 
     def empty(self, shape: tuple[int, ...] = ()):
         return np.empty((*shape, *self.shape), dtype=self.dtype)
 
-    def sample(self, shape: tuple[int, ...] = ()):
+    def sample(
+        self,
+        shape: tuple[int, ...] = (),
+        gen: np.random.Generator | None = None,
+    ):
         raise NotImplementedError()
-
-    @property
-    def gen(self) -> np.random.Generator:
-        if self._gen is None:
-            self._gen = np.random.default_rng(self._seed)
-        return self._gen
-
-    def seed(self, new_seed: int):
-        self._seed, self._gen = new_seed, None
 
     def __repr__(self):
         return f"Space(shape={self.shape!r}, dtype={self.dtype})"
@@ -47,7 +37,6 @@ class Box(Space):
         low: np.ndarray | Number | None = None,
         high: np.ndarray | Number | None = None,
         dtype: np.dtype | None = None,
-        seed: np.random.Generator | None = None,
     ):
         if dtype is None:
             if low is None:
@@ -75,7 +64,7 @@ class Box(Space):
                 high = 1
         high = np.asarray(high, dtype)
 
-        super().__init__(shape, dtype=dtype, seed=seed)
+        super().__init__(shape, dtype=dtype)
         self.low = np.broadcast_to(low, shape)
         self.high = np.broadcast_to(high, shape)
 
@@ -91,14 +80,21 @@ class Box(Space):
     def bounded(self):
         return self.bounded_below & self.bounded_above
 
-    def sample(self, sample_size: tuple[int, ...] = ()):
+    def sample(
+        self,
+        sample_size: tuple[int, ...] = (),
+        gen: np.random.Generator | None = None,
+    ):
+        if gen is None:
+            gen = np.random.random.__self__
+
         shape = [*sample_size, *self.shape]
         if np.issubdtype(self.dtype, np.floating):
-            u = self.gen.random(shape, self.dtype)
+            u = np.random.random(shape, self.dtype)
             u = np.where(self.bounded, u * (self.high - self.low), u)
             u = np.where(self.bounded_below, self.low + u, u)
         elif np.issubdtype(self.dtype, np.integer):
-            u = self.gen.integers(self.low, self.high, shape, self.dtype)
+            u = gen.integers(self.low, self.high, shape, self.dtype)
         return u
 
     def __repr__(self):
@@ -119,15 +115,10 @@ class Discrete(Box):
         n: int,
         *,
         dtype: np.dtype = np.int64,
-        seed: np.random.Generator | None = None,
     ):
         assert np.issubdtype(dtype, np.integer)
-        super().__init__((), low=0, high=n, dtype=dtype, seed=seed)
+        super().__init__((), low=0, high=n, dtype=dtype)
         self.n = n
-
-    def sample(self, sample_size: tuple[int, ...] = ()):
-        shape = [*sample_size, *self.shape]
-        return self.gen.integers(0, self.n, shape, self.dtype)
 
     def __repr__(self):
         return f"Discrete({self.n!r}, {self.dtype})"

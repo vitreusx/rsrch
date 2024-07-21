@@ -1,4 +1,4 @@
-from rsrch.rl import gym
+import gymnasium as gym
 
 from . import np
 
@@ -11,13 +11,11 @@ def from_gym(space: gym.Space) -> np.Space:
             low=space.low,
             high=space.high,
             dtype=space.dtype,
-            seed=space._np_random,
         )
     elif isinstance(space, gym.spaces.Discrete):
         return np.Discrete(
             space.n,
             dtype=space.dtype,
-            seed=space._np_random,
         )
     else:
         raise NotImplementedError(type(space))
@@ -26,10 +24,8 @@ def from_gym(space: gym.Space) -> np.Space:
 def to_gym(space: np.Space) -> gym.Space:
     """Convert a space from here to OpenAI gym's space format."""
     if isinstance(space, np.Box):
-        return gym.spaces.Box(
-            space.low, space.high, space.shape, space.dtype, space._seed
-        )
+        return gym.spaces.Box(space.low, space.high, space.shape, space.dtype)
     elif isinstance(space, np.Discrete):
-        return gym.spaces.Discrete(space.n, space._seed)
+        return gym.spaces.Discrete(space.n)
     else:
         raise NotImplementedError(type(space))

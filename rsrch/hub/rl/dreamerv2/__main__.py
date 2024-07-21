@@ -841,7 +841,111 @@ class V2:
             device=self.device,
             seed=self.cfg.seed,
         )
-        self._frame_skip = getattr(self.env_f, "frame_skip", 1)
+
+        self.wm = wm.WorldModel(
+            obs_space=self.env_f.obs_space,
+            act_space=self.env_f.act_space,
+            cfg=self.cfg.wm,
+        )
+        self.wm.apply(self._tf_init)
+
+        self.ac = ac.ActorCritic(
+            wm=self.wm,
+            cfg=self.cfg.ac,
+        )
+        self.ac.apply(self._tf_init)
+
+        self.to(self.device)
+
+    def _tf_init(self, module: nn.Module):
+        if isinstance(module, (nn.Linear, nn.Conv2d, nn.ConvTranspose2d)):
+            nn.init.xavier_uniform_(module.weight)
+            nn.init.zeros_(module.bias)
+
+    def main(self):
+        getattr(self, self.cfg.scenario)()
+
+    def sample(self):
+        raise NotImplementedError()
+
+    def train(self):
+        cfg = self.cfg.train
+
+        self._setup_core()
+        self._setup_train()
+
+        if cfg.load_samples is not None:
+            self.preload(cfg.load_samples)
+        
+        if cfg.load_ckpt is not None:
+            self.load_ckpt(cfg.load_ckpt)
+
+        self.prefill(cfg.prefill)
+
+    def _setup_train(self, cfg: config.Train):
+        self.env_step = 0
+        self.exp.register_step("env_step", lambda: self.env_step, default=True)
+
+        self.buf = self.env_f.buffer(self.cfg.dataset)
+
+        self.train_envs = self.env_f.vector_env(cfg.num_envs, mode="train")
+        self.train_agent = ac.Agent(
+            env_f=self.env_f,
+            ac=self.ac,
+            cfg=cfg.agent,
+            mode="prefill",
+        )
+        self.env_iter = iter(rollout.steps(self.train_envs, self.train_agent))
+
+    def preload(self, path: Path):
+        with open(path, "rb") as f:
+            samples: data_rl.BufferData = pickle.load(f)
+            buf = data_rl.Buffer(samples)
+            eps = data_rl.EpisodeView(buf)
+
+        for ep in eps.values():
+            ep_id = None
+            for idx in range(len(ep["act"])):
+                ep_id = self.buf.push(
+                    ep_id,
+                    data_rl.Step(
+                        ep.obs[idx],
+                        ep.act[idx],
+                        ep.obs[idx + 1],
+                        ep.reward[idx],
+                        ep.term[idx],
+                    ),
+                )
+
+    def load(self, path: Path):
+        with open(path, "rb") as f:
+            ...
+
+    def save(self, path: Path):
+        ...
+
+    def prefill(self, until):
+        should_prefill = self._make_until(until)
+        while should_prefill:
+            self.take_env_step()
+
+    def _make_until(self, until: config.Until):
+        if isinstance(until, int):
+            n, of = until, self.env_step
+        else:
+            n, of = until.n, until.of
+
+        step_fn = lambda: getattr(self, of)
+        return cron.Until(step_fn, n)
+
+    def load_samples(self):
+        ...
+
+    def train_loop(self, until, stages):
+        ...
+
+    def take_env_step(self):
+        ...
 
     def save(self):
         return ...
@@ -858,17 +962,8 @@ def main():
 
     cfg = config.parse(cfg, config.Config)
 
-    if cfg.mode == "train":
-        if cfg.trainer.mode == "basic":
-            trainer = BasicTrainer(cfg)
-        elif cfg.trainer.mode == "iterative":
-            trainer = IterativeTrainer(cfg)
-        else:
-            raise NotImplementedError(cfg.trainer.mode)
-        trainer.run()
-    elif cfg.mode == "sample":
-        sampler = Sampler(cfg)
-        sampler.run()
+    runner = V2(cfg)
+    runner.main()
 
 
 if __name__ == "__main__":

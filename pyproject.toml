@@ -6,13 +6,11 @@ authors = ["vitreusx <jakub_bednarz@protonmail.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "3.10.*"
+python = "^3.10"
 ipykernel = "^6.22.0"
 ipywidgets = "^8.0.4"
 tensorboard = "^2.12.2"
-colorama = "*"
 moviepy = "^1.0.3"
-python-slugify = "*"
 patchelf = "^0.17.2.1"
 mujoco = "^3.1.2"
 h5py = "^3.8.0"
@@ -22,32 +20,43 @@ wandb = "^0.15.5"
 plotly = "^5.15.0"
 dacite = "^1.8.1"
 mako = "^1.2.4"
-envpool = "^0.8.3"
+envpool = "^0.8.4"
 box2d-py = { path = "ext/box2d-py" }
 black = { version = "^23.3.0", extras = ["jupyter"] }
 nbconvert = "^7.3.1"
 pylint = "^2.17.4"
-isort = ">=5"
-ray = "^2.9.0"
+isort = "^5.0"
+ray = "^2.9.0,!=2.32.0"
 ruamel-yaml = "^0.18.5"
-dm-control = {path = "ext/dm_control"}
 lz4 = "^4.3.3"
 matplotlib = "^3.8.3"
-opencv-python-headless = "^4.9.0.80"
 paramiko = "^3.4.0"
 omegaconf = "^2.3.0"
 pyparsing = "^3.1.2"
-torch = "^2.3"
-torchvision = "^0.18"
-lpips = "^0.1.4"
 tabulate = "^0.9.0"
 pandas = "^2.2.2"
-fast-pytorch-kmeans = "^0.2.0.1"
-fvcore = "^0.1.5.post20221221"
 monkeytype = "^23.3.0"
 equinox = "^0.11.4"
 optax = "^0.2.2"
 jmp = {git = "https://github.com/google-deepmind/jmp"}
+
+opencv-python = "^4.9.0.80"
+opencv-python-headless = { version = "^4.9.0.80", optional = true }
+
+torch = { version = "^2.3", source = "torch_cpu" }
+torchvision = { version = "^0.18", source = "torch_cpu" }
+lpips = "^0.1.4"
+fast-pytorch-kmeans = "^0.2.0.1"
+fvcore = "^0.1.5.post20221221"
+
+[[tool.poetry.source]]
+name = "torch_cpu"
+url = "https://download.pytorch.org/whl/cpu"
+priority = "explicit"
+
+[tool.poetry.group.dev.dependencies]
+tomli = "^2.0.1"
+semver = "^3.0.2"
 
 [build-system]
 requires = ["poetry-core>=1.5"]

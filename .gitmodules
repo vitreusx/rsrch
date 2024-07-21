@@ -1,3 +1,0 @@
-[submodule "ext/dm_control"]
-	path = ext/dm_control
-	url = https://github.com/google-deepmind/dm_control

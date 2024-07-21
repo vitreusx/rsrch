@@ -11,16 +11,22 @@ NormType: TypeAlias = Literal["none", "batch", "layer"]
 
 
 @dataclass
-class Until:
+class _Until:
     n: int
     of: str | None = None
+
+
+Until = int | _Until
 
 
 @dataclass
-class Every:
+class _Every:
     n: int
     of: str | None = None
     iters: int | None = 1
+
+
+Every = int | _Every
 
 
 @dataclass
@@ -94,12 +100,6 @@ class Dataset:
 
 
 @dataclass
-class Agent:
-    expl_noise: float
-    eval_noise: float
-
-
-@dataclass
 class Debug:
     enabled: bool
     profile: bool
@@ -115,36 +115,18 @@ class Debug:
 
 
 @dataclass
-class Trainer:
-    @dataclass
-    class Basic:
-        sched: Every
-
-    @dataclass
-    class Iterative:
-        @dataclass
-        class Slice:
-            iterative: bool
-            reset_every: int | None
-            reset_coef: float
-            opt_every: Every
-            val_every: int
-            stop_criteria: EarlyStop
-
-        wm: Slice
-        ac: Slice
-
-    mode: Literal["basic", "iterative"]
-    basic: Basic
-    iterative: Iterative
+class Agent:
+    expl_noise: float
+    eval_noise: float
 
 
 @dataclass
-class Sampler:
-    env_mode: Literal["train", "val"]
-    agent_mode: Literal["train", "val"]
-    ckpt_path: str
-    num_samples: int
+class Train:
+    load_samples: Path | None
+    load_ckpt: Path | None
+    prefill: Until
+    agent: Agent
+    num_envs: int
 
 
 @dataclass
@@ -156,15 +138,10 @@ class Config:
     wm: WorldModel
     ac: ActorCritic
     dataset: Dataset
-    total: Until
-    prefill: Until
-    save_every: Every
     log_every: Every
-    agent: Agent
     debug: Debug
-    mode: Literal["train", "sample"]
-    trainer: Trainer | None
-    sampler: Sampler | None
+    mode: Literal["sample", "train"]
+    train: Train
 
 
 def get_class(namespace: Any, name: str):

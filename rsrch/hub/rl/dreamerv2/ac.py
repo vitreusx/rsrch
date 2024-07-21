@@ -27,6 +27,108 @@ def no_grad(enabled=True):
         yield
 
 
+class Actor(nn.Module):
+    def __init__(self, wm: wm.WorldModel, cfg: config.ActorCritic):
+        super().__init__()
+        self.wm = wm
+        self.cfg = cfg
+
+        self.lock = Lock()
+        self.actor = nn.Sequential(
+            (fc := nets.FullyConnected(wm.state_size, None, **cfg.actor)),
+            nets.PolicyLayer(fc.out_features, wm.act_enc),
+        )
+
+    def forward(self, state: rssm.State):
+        return self.actor(state.to_tensor())
+
+    def initial(self, obs: Tensor) -> rssm.State:
+        obs = self.wm.obs_enc(obs)
+
+        state = self.wm.rssm.initial(obs.device)
+        state = state.expand(obs.shape[0], *state.shape)
+
+        state = self.wm.rssm.obs_step(
+            state,
+            torch.zeros(
+                (obs.shape[0], self.wm.rssm.act_size),
+                device=obs.device,
+            ),
+            obs,
+        )
+
+        return state
+
+    def step(self, state: rssm.State, act: Tensor, next_obs: Tensor):
+        act = self.wm.act_enc(act)
+        next_obs = self.wm.obs_enc(next_obs)
+        next_s = self.wm.rssm.obs_step(state, act, next_obs)
+        return next_s.type_as(state)
+
+
+class Agent(gym.vector.Agent):
+    def __init__(
+        self,
+        actor: Actor,
+        cfg: config.Agent,
+        mode: Literal["prefill", "train", "eval"],
+    ):
+        super().__init__()
+        self.actor = actor
+        self.cfg = cfg
+        self.mode = mode
+
+        self._act_space = self.actor.wm.act_space
+        self._state = None
+
+    def reset(self, idxes, obs, info):
+        state = self.actor.initial(obs)
+        if self._state is None:
+            self._state = state.clone()
+        else:
+            self._state[idxes] = state.type_as(self._state)
+
+    def policy(self, obs):
+        if self.mode == "prefill":
+            return self._act_space.sample([obs.shape[0]])
+        elif self.mode in ("train", "eval"):
+            act_dist: D.Distribution = self.actor(self._state.to_tensor())
+            if self.mode == "train":
+                enc_act = act_dist.sample()
+                noise = self.cfg.expl_noise
+            elif self.mode == "eval":
+                enc_act = act_dist.mode
+                noise = self.cfg.eval_noise
+            act = self.actor.wm.act_dec(enc_act)
+            act = self._apply_noise(act, noise)
+            return act
+
+    def _apply_noise(self, act: Tensor, noise: float):
+        if noise > 0.0:
+            n = len(act)
+            if isinstance(self._act_space, spaces.torch.Discrete):
+                rand_act = self._act_space.sample((n,)).type_as(act)
+                use_rand = (torch.rand(n) < noise).to(act.device)
+                act = torch.where(use_rand, rand_act, act)
+            elif isinstance(self._act_space, spaces.torch.Box):
+                eps = torch.randn(self._act_space.shape).type_as(act)
+                low = self._act_space.low.type_as(act)
+                high = self._act_space.high.type_as(act)
+                act = (act + noise * eps).clamp(low, high)
+        return act
+
+    def step(self, act):
+        self._act = act
+
+    def observe(self, idxes, next_obs, term, trunc, info):
+        next_s = self.actor.step(
+            self._state[idxes],
+            self._act[idxes],
+            next_obs,
+        )
+        self._state[idxes] = next_s.type_as(self._state)
+
+
 class ActorCritic(nn.Module):
     def __init__(
         self,
