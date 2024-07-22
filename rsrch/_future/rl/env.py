@@ -2,7 +2,7 @@ import multiprocessing as mp
 import threading
 from abc import ABC, abstractmethod
 from queue import Queue
-from typing import Any, Callable, overload
+from typing import Any, Callable, Iterable, TypeVar, overload
 
 import envpool
 import gymnasium as gym
@@ -34,9 +34,9 @@ class FromGym(Env):
         self.act_space = from_gym(self.env.action_space)
 
     def reset(self):
-        obs, info = self.env.reset(self.seed)
+        obs, info = self.env.reset(seed=self.seed)
         self.seed = None
-        res = {"obs": obs, **info}
+        res = {"obs": obs, "reward": 0.0, "term": False, "trunc": False, **info}
         if self.render:
             res["render"] = self.env.render()
         return res
@@ -126,25 +126,31 @@ class VecAgent(ABC):
         return [Subagent(idx) for idx in range(num_envs)]
 
 
-def rollout(env: Env, agent: Agent):
+def rollout(env: Env, agent: Agent) -> Iterable[tuple[dict, bool]]:
     obs = None
     while True:
         if obs is None:
             obs = env.reset()
             agent.reset(obs)
-            yield None, obs, False
+            yield obs, False
 
         act = agent.policy()
         next_obs, final = env.step(act)
         agent.step(act, next_obs)
-        yield act, next_obs, final
+        yield {**next_obs, "act": act}, final
 
         obs = next_obs
         if final:
             obs = None
 
 
-def pool(*iterables):
+T = TypeVar("T")
+
+
+def pool(*iterables: Iterable[T]) -> Iterable[tuple[int, T]]:
+    if len(iterables) == 1:
+        return iterables[0]
+
     results = Queue(1)
 
     def worker_fn(idx):
@@ -239,35 +245,35 @@ def Envpool(task_id: str, **kwargs) -> list[Env]:
 
 class ProcEnv(Env):
     def __init__(self, env_fn: Callable[[], Env]):
-        self.send_c, self.recv_c = mp.Pipe()
+        self.send_q, self.recv_q = mp.Queue(1), mp.Queue(1)
         self.proc = mp.Process(
             target=self.target,
-            args=(env_fn, self.send_c, self.recv_c),
+            args=(env_fn, self.send_q, self.recv_q),
         )
         self.proc.start()
 
-        self.obs_space, self.act_space = self.recv_c.recv()
+        self.obs_space, self.act_space = self.recv_q.get()
 
     def reset(self):
-        self.send_c.send(("reset",))
-        return self.recv_c.recv()
+        self.send_q.put(("reset",))
+        return self.recv_q.get()
 
     def step(self, act):
-        self.send_c.send(("step", act))
-        return self.recv_c.recv()
+        self.send_q.put(("step", act))
+        return self.recv_q.get()
 
     def __del__(self):
-        self.send_c.send(None)
+        self.send_q.put(None)
         self.proc.join()
 
     @staticmethod
-    def target(env_fn, recv_c, send_c):
+    def target(env_fn, recv_q, send_q):
         env: Env = env_fn()
-        send_c.send((env.obs_space, env.act_space))
+        send_q.put((env.obs_space, env.act_space))
 
         while True:
-            req = recv_c.recv()
+            req = recv_q.get()
             if req is None:
                 break
-            res = getattr(env, req[0])(*req[1])
-            send_c.send(res)
+            res = getattr(env, req[0])(*req[1:])
+            send_q.put(res)

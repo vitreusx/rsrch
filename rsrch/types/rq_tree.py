@@ -25,19 +25,21 @@ class rq_tree:
             dtype (_type_, optional): Numpy dtype for the array. Defaults to None.
         """
         self.size = size
-        nlevels = int(np.ceil(np.log2(self.size)))
-        self._nleaves = 2**nlevels
-
+        self.reduce_fn = reduce_fn
+        self.zero = zero
+        if init is None:
+            init = zero
+        self.init = init
         if dtype is None:
             dtype = np.array([zero]).dtype
-        self.tree = np.empty((2 * self._nleaves - 1,), dtype=dtype)
+        self.dtype = dtype
 
-        self.reduce_fn = reduce_fn
-        self._zero = zero
+        nlevels = int(np.ceil(np.log2(self.size)))
+        self._nleaves = 2**nlevels
+        self.tree = np.empty((2 * self._nleaves - 1,), dtype=self.dtype)
         self._array_beg = self._nleaves - 1
         self.array = self.tree[self._array_beg : self._array_beg + self.size]
 
-        self._init = init
         self.clear()
 
     def __getstate__(self):
@@ -49,16 +51,28 @@ class rq_tree:
         for k, v in state.items():
             setattr(self, k, v)
 
+    def expand(self, new_size: int):
+        if new_size <= self.size:
+            return self
+        else:
+            new_tree = rq_tree(
+                new_size, self.reduce_fn, self.zero, self.init, self.dtype
+            )
+            new_tree.array[: self.size] = self.array[: self.size]
+            new_tree._recompute()
+            return new_tree
+
     def __len__(self):
         return self.size
 
     def clear(self):
-        self.tree.fill(self._zero)
-        if self._init is not None:
-            self.array.fill(self._init)
-            for idx in reversed(range(self._array_beg)):
-                left_v, right_v = self.tree[2 * idx + 1], self.tree[2 * idx + 2]
-                self.tree[idx] = self.reduce_fn(left_v, right_v)
+        self.array.fill(self.init)
+        self._recompute()
+
+    def _recompute(self):
+        for idx in reversed(range(self._array_beg)):
+            left_v, right_v = self.tree[2 * idx + 1], self.tree[2 * idx + 2]
+            self.tree[idx] = self.reduce_fn(left_v, right_v)
 
     @property
     def total(self):
@@ -68,26 +82,20 @@ class rq_tree:
     def __getitem__(self, idx):
         return self.array[idx]
 
-    def __setitem__(self, idx: int | np.ndarray, value: Any | np.ndarray):
-        if isinstance(idx, np.ndarray):
-            idx, value = idx.ravel(), np.asarray(value).ravel()
-            idx, value = np.broadcast_arrays(idx, value)
-            for idx_, val_ in zip(idx, value):
-                self[idx_] = val_
-        else:
-            self.array[idx] = value
-            cur = self._array_beg + idx
-            while True:
-                cur = (cur - 1) // 2
-                left_v, right_v = self.tree[2 * cur + 1], self.tree[2 * cur + 2]
-                self.tree[cur] = self.reduce_fn(left_v, right_v)
-                if cur == 0:
-                    break
+    def __setitem__(self, idx: int, value: Any):
+        self.array[idx] = value
+        cur = self._array_beg + idx
+        while True:
+            cur = (cur - 1) // 2
+            left_v, right_v = self.tree[2 * cur + 1], self.tree[2 * cur + 2]
+            self.tree[cur] = self.reduce_fn(left_v, right_v)
+            if cur == 0:
+                break
+
+    def __delitem__(self, idx):
+        self[idx] = self.zero
 
     def searchsorted(self, value):
-        if isinstance(value, np.ndarray):
-            return np.array([self.searchsorted(v) for v in value])
-
         if value > self.total:
             return len(self)
 
