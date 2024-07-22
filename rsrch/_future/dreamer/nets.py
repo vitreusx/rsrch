@@ -9,7 +9,7 @@ from torch import Tensor, nn
 import rsrch.distributions as D
 from rsrch import spaces
 
-from . import dist as dh
+from . import dh
 
 ActType = Literal["relu", "elu", "tanh"]
 ACT_LAYERS = {"relu": nn.ReLU, "elu": nn.ELU, "tanh": nn.Tanh}
@@ -72,6 +72,8 @@ class Reshape(nn.Module):
 
 
 class GRUCellLN(nn.Module):
+    __constants__ = ["input_size", "hidden_size", "update_bias", "norm"]
+
     def __init__(
         self,
         input_size: int,
@@ -196,6 +198,15 @@ class DiscreteEncoder(nn.Module):
         return input.argmax(-1)
 
 
+def make_encoder(space: spaces.torch.Space, **args):
+    if type(space) == spaces.torch.Image:
+        return ImageEncoder(space, **args.get("image", {}))
+    elif type(space) == spaces.torch.Box:
+        return BoxEncoder(space, **args.get("box", {}))
+    elif type(space) == spaces.torch.Discrete:
+        return DiscreteEncoder(space, **args.get("discrete", {}))
+
+
 class ImageDecoder(nn.Sequential):
     def __init__(
         self,
@@ -261,7 +272,22 @@ class DiscreteDecoder(nn.Sequential):
         super().__init__(mlp, head)
 
 
+def make_decoder(in_features: int, space: spaces.torch.Space, **args):
+    if type(space) == spaces.torch.Image:
+        return ImageDecoder(in_features, space, **args.get("image", {}))
+    elif type(space) == spaces.torch.Box:
+        return BoxDecoder(in_features, space, **args.get("box", {}))
+    elif type(space) == spaces.torch.Discrete:
+        return DiscreteDecoder(in_features, space, **args.get("discrete", {}))
+
+
 class ActionEncoder(nn.Module):
+    """An action encoder. We cannot use a regular encoder, because:
+    - the output of the actor needs to both be in the same format as the
+      output of the action encoder.
+    - we need to be able to get the un-encoded action from this output, for use
+      in the env interaction."""
+
     def __init__(self, act_space: spaces.torch.Space):
         super().__init__()
         assert isinstance(act_space, (spaces.torch.Discrete, spaces.torch.Box))

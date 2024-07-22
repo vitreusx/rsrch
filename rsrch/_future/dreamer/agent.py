@@ -8,14 +8,8 @@ import rsrch.distributions as D
 from rsrch import spaces
 from rsrch._future import rl
 
+from .ac import Actor
 from .wm import WorldModel
-
-
-class Actor:
-    wm: WorldModel
-
-    def policy(self, state) -> D.Distribution:
-        ...
 
 
 @dataclass
@@ -50,13 +44,13 @@ class Agent(rl.VecAgent):
         if self.mode == "prefill":
             return self.act_space.sample([len(idxes)])
         else:
-            act_dist: D.Distribution = self.actor.policy(self._state[idxes])
             if self.mode == "expl":
-                act = act_dist.sample()
+                sample = True
                 noise = self.cfg.expl_noise
             elif self.mode == "eval":
-                act = act_dist.mode
+                sample = False
                 noise = self.cfg.eval_noise
+            act = self.actor.policy(self._state[idxes], sample)
             act = self._apply_noise(act, noise)
             return act
 

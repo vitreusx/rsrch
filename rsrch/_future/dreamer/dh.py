@@ -132,7 +132,26 @@ class OneHot(nn.Module):
         return D.OneHot(logits=logits)
 
 
-DistType = Literal["auto", "normal", "beta", "mse", "bern", "cat", "one_hot"]
+class Discrete(nn.Module):
+    def __init__(
+        self,
+        layer_ctor: Callable[[int], nn.Module],
+        num_tokens: int,
+        token_size: int,
+    ):
+        super().__init__()
+        self.num_tokens = num_tokens
+        self.token_size = token_size
+        self.layer = layer_ctor(num_tokens * token_size)
+
+    def forward(self, input: Tensor):
+        logits: Tensor = self.layer(input)
+        return D.Discrete(logits=logits)
+
+
+DistType = Literal[
+    "auto", "normal", "beta", "mse", "bern", "cat", "one_hot", "discrete"
+]
 
 
 def make(
@@ -156,6 +175,7 @@ def make(
         "bern": Bernoulli,
         "cat": Categorical,
         "one_hot": OneHot,
+        "discrete": Discrete,
     }[type]
 
     return cls(layer_ctor, space, **kwargs.get(type, {}))

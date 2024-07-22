@@ -6,55 +6,83 @@ from torch import Tensor, nn
 
 import rsrch.distributions as D
 from rsrch import spaces
-from rsrch.nn.utils import over_seq
+from rsrch.nn.utils import over_seq, safe_mode
 
-from .amp import autocast
-from .utils import find_class
+from . import nets, rssm
+from .utils import find_class, null_ctx
 
 
 @dataclass
 class Config:
-    opt: dict
+    encoders: dict
     decoders: dict
+    rssm: rssm.Config
+    opt: dict
+    coef: dict
 
 
-class RSSM:
-    initial: Tensor
+class WorldModel(nn.Module):
+    def __init__(
+        self,
+        cfg: Config,
+        spaces: dict[str, spaces.torch.Space],
+    ):
+        super().__init__()
+        self.cfg = cfg
+        self.spaces = spaces
 
-    def reset(self, obs):
-        ...
+        self.encoders = nn.ModuleDict()
+        for key in cfg.encoders:
+            enc = nets.make_encoder(spaces[key], **cfg.encoders[key])
+            self.encoders[key] = enc
 
-    def step(self, state, act, next_obs):
-        ...
+        self.act_enc = nets.ActionEncoder(spaces["act"])
 
-    def observe(self, h0, act_seq, obs_seq):
-        ...
+        with safe_mode(self):
+            obs_size = 0
+            for key in cfg.encoders:
+                x = spaces[key].sample([1])
+                obs_size += self.encoders[key](x).shape[1]
 
+            act: Tensor = spaces["act"].sample([1])
+            act_size: int = self.act_enc(act).shape[1]
 
-class WorldModel:
-    obs_enc: nn.Module
-    act_enc: nn.Module
-    act_dec: nn.Module
-    rssm: RSSM
+        self.rssm = rssm.RSSM(cfg.rssm, obs_size, act_size)
 
-    def reset(self, obs):
-        obs = self.obs_enc(obs)
-        return self.rssm.reset(obs)
+        self.state_size = self.rssm.stoch_size + self.rssm.deter_size
 
-    def step(self, state, act, next_obs):
-        act = self.act_enc(act)
-        next_obs = self.obs_enc(next_obs)
-        return self.rssm.step(state, act, next_obs)
+        self.decoders = nn.ModuleDict()
+        for key in cfg.decoders:
+            dec = nets.make_decoder(self.state_size, spaces[key], **cfg.decoders[key])
+            self.decoders[key] = dec
 
 
-class Trainer(nn.Module):
-    def __init__(self, wm: WorldModel, cfg: Config, device=None, dtype=None):
+class Trainer:
+    def __init__(
+        self,
+        wm: WorldModel,
+        cfg: Config,
+        compute_dtype=None,
+    ):
         self.wm = wm
         self.cfg = cfg
+        self.compute_dtype = compute_dtype
 
         self.decoders: nn.ModuleDict
 
         self.opt = self._make_opt()
+        self._device = next(self.wm.parameters()).device
+        self.scaler = getattr(torch, self._device.type).amp.GradScaler()
+
+    def save(self):
+        return {
+            "opt": self.opt.state_dict(),
+            "scaler": self.scaler.state_dict(),
+        }
+
+    def load(self, ckpt):
+        self.opt.load_state_dict(ckpt["opt"])
+        self.scaler.load_state_dict(ckpt["scaler"])
 
     def _make_opt(self):
         cfg = {**self.cfg.opt}
@@ -62,17 +90,20 @@ class Trainer(nn.Module):
         del cfg["type"]
         return cls(self.wm.parameters(), **cfg)
 
-    def train_loss(self, batch: dict):
-        return self._loss_fn(batch, True)
+    def autocast(self):
+        if self.compute_dtype is None:
+            return null_ctx()
+        else:
+            return torch.autocast(
+                device_type=self._device.type,
+                dtype=self.compute_dtype,
+            )
 
-    def val_loss(self, batch: dict):
-        return self._loss_fn(batch, False)
-
-    def _loss_fn(self, batch: dict, with_metrics=True):
+    def loss_fn(self, batch: dict):
         mets, losses = {}, {}
         rssm = self.wm.rssm
 
-        with autocast():
+        with self.autocast():
             enc_obs: Tensor = over_seq(self.wm.obs_enc)(batch["obs"])
             enc_act: Tensor = over_seq(self.wm.act_enc)(batch["act"])
 
@@ -81,27 +112,25 @@ class Trainer(nn.Module):
             starts = torch.stack([x or rssm.initial for x in batch["start"]])
 
             states, post, prior = rssm.observe(enc_obs, enc_act, starts)
-            if with_metrics:
-                mets["prior_ent"] = prior.detach().entropy().mean()
-                mets["post_ent"] = post.detach().entropy().mean()
+            mets["prior_ent"] = prior.detach().entropy().mean()
+            mets["post_ent"] = post.detach().entropy().mean()
 
             kl_loss, kl_value = self._kl_loss(post, prior, **self.cfg.kl)
             losses["kl"] = kl_loss
-            if with_metrics:
-                mets["kl_value"] = kl_value.detach().mean()
+            mets["kl_value"] = kl_value.detach().mean()
 
             for name, decoder in self.decoders.items():
                 recon: D.Distribution = over_seq(decoder)(states)
                 losses[name] = -recon.log_prob(batch[name]).mean()
 
-            if with_metrics:
-                for k, v in losses:
-                    mets[f"{k}_loss"] = v.detach()
+            coef = self.cfg.coef
+            loss = sum(coef.get(k, 1.0) * v for k, v in losses.items())
 
-        coef = self.cfg.coef
-        loss = sum(coef.get(k, 1.0) * v for k, v in losses.items())
+            mets["loss"] = loss.detach()
+            for k, v in losses:
+                mets[f"{k}_loss"] = v.detach()
 
-        return loss, mets, states
+        return loss, (mets, states.detach())
 
     def _kl_loss(
         self,
@@ -128,3 +157,16 @@ class Trainer(nn.Module):
                 loss_rhs = value_rhs.clamp_min(free).mean()
             loss = mix * loss_lhs + (1.0 - mix) * loss_rhs
         return loss, value
+
+    def train_step(self, batch: dict):
+        loss, aux = self.loss_fn(batch)
+
+        self.opt.zero_grad(set_to_none=True)
+        self.scaler.scale(loss).backward()
+        self.scaler.unscale_(self.opt)
+        if self.cfg.clip_grad is not None:
+            nn.utils.clip_grad_norm_(self.parameters(), max_norm=self.cfg.clip_grad)
+        self.scaler.step(self.opt)
+        self.scaler.update()
+
+        return aux
