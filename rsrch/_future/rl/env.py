@@ -149,7 +149,8 @@ T = TypeVar("T")
 
 def pool(*iterables: Iterable[T]) -> Iterable[tuple[int, T]]:
     if len(iterables) == 1:
-        return iterables[0]
+        for x in iterables[0]:
+            yield 0, x
 
     results = Queue(1)
 

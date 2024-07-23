@@ -153,6 +153,13 @@ class Trainer:
             del cfg["$type"]
             return cls(**cfg)
 
+    def save(self):
+        return {"opt": self.opt.state_dict(), "scaler": self.scaler.state_dict()}
+
+    def load(self, ckpt):
+        self.opt.load_state_dict(ckpt["opt"])
+        self.scaler.load_state_dict(ckpt["scaler"])
+
     def autocast(self):
         if self.compute_dtype is None:
             return null_ctx()
@@ -162,7 +169,7 @@ class Trainer:
                 dtype=self.compute_dtype,
             )
 
-    def loss_fn(self, batch: dict):
+    def compute(self, batch: dict):
         losses, mets = {}, {}
 
         if self.update_target is not None:
@@ -239,9 +246,7 @@ class Trainer:
 
         return loss, mets
 
-    def train_step(self, batch: dict):
-        loss, aux = self.loss_fn(batch)
-
+    def opt_step(self, loss: Tensor):
         self.opt.zero_grad(set_to_none=True)
         self.scaler.scale(loss).backward()
         self.scaler.unscale_(self.opt)
@@ -249,5 +254,3 @@ class Trainer:
             nn.utils.clip_grad_norm_(self.parameters, max_norm=self.cfg.clip_grad)
         self.scaler.step(self.opt)
         self.scaler.update()
-
-        return aux

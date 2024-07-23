@@ -22,10 +22,10 @@ class Buffer(Mapping):
         self._next_id = 0
         self.hooks: list[Hook] = []
 
-    def __getstate__(self):
+    def save(self):
         return (self.data, self._next_id)
 
-    def __setstate__(self, state):
+    def load(self, state):
         self.data, self._next_id = state
 
     def __iter__(self):

@@ -23,8 +23,8 @@ class Agent(rl.VecAgent):
         self,
         actor: Actor,
         cfg: Config,
-        mode: Literal["prefill", "expl", "eval"],
         act_space: spaces.torch.Space,
+        mode: Literal["prefill", "expl", "eval"] = "prefill",
     ):
         super().__init__()
         self.actor = actor

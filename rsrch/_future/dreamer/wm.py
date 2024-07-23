@@ -131,7 +131,7 @@ class Trainer:
                 dtype=self.compute_dtype,
             )
 
-    def loss_fn(self, batch: dict):
+    def compute(self, batch: dict):
         mets, losses = {}, {}
         rssm = self.wm.rssm
 
@@ -163,7 +163,7 @@ class Trainer:
             for k, v in losses:
                 mets[f"{k}_loss"] = v.detach()
 
-        return loss, (mets, states.detach())
+        return loss, mets, states.detach()
 
     def _kl_loss(
         self,
@@ -191,9 +191,7 @@ class Trainer:
             loss = mix * loss_lhs + (1.0 - mix) * loss_rhs
         return loss, value
 
-    def train_step(self, batch: dict):
-        loss, aux = self.loss_fn(batch)
-
+    def opt_step(self, loss: Tensor):
         self.opt.zero_grad(set_to_none=True)
         self.scaler.scale(loss).backward()
         self.scaler.unscale_(self.opt)
@@ -201,5 +199,3 @@ class Trainer:
             nn.utils.clip_grad_norm_(self.parameters, max_norm=self.cfg.clip_grad)
         self.scaler.step(self.opt)
         self.scaler.update()
-
-        return aux

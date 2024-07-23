@@ -144,6 +144,23 @@ class ToChannelLast(gym.ObservationWrapper):
         return np.transpose(x, (2, 0, 1))
 
 
+class EnvEpilog(env.Env):
+    def __init__(self, env: env.Env):
+        self.env = env
+        self.obs_space = env.obs_space
+        self.act_space = env.act_space
+
+    def reset(self):
+        step = self.env.reset()
+        step["total_steps"] = step["frame_number"]
+        return step
+
+    def step(self, act):
+        step, final = self.env.step()
+        step["total_steps"] = step["frame_number"]
+        return step, final
+
+
 class VecAgentWrapper(env.VecAgent):
     def __init__(self, agent: env.VecAgent, stack_num: int | None):
         super().__init__()
@@ -191,7 +208,6 @@ class AgentWrapper(env.Agent):
         if self.stack_num is not None:
             self._stack.append(next_obs)
             next_obs = np.concatenate(self._stack)
-        next_x["obs"] = next_obs
         self.agent.step(act, next_obs)
 
 
@@ -305,25 +321,26 @@ class API:
         render: bool = False,
         seed: int | None = None,
     ):
+        envs = None
         if self.cfg.use_envpool and not render:
             envs = self._try_envpool(num_envs, mode, seed)
-            if envs is not None:
-                return envs
 
-        if seed is None:
-            seed = np.random.randint(int(2**31))
+        if envs is None:
+            if seed is None:
+                seed = np.random.randint(int(2**31))
 
-        if num_envs > 1:
+            if num_envs > 1:
 
-            def env_fn(idx):
-                return lambda: self._env(mode, seed + idx, render)
+                def env_fn(idx):
+                    return lambda: self._env(mode, seed + idx, render)
 
-            envs = []
-            for env_idx in range(num_envs):
-                envs.append(env.ProcEnv(env_fn(env_idx)))
-        else:
-            envs = [self._env(mode, seed, render)]
+                envs = []
+                for env_idx in range(num_envs):
+                    envs.append(env.ProcEnv(env_fn(env_idx)))
+            else:
+                envs = [self._env(mode, seed, render)]
 
+        envs = [EnvEpilog(e) for e in envs]
         return envs
 
     def _try_envpool(
