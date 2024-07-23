@@ -11,8 +11,7 @@ import rsrch.distributions as D
 from rsrch.nn.utils import over_seq, pass_gradient, safe_mode
 from rsrch.types import Tensorlike
 
-from . import dh as dh
-from . import nets
+from . import dh, nets
 from .utils import find_class
 
 
@@ -31,6 +30,12 @@ class State(Tensorlike):
         super().__init__(deter.shape[:-1])
         self.deter = self.register("deter", deter)
         self.stoch = self.register("stoch", stoch)
+        self._as_tensor = None
+
+    def _new(self, shape: torch.Size, fields: dict):
+        new = super()._new(shape, fields)
+        new._as_tensor = None
+        return new
 
     def zero_(self):
         self.deter.zero_()
@@ -38,7 +43,9 @@ class State(Tensorlike):
         return self
 
     def as_tensor(self):
-        return torch.cat((self.deter, self.stoch), -1)
+        if self._as_tensor is not None:
+            self._as_tensor = torch.cat((self.deter, self.stoch), -1)
+        return self._as_tensor
 
 
 class StateDist(D.Distribution, Tensorlike):
@@ -124,6 +131,9 @@ class GenericRSSM(nn.Module):
             stoch_layer(hidden_size),
         )
 
+        self.register_buffer("deter0", torch.zeros(self.deter_size))
+        self.register_buffer("stoch0", torch.zeros(self.stoch_size))
+
     def _stoch_ctor(self, cfg: dict):
         cfg = {**cfg}
         cls = find_class(dh, cfg["type"])
@@ -132,11 +142,7 @@ class GenericRSSM(nn.Module):
 
     @property
     def initial(self):
-        device = next(self.parameters()).device
-        return State(
-            deter=torch.zeros([self.deter_size], device=device),
-            stoch=torch.zeros([self.stoch_size], device=device),
-        )
+        return State(self.deter0, self.stoch0)
 
     def observe(
         self,
@@ -236,12 +242,13 @@ class OptRSSM(nn.Module):
         self._obs_out_o = nn.Linear(obs_size, hidden_size)
         self._obs_proj = nn.Linear(hidden_size, self.stoch_size)
 
+        self.register_buffer("deter0", torch.zeros(self.deter_size))
+        self.register_buffer("stoch0", torch.zeros(self.stoch_size))
+
     @torch.jit.ignore
-    def initial(self, device):
-        return State(
-            deter=torch.zeros([self.deter_size], device=device),
-            stoch=torch.zeros([self.stoch_size], device=device),
-        )
+    @property
+    def initial(self):
+        return State(self.deter0, self.stoch0)
 
     @torch.jit.ignore
     def observe(

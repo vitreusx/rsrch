@@ -13,7 +13,7 @@ class Config:
     atari: atari.Config
 
 
-class Helper(Protocol):
+class API(Protocol):
     obs_space: spaces.torch.Space
     act_space: spaces.torch.Space
 
@@ -24,11 +24,13 @@ class Helper(Protocol):
         ...
 
     def rollout(
-        self, envs: list[env.Env], agent: env.VecAgent
+        self,
+        envs: list[env.Env],
+        agent: env.VecAgent,
     ) -> Iterable[tuple[int, tuple[dict, bool]]]:
         ...
 
 
-def make(cfg: Config) -> Helper:
+def make(cfg: Config) -> API:
     if cfg.type == "atari":
-        return atari.Helper(cfg.atari)
+        return atari.API(cfg.atari)

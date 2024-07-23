@@ -174,8 +174,8 @@ class AgentWrapper(env.Agent):
         if stack_num is not None:
             self._stack = deque(maxlen=stack_num)
 
-    def reset(self, obs):
-        obs = obs["obs"]
+    def reset(self, x):
+        obs = x["obs"]
         if self.stack_num is not None:
             self._stack.clear()
             for _ in range(self.stack_num):
@@ -186,11 +186,12 @@ class AgentWrapper(env.Agent):
     def policy(self):
         return self.agent.policy()
 
-    def step(self, act, next_obs):
-        next_obs = next_obs["obs"]
+    def step(self, act, next_x):
+        next_obs = next_x["obs"]
         if self.stack_num is not None:
             self._stack.append(next_obs)
             next_obs = np.concatenate(self._stack)
+        next_x["obs"] = next_obs
         self.agent.step(act, next_obs)
 
 
@@ -216,14 +217,17 @@ class StackSeq(Sequence):
             return StackSeq(self.seq, self.stack_num, self.span[idx])
         else:
             idx = self.span[idx]
+
             if idx < self.stack_num - 1:
-                r = [
+                xs = [
                     *(self.seq[0] for _ in range(self.stack_num - 1 - idx)),
                     *self.seq[: idx + 1],
                 ]
             else:
-                r = self.seq[idx - self.stack_num + 1 : idx + 1]
-            return np.concatenate(r)
+                xs = self.seq[idx - self.stack_num + 1 : idx + 1]
+            obs = np.concat([x["obs"] for x in xs])
+
+            return {**self.seq[idx], "obs": obs}
 
 
 class MapSeq(Sequence):
@@ -259,23 +263,18 @@ class BufferWrapper(buffer.Wrapper):
 
     def __getitem__(self, seq_id: int):
         seq = {**self.buf[seq_id]}
-        if self.stack_num is not None:
-            seq["obs"] = StackSeq(seq["obs"], self.stack_num)
-        seq["obs"] = MapSeq(seq["obs"], self.obs_f)
-        seq["act"] = MapSeq(seq["act"], self.act_f)
+        seq = StackSeq(seq, stack_num=self.stack_num)
+        seq = MapSeq(seq, self.seq_f)
         return seq
 
-    def obs_f(self, obs):
-        obs = torch.as_tensor(np.asarray(obs))
-        obs = obs / 255.0
-        return obs
-
-    def act_f(self, act):
-        act = torch.as_tensor(np.asarray(act))
-        return act
+    def seq_f(self, x):
+        x["obs"] = torch.as_tensor(np.asarray(x["obs"]))
+        x["obs"] = x["obs"] / 255.0
+        x["act"] = torch.as_tensor(np.asarray(x["act"]))
+        return x
 
 
-class Helper:
+class API:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self._derive_spec()

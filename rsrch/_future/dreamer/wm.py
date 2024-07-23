@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 import torch
@@ -14,63 +15,94 @@ from .utils import find_class, null_ctx
 
 @dataclass
 class Config:
-    encoders: dict
+    encoder: dict
     decoders: dict
     rssm: rssm.Config
     opt: dict
     coef: dict
+    clip_grad: float | None
+    reward_fn: Literal["id", "clip", "tanh", "sign"]
+    clip_rew: tuple[float, float] | None
 
 
 class WorldModel(nn.Module):
     def __init__(
         self,
         cfg: Config,
-        spaces: dict[str, spaces.torch.Space],
+        obs_space: spaces.torch.Space,
+        act_space: spaces.torch.Space,
+        rew_space: spaces.torch.Space,
     ):
         super().__init__()
         self.cfg = cfg
-        self.spaces = spaces
+        self.obs_space = obs_space
+        self.act_space = act_space
+        self.rew_space = rew_space
 
-        self.encoders = nn.ModuleDict()
-        for key in cfg.encoders:
-            enc = nets.make_encoder(spaces[key], **cfg.encoders[key])
-            self.encoders[key] = enc
-
+        self.obs_enc = nets.make_encoder(self.obs_space, **cfg.encoder)
         self.act_enc = nets.ActionEncoder(spaces["act"])
 
         with safe_mode(self):
-            obs_size = 0
-            for key in cfg.encoders:
-                x = spaces[key].sample([1])
-                obs_size += self.encoders[key](x).shape[1]
+            obs: Tensor = self.obs_space.sample([1])
+            obs_size: int = self.obs_enc(obs).shape[1]
 
-            act: Tensor = spaces["act"].sample([1])
-            act_size: int = self.act_enc(act).shape[1]
+            act: Tensor = self.act_space.sample([1])
+            self.act_size: int = self.act_enc(act).shape[1]
 
-        self.rssm = rssm.RSSM(cfg.rssm, obs_size, act_size)
+        self.rssm = rssm.RSSM(cfg.rssm, obs_size, self.act_size)
 
         self.state_size = self.rssm.stoch_size + self.rssm.deter_size
 
+        spaces_ = {
+            "obs": obs_space,
+            "reward": rew_space,
+            "term": spaces.torch.Discrete(2),
+        }
+
         self.decoders = nn.ModuleDict()
-        for key in cfg.decoders:
-            dec = nets.make_decoder(self.state_size, spaces[key], **cfg.decoders[key])
+        for key in spaces_:
+            dec = nets.make_decoder(
+                self.state_size, spaces_[key], **self.cfg.decoders[key]
+            )
             self.decoders[key] = dec
+
+    def reset(self, obs):
+        state = self.rssm.initial
+        state = state[None].expand(len(obs), *state.shape)
+        obs = self.obs_enc(obs)
+        act = torch.zeros((len(obs), self.act_size)).type_as(obs)
+        return self.rssm.obs_step(state, act, obs)
+
+    def step(self, state, act, next_obs):
+        act = self.act_enc(act)
+        next_obs = self.obs_enc(next_obs)
+        return self.rssm.obs_step(state, act, next_obs)
 
 
 class Trainer:
     def __init__(
         self,
-        wm: WorldModel,
         cfg: Config,
         compute_dtype=None,
     ):
-        self.wm = wm
         self.cfg = cfg
         self.compute_dtype = compute_dtype
 
-        self.decoders: nn.ModuleDict
+        if cfg.reward_fn == "clip":
+            clip_low, clip_high = cfg.clip_rew
+            self.reward_space = spaces.torch.Box((), low=clip_low, high=clip_high)
+            self._reward_fn = lambda r: np.clip(r, *cfg.clip_rew)
+        elif cfg.reward_fn in ("sign", "tanh"):
+            self.reward_space = spaces.torch.Box((), low=-1.0, high=1.0)
+            self._reward_fn = np.sign if cfg.reward_fn == "sign" else np.tanh
+        elif cfg.reward_fn == "id":
+            self.reward_space = spaces.torch.Space((), dtype=torch.float32)
+            self._reward_fn = lambda r: r
 
+    def setup(self, wm: WorldModel):
+        self.wm = wm
         self.opt = self._make_opt()
+        self.parameters = self.wm.parameters()
         self._device = next(self.wm.parameters()).device
         self.scaler = getattr(torch, self._device.type).amp.GradScaler()
 
@@ -106,6 +138,7 @@ class Trainer:
         with self.autocast():
             enc_obs: Tensor = over_seq(self.wm.obs_enc)(batch["obs"])
             enc_act: Tensor = over_seq(self.wm.act_enc)(batch["act"])
+            batch["reward"] = self._reward_fn(batch["reward"])
 
             is_first = np.array([x is None for x in batch["start"]])
             enc_act[0, is_first].zero_()
@@ -165,7 +198,7 @@ class Trainer:
         self.scaler.scale(loss).backward()
         self.scaler.unscale_(self.opt)
         if self.cfg.clip_grad is not None:
-            nn.utils.clip_grad_norm_(self.parameters(), max_norm=self.cfg.clip_grad)
+            nn.utils.clip_grad_norm_(self.parameters, max_norm=self.cfg.clip_grad)
         self.scaler.step(self.opt)
         self.scaler.update()
 

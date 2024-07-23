@@ -46,7 +46,7 @@ class Buffer(Mapping):
     def reset(self, obs) -> int:
         seq_id = self._next_id
         self._next_id += 1
-        seq = {**{k: [v] for k, v in obs.items()}, "act": []}
+        seq = [obs]
         self.data[seq_id] = seq
         for hook in self.hooks:
             hook.on_create(seq_id, seq)
@@ -54,9 +54,7 @@ class Buffer(Mapping):
 
     def step(self, seq_id: int, act, next_obs):
         seq = self.data[seq_id]
-        seq["act"].append(act)
-        for k, v in next_obs.items():
-            seq[k].append(v)
+        seq.append({**next_obs, "act": act})
         for hook in self.hooks:
             hook.on_update(seq_id, seq)
 
@@ -100,7 +98,7 @@ class SizeLimited(Wrapper):
     def _check_size(self):
         while self.size >= self.cap:
             first_id = next(iter(self))
-            seq_size = len(self[first_id]["act"]) + 1
+            seq_size = len(self[first_id])
             del self[first_id]
             self.size -= seq_size
 
@@ -123,13 +121,16 @@ class Sampler:
         key_idx = self._key_to_idx[key]
         self.prio_tree[key_idx] = prio_value
 
+    def add(self, key):
+        self[key] = 1.0
+
     def __getitem__(self, key):
         key_idx = self._key_to_idx[key]
         return self.prio_tree[key_idx]
 
     def __delitem__(self, key):
         key_idx = self._key_to_idx[key]
-        self.prio_tree[key_idx] = 0
+        self.prio_tree[key_idx] = 0.0
         del self._key_to_idx[key]
 
     def sample(self):
@@ -167,9 +168,11 @@ class Steps(Hook):
 
     def sample(self):
         seq_id, offset = self._sampler.sample()
-        seq = self.buf[seq_id]
-        res = {k: v[offset] for k, v in seq.items()}
-        res["next_obs"] = seq["obs"][offset + 1]
+        res = self.buf[seq_id][offset + 1]
+        next_obs = res["obs"]
+        del res["obs"]
+        res["obs"] = self.buf[seq_id][offset]["obs"]
+        res["next_obs"] = next_obs
         return res
 
 
@@ -199,12 +202,4 @@ class Slices(Hook):
             del self._sampler[(seq_id, offset)]
 
     def sample(self):
-        seq_id, offset = self._sampler.sample()
-        seq = self.buf[seq_id]
-        res = {}
-        for k, v in seq.items():
-            if k == "act":
-                res[k] = v[offset : offset + self.slice_len - 1]
-            else:
-                res[k] = v[offset : offset + self.slice_len]
-        return res
+        raise NotImplementedError()

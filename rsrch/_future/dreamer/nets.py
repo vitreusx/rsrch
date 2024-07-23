@@ -283,8 +283,8 @@ def make_decoder(in_features: int, space: spaces.torch.Space, **args):
 
 class ActionEncoder(nn.Module):
     """An action encoder. We cannot use a regular encoder, because:
-    - the output of the actor needs to both be in the same format as the
-      output of the action encoder.
+    - the output of the actor needs to be in the same format as the
+      output of the action encoder, in particular differentiable
     - we need to be able to get the un-encoded action from this output, for use
       in the env interaction."""
 

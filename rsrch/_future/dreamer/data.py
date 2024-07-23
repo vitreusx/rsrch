@@ -1,10 +1,14 @@
+from typing import Literal
+
 import numpy as np
+import torch
 from torch.utils import data
 
+from rsrch import spaces
 from rsrch._future import rl
 
 
-class Dataset(data.IterableDataset):
+class Slices(data.IterableDataset):
     def __init__(
         self,
         buf: rl.Buffer,
@@ -106,6 +110,8 @@ class Dataset(data.IterableDataset):
                     r["act"] = [r["act"][0], *r["act"]]
             elif hasattr(vs, "__getitem__"):
                 r[k] = vs[start:stop]
+                if k == "reward":
+                    r[k] = self._reward_fn(r[k])
             else:
                 r[k] = vs
         return r

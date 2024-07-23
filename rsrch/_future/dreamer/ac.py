@@ -17,6 +17,8 @@ from .wm import WorldModel
 
 @dataclass
 class Config:
+    actor: dict
+    critic: dict
     opt: dict
     coef: dict
     target_critic: dict | None
@@ -24,6 +26,10 @@ class Config:
     actor_grad: Literal["dynamics", "reinforce", "auto"]
     horizon: int
     clip_grad: float | None
+    gamma: float
+    gae_lambda: float
+    actor_grad_mix: float
+    actor_ent: dict
 
 
 class Actor(nn.Module):
@@ -33,7 +39,7 @@ class Actor(nn.Module):
         self.cfg = cfg
 
         mlp = nets.MLP(wm.state_size, None, **cfg.actor)
-        head = nets.ActorHead(mlp.out_features, wm.spaces["act"])
+        head = nets.ActorHead(mlp.out_features, wm.act_space)
         self.net = nn.Sequential(rssm.AsTensor(), mlp, head)
 
     def forward(self, state: rssm.State):
@@ -46,6 +52,15 @@ class Actor(nn.Module):
         else:
             enc_act = enc_act_dist.mode
         return self.wm.act_enc.inverse(enc_act)
+
+
+class Critic(nn.Sequential):
+    def __init__(self, wm: WorldModel, cfg: Config):
+        vf_space = spaces.torch.Box((), dtype=torch.float32)
+        super().__init__(
+            rssm.AsTensor(),
+            nets.BoxDecoder(wm.state_size, vf_space, **cfg.critic),
+        )
 
 
 def gae_lambda(rew, val, gamma, bootstrap, lambda_):
@@ -64,44 +79,47 @@ def gae_lambda(rew, val, gamma, bootstrap, lambda_):
 class Trainer:
     def __init__(
         self,
-        wm: WorldModel,
-        actor: nn.Module,
-        make_critic: Callable[[], nn.Module],
         cfg: Config,
         compute_dtype: torch.dtype | None,
     ):
         super().__init__()
-        self.wm = wm
-        self.actor = actor
         self.cfg = cfg
         self.compute_dtype = compute_dtype
 
+        self.rew_norm = nets.StreamNorm(**cfg.rew_norm)
+        self.actor_grad_mix = self._make_sched(cfg.actor_grad_mix)
+        self.actor_ent = self._make_sched(cfg.actor_ent)
+
+    def setup(
+        self,
+        wm: WorldModel,
+        actor: Actor,
+        make_critic: Callable[[], nn.Module],
+    ):
+        self.wm = wm
+        self.actor = actor
+
         self.critic = make_critic()
 
-        if cfg.target_critic is not None:
+        if self.cfg.target_critic is not None:
             self.target_critic = make_critic()
             polyak.sync(self.critic, self.target_critic)
             self.update_target = polyak.Polyak(
                 source=self.critic,
                 target=self.target_critic,
-                **cfg.target_critic,
+                **self.cfg.target_critic,
             )
         else:
             self.target_critic = self.critic
 
-        self.rew_norm = nets.StreamNorm(**cfg.rew_norm)
-
-        if cfg.actor_grad == "auto":
-            discrete = isinstance(wm.act_enc.space, spaces.torch.Discrete)
+        if self.cfg.actor_grad == "auto":
+            discrete = isinstance(self.wm.act_space, spaces.torch.Discrete)
             self.actor_grad = "reinforce" if discrete else "dynamics"
         else:
-            self.actor_grad = cfg.actor_grad
-        self.actor_grad_mix = self._make_sched(cfg.actor_grad_mix)
-
-        self.actor_ent = self._make_sched(cfg.actor_ent)
+            self.actor_grad = self.cfg.actor_grad
 
         self.opt = self._make_opt()
-        self._params = [*self.actor.parameters(), *self.critic.parameters()]
+        self.parameters = [*self.actor.parameters(), *self.critic.parameters()]
         self.opt_iter = 0
         self._device = next(self.actor.parameters()).device
         self.scaler = getattr(torch, self._device.type).amp.GradScaler()
@@ -166,10 +184,10 @@ class Trainer:
         no_grad = torch.no_grad if self.actor_grad == "reinforce" else null_ctx
         with no_grad():
             with self.autocast():
-                rew_dist = over_seq(self.wm.reward_dec)(states)
+                rew_dist = over_seq(self.wm.decoders["reward"])(states)
                 reward = self.rew_norm(rew_dist.mode)
 
-                term_dist = over_seq(self.wm.term_dec)(states)
+                term_dist = over_seq(self.wm.decoders["term"])(states)
                 term = term_dist.mean
                 term[0] = batch["term"].float()
                 gamma = self.cfg.gamma * (1.0 - term)
@@ -228,7 +246,7 @@ class Trainer:
         self.scaler.scale(loss).backward()
         self.scaler.unscale_(self.opt)
         if self.cfg.clip_grad is not None:
-            nn.utils.clip_grad_norm_(self._params, max_norm=self.cfg.clip_grad)
+            nn.utils.clip_grad_norm_(self.parameters, max_norm=self.cfg.clip_grad)
         self.scaler.step(self.opt)
         self.scaler.update()
 
