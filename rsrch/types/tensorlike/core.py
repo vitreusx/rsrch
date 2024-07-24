@@ -448,3 +448,9 @@ class Tensorlike:
 
     def type_as(self, other: torch.Tensor):
         return self.to(dtype=other.dtype, device=other.device)
+
+    def cpu(self):
+        return self.to(device="cpu")
+    
+    def cuda(self):
+        return self.to(device="cuda")

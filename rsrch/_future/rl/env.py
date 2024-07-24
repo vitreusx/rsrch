@@ -63,14 +63,14 @@ class Agent(ABC):
 
 
 class VecAgent(ABC):
-    def reset(self, idxes, obs):
+    def reset(self, idxes: np.ndarray, obs):
         pass
 
     @abstractmethod
-    def policy(self, idxes):
+    def policy(self, idxes: np.ndarray):
         ...
 
-    def step(self, idxes, act, next_obs):
+    def step(self, idxes: np.ndarray, act, next_obs):
         pass
 
     def subagents(
@@ -97,7 +97,8 @@ class VecAgent(ABC):
                     calls[x[0]].append(x[1:])
 
                 for call, args in calls.items():
-                    args = tuple(zip(*args))
+                    args = [*zip(*args)]
+                    args[0] = np.asarray(args[0])
                     results = getattr(self, call)(*args)
                     if results is None:
                         results = [None for _ in range(batch_size)]

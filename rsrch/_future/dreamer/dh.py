@@ -88,6 +88,7 @@ class Bernoulli(nn.Module):
     def __init__(
         self,
         layer_ctor: Callable[[int], nn.Module],
+        space: spaces.torch.Discrete,
     ):
         super().__init__()
         self.layer = layer_ctor(1)
@@ -136,16 +137,16 @@ class Discrete(nn.Module):
     def __init__(
         self,
         layer_ctor: Callable[[int], nn.Module],
-        num_tokens: int,
-        token_size: int,
+        space: spaces.torch.TokenSeq,
     ):
         super().__init__()
-        self.num_tokens = num_tokens
-        self.token_size = token_size
-        self.layer = layer_ctor(num_tokens * token_size)
+        self.space = space
+        self.num_tokens, self.vocab_size = space.num_tokens, space.vocab_size
+        self.layer = layer_ctor(space.num_tokens * space.vocab_size)
 
     def forward(self, input: Tensor):
         logits: Tensor = self.layer(input)
+        logits = logits.reshape(-1, self.num_tokens, self.vocab_size)
         return D.Discrete(logits=logits)
 
 

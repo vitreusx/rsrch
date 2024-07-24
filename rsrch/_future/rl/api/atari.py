@@ -132,6 +132,25 @@ class EpisodicLifeEnv(gym.Wrapper):
         return obs, info
 
 
+class RecordTotalSteps(gym.Wrapper):
+    def __init__(self, env: gym.Env):
+        super().__init__(env)
+        self._total_steps = 0
+    
+    def reset(self, **kwargs):
+        obs, info = super().reset(**kwargs)
+        self._total_steps += 1
+        info["total_steps"]= self._total_steps
+        return obs, info
+    
+    def step(self, action):
+        next_obs, reward, term, trunc, info = super().step(action)
+        self._total_steps += 1
+        info["total_steps"]= self._total_steps
+        return next_obs, reward, term, trunc, info
+
+
+
 class ToChannelLast(gym.ObservationWrapper):
     def __init__(self, env: gym.Env):
         super().__init__(env)
@@ -144,21 +163,21 @@ class ToChannelLast(gym.ObservationWrapper):
         return np.transpose(x, (2, 0, 1))
 
 
-class EnvEpilog(env.Env):
-    def __init__(self, env: env.Env):
-        self.env = env
-        self.obs_space = env.obs_space
-        self.act_space = env.act_space
+# class EnvEpilog(env.Env):
+#     def __init__(self, env: env.Env):
+#         self.env = env
+#         self.obs_space = env.obs_space
+#         self.act_space = env.act_space
 
-    def reset(self):
-        step = self.env.reset()
-        step["total_steps"] = step["frame_number"]
-        return step
+#     def reset(self):
+#         step = self.env.reset()
+#         step["total_steps"] = step["frame_number"]
+#         return step
 
-    def step(self, act):
-        step, final = self.env.step()
-        step["total_steps"] = step["frame_number"]
-        return step, final
+#     def step(self, act):
+#         step, final = self.env.step()
+#         step["total_steps"] = step["frame_number"]
+#         return step, final
 
 
 class VecAgentWrapper(env.VecAgent):
@@ -294,6 +313,7 @@ class API:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self._derive_spec()
+        self.id = self.cfg.env_id
 
     def _derive_spec(self):
         env = self._env(mode="val", seed=0, render=False)
@@ -322,8 +342,8 @@ class API:
         seed: int | None = None,
     ):
         envs = None
-        if self.cfg.use_envpool and not render:
-            envs = self._try_envpool(num_envs, mode, seed)
+        # if self.cfg.use_envpool and not render:
+        #     envs = self._try_envpool(num_envs, mode, seed)
 
         if envs is None:
             if seed is None:
@@ -339,8 +359,7 @@ class API:
                     envs.append(env.ProcEnv(env_fn(env_idx)))
             else:
                 envs = [self._env(mode, seed, render)]
-
-        envs = [EnvEpilog(e) for e in envs]
+        
         return envs
 
     def _try_envpool(
@@ -405,6 +424,7 @@ class API:
                 render_mode="rgb_array" if render else None,
                 obs_type=self.cfg.obs_type,
             )
+            env_ = RecordTotalSteps(env_)
             env_ = gym.wrappers.AtariPreprocessing(
                 env=env_,
                 frame_skip=self.cfg.frame_skip,

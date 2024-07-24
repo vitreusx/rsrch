@@ -7,6 +7,7 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 
+from rsrch import spaces
 import rsrch.distributions as D
 from rsrch.nn.utils import over_seq, pass_gradient, safe_mode
 from rsrch.types import Tensorlike
@@ -43,7 +44,7 @@ class State(Tensorlike):
         return self
 
     def as_tensor(self):
-        if self._as_tensor is not None:
+        if self._as_tensor is None:
             self._as_tensor = torch.cat((self.deter, self.stoch), -1)
         return self._as_tensor
 
@@ -136,10 +137,21 @@ class GenericRSSM(nn.Module):
 
     def _stoch_ctor(self, cfg: dict):
         cfg = {**cfg}
-        cls = find_class(dh, cfg["type"])
+        typ = cfg["type"]
         del cfg["type"]
-        return partial(cls, **cfg)
 
+        def ctor(in_features: int):
+            layer_ctor = partial(nn.Linear, in_features)
+            if typ == "discrete":
+                space = spaces.torch.TokenSeq(**cfg)
+                return dh.Discrete(layer_ctor, space)
+            elif typ == "normal":
+                space = spaces.torch.Space((cfg["size"],))
+                del cfg["size"]
+                return dh.Normal(layer_ctor, space, **cfg)
+        
+        return ctor
+    
     @property
     def initial(self):
         return State(self.deter0, self.stoch0)
@@ -223,7 +235,7 @@ class OptRSSM(nn.Module):
             cfg.ensemble == 1
             and cfg.norm == "none"
             and cfg.act == "elu"
-            and cfg.stoch["$type"] == "discrete"
+            and cfg.stoch["type"] == "discrete"
         ):
             raise RuntimeError("Cannot use optimized RSSM")
 
@@ -245,7 +257,6 @@ class OptRSSM(nn.Module):
         self.register_buffer("deter0", torch.zeros(self.deter_size))
         self.register_buffer("stoch0", torch.zeros(self.stoch_size))
 
-    @torch.jit.ignore
     @property
     def initial(self):
         return State(self.deter0, self.stoch0)
@@ -350,11 +361,12 @@ class OptRSSM(nn.Module):
 
 
 def RSSM(cfg: Config, obs_size: int, act_size: int) -> OptRSSM | GenericRSSM:
-    try:
-        module = OptRSSM(cfg, obs_size, act_size)
-        module: OptRSSM = torch.jit.script(module)
-    except:
-        module = GenericRSSM(cfg, obs_size, act_size)
+    # try:
+    #     module = OptRSSM(cfg, obs_size, act_size)
+    #     module: OptRSSM = torch.jit.script(module)
+    # except:
+    #     module = GenericRSSM(cfg, obs_size, act_size)
+    module = GenericRSSM(cfg, obs_size, act_size)
     return module
 
 

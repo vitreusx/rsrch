@@ -39,8 +39,8 @@ class WorldModel(nn.Module):
         self.act_space = act_space
         self.rew_space = rew_space
 
-        self.obs_enc = nets.make_encoder(self.obs_space, **cfg.encoder)
-        self.act_enc = nets.ActionEncoder(spaces["act"])
+        self.obs_enc = self._make_encoder(self.obs_space, **cfg.encoder)
+        self.act_enc = nets.ActionEncoder(self.act_space)
 
         with safe_mode(self):
             obs: Tensor = self.obs_space.sample([1])
@@ -61,15 +61,23 @@ class WorldModel(nn.Module):
 
         self.decoders = nn.ModuleDict()
         for key in spaces_:
-            dec = nets.make_decoder(
-                self.state_size, spaces_[key], **self.cfg.decoders[key]
-            )
+            dec = self._make_decoder(spaces_[key], **self.cfg.decoders[key])
             self.decoders[key] = dec
+
+    def _make_encoder(self, space: spaces.torch.Space, **args):
+        cls = find_class(nets, args["type"] + "_encoder")
+        del args["type"]
+        return cls(space, **args)
+
+    def _make_decoder(self, space: spaces.torch.Space, **args):
+        cls = find_class(nets, args["type"] + "_decoder")
+        del args["type"]
+        return cls(self.state_size, space, **args)
 
     def reset(self, obs):
         state = self.rssm.initial
         state = state[None].expand(len(obs), *state.shape)
-        obs = self.obs_enc(obs)
+        obs = self.obs_enc(obs.to(state.device))
         act = torch.zeros((len(obs), self.act_size)).type_as(obs)
         return self.rssm.obs_step(state, act, obs)
 

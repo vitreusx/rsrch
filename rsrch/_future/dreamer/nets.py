@@ -198,7 +198,7 @@ class DiscreteEncoder(nn.Module):
         return input.argmax(-1)
 
 
-def make_encoder(space: spaces.torch.Space, **args):
+def AutoEncoder(space: spaces.torch.Space, **args):
     if type(space) == spaces.torch.Image:
         return ImageEncoder(space, **args.get("image", {}))
     elif type(space) == spaces.torch.Box:
@@ -272,7 +272,7 @@ class DiscreteDecoder(nn.Sequential):
         super().__init__(mlp, head)
 
 
-def make_decoder(in_features: int, space: spaces.torch.Space, **args):
+def AutoDecoder(in_features: int, space: spaces.torch.Space, **args):
     if type(space) == spaces.torch.Image:
         return ImageDecoder(in_features, space, **args.get("image", {}))
     elif type(space) == spaces.torch.Box:

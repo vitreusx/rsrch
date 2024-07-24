@@ -14,6 +14,7 @@ class Config:
 
 
 class API(Protocol):
+    id: str
     obs_space: spaces.torch.Space
     act_space: spaces.torch.Space
 

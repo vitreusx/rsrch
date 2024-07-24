@@ -28,8 +28,8 @@ class Config:
     clip_grad: float | None
     gamma: float
     gae_lambda: float
-    actor_grad_mix: float
-    actor_ent: dict
+    actor_grad_mix: float | dict
+    actor_ent: float | dict
 
 
 class Actor(nn.Module):
@@ -127,8 +127,8 @@ class Trainer:
     def _make_opt(self):
         cfg = {**self.cfg.opt}
 
-        cls = find_class(torch.optim, cfg["$type"])
-        del cfg["$type"]
+        cls = find_class(torch.optim, cfg["type"])
+        del cfg["type"]
 
         actor, critic = cfg["actor"], cfg["critic"]
         del cfg["actor"]
@@ -149,8 +149,8 @@ class Trainer:
             return sched.Constant(cfg)
         else:
             cfg = {**cfg}
-            cls = getattr(sched, cfg["$type"])
-            del cfg["$type"]
+            cls = getattr(sched, cfg["type"])
+            del cfg["type"]
             return cls(**cfg)
 
     def save(self):

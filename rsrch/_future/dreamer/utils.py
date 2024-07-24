@@ -17,7 +17,7 @@ def null_ctx():
     yield
 
 
-def autocast(device=None, dtype=None):
+def autocast(device: torch.device, dtype: torch.dtype | None =None):
     if dtype is not None:
         return torch.autocast(
             device_type=device.type,
@@ -25,3 +25,4 @@ def autocast(device=None, dtype=None):
         )
     else:
         return null_ctx()
+ 

@@ -24,12 +24,21 @@ class Config:
 
     @dataclass
     class Train:
-        buffer: dict
+        @dataclass
+        class Dataset:
+            capacity: int
+            batch_size: int
+            slice_len: int
+            ongoing: bool = False
+            subseq_len: int | tuple[int, int] | None = None
+            prioritize_ends: bool = False
+        
+        dataset: Dataset
         val_frac: float
         agent: agent.Config
         num_envs: int
-        prefill: dict
-        total: dict
+        prefill: int | dict
+        total: int | dict
 
     seed: int
     device: str
@@ -63,15 +72,15 @@ class Runner:
         self.device = torch.device(self.cfg.device)
         self.compute_dtype = getattr(torch, self.cfg.compute_dtype)
 
+        self.env_api = rl.api.make(self.cfg.env)
+
         self.exp = Experiment(
             project="dreamerv2",
-            run=f"{self.cfg.env.id}__{timestamp()}",
+            run=f"{self.env_api.id}__{timestamp()}",
             config=asdict(self.cfg),
         )
 
         self.pbar = self.exp.pbar(desc="DreamerV2")
-
-        self.env_api = rl.api.make(self.cfg.env)
 
         # We need the trainer to deduce the reward space, even if we don't
         # run the training.
@@ -90,7 +99,8 @@ class Runner:
     def _tf_init(self, module: nn.Module):
         if isinstance(module, (nn.Linear, nn.Conv2d, nn.ConvTranspose2d)):
             nn.init.xavier_uniform_(module.weight)
-            nn.init.zeros_(module.bias)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
 
     def save(self, full=False):
         state = {"wm": self.wm.state_dict(), "actor": self.actor.state_dict()}
@@ -116,9 +126,9 @@ class Runner:
 
         self.buf = buffer.Buffer()
 
-        buf_cfg = {**cfg.buffer}
-        self.buf = buffer.SizeLimited(self.buf, cap=buf_cfg["capacity"])
-        del buf_cfg["capacity"]
+        dataset_cfg = {**vars(cfg.dataset)}
+        self.buf = buffer.SizeLimited(self.buf, cap=dataset_cfg["capacity"])
+        del dataset_cfg["capacity"]
 
         train_ids, val_ids = set(), set()
 
@@ -142,7 +152,7 @@ class Runner:
         self.train_ds = data.Slices(
             buf=self.buf,
             sampler=self.train_sampler,
-            **buf_cfg,
+            **dataset_cfg,
         )
         self.batch_iter = iter(self.train_ds)
 
@@ -187,7 +197,7 @@ class Runner:
         while should_prefill:
             self.take_env_step()
 
-        self.agent.mode = "train"
+        self.agent.mode = "expl"
         should_train = self._make_until(cfg.total)
 
         self.opt_step = 0
