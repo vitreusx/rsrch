@@ -7,8 +7,8 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 
-from rsrch import spaces
 import rsrch.distributions as D
+from rsrch import spaces
 from rsrch.nn.utils import over_seq, pass_gradient, safe_mode
 from rsrch.types import Tensorlike
 
@@ -149,9 +149,9 @@ class GenericRSSM(nn.Module):
                 space = spaces.torch.Space((cfg["size"],))
                 del cfg["size"]
                 return dh.Normal(layer_ctor, space, **cfg)
-        
+
         return ctor
-    
+
     @property
     def initial(self):
         return State(self.deter0, self.stoch0)
@@ -162,8 +162,8 @@ class GenericRSSM(nn.Module):
         act: Tensor,
         state: State,
         sample: bool = True,
-    ) -> tuple[StateDist, StateDist]:
-        posts, priors = [], []
+    ) -> tuple[State, StateDist, StateDist]:
+        states, posts, priors = [], [], []
 
         for t in range(obs.shape[0]):
             deter = self._img_cell(state, act[t])
@@ -173,10 +173,12 @@ class GenericRSSM(nn.Module):
             posts.append(StateDist(deter=deter, stoch=post))
             stoch = post.rsample() if sample else post.mode
             state = State(deter, stoch)
+            states.append(state)
 
+        states = torch.stack(states)
         posts = torch.stack(posts)
         priors = torch.stack(priors)
-        return posts, priors
+        return states, posts, priors
 
     def obs_step(
         self,

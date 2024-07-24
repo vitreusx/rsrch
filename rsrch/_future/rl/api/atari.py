@@ -136,19 +136,18 @@ class RecordTotalSteps(gym.Wrapper):
     def __init__(self, env: gym.Env):
         super().__init__(env)
         self._total_steps = 0
-    
+
     def reset(self, **kwargs):
         obs, info = super().reset(**kwargs)
         self._total_steps += 1
-        info["total_steps"]= self._total_steps
+        info["total_steps"] = self._total_steps
         return obs, info
-    
+
     def step(self, action):
         next_obs, reward, term, trunc, info = super().step(action)
         self._total_steps += 1
-        info["total_steps"]= self._total_steps
+        info["total_steps"] = self._total_steps
         return next_obs, reward, term, trunc, info
-
 
 
 class ToChannelLast(gym.ObservationWrapper):
@@ -297,12 +296,14 @@ class BufferWrapper(buffer.Wrapper):
         return super().step(seq_id, act, next_obs)
 
     def __getitem__(self, seq_id: int):
-        seq = {**self.buf[seq_id]}
-        seq = StackSeq(seq, stack_num=self.stack_num)
+        seq = [*self.buf[seq_id]]
+        if self.stack_num is not None:
+            seq = StackSeq(seq, stack_num=self.stack_num)
         seq = MapSeq(seq, self.seq_f)
         return seq
 
-    def seq_f(self, x):
+    def seq_f(self, x: dict) -> dict:
+        x = {**x}
         x["obs"] = torch.as_tensor(np.asarray(x["obs"]))
         x["obs"] = x["obs"] / 255.0
         x["act"] = torch.as_tensor(np.asarray(x["act"]))
@@ -359,7 +360,7 @@ class API:
                     envs.append(env.ProcEnv(env_fn(env_idx)))
             else:
                 envs = [self._env(mode, seed, render)]
-        
+
         return envs
 
     def _try_envpool(

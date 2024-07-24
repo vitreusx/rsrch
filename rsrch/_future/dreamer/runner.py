@@ -32,7 +32,7 @@ class Config:
             ongoing: bool = False
             subseq_len: int | tuple[int, int] | None = None
             prioritize_ends: bool = False
-        
+
         dataset: Dataset
         val_frac: float
         agent: agent.Config
@@ -130,33 +130,42 @@ class Runner:
         self.buf = buffer.SizeLimited(self.buf, cap=dataset_cfg["capacity"])
         del dataset_cfg["capacity"]
 
-        train_ids, val_ids = set(), set()
+        self.buf = self.env_api.wrap_buffer(self.buf)
+
+        self.train_sampler = buffer.Sampler()
+        val_ids = set()
 
         class SplitHook(buffer.Hook):
-            def __init__(self):
-                self._g = np.random.default_rng()
+            def __init__(hook):
+                hook._g = np.random.default_rng()
 
-            def on_create(self, seq_id: int, seq: dict):
-                is_val = self._g.random() < cfg.val_frac
-                (val_ids if is_val else train_ids).add(seq_id)
+            def on_create(hook, seq_id: int, seq: dict):
+                is_val = hook._g.random() < cfg.val_frac
+                if is_val:
+                    val_ids.add(seq_id)
+                else:
+                    self.train_sampler.add(seq_id)
 
-            def on_delete(self, seq_id: int, seq: dict):
+            def on_delete(hook, seq_id: int, seq: dict):
                 if seq_id in val_ids:
                     val_ids.remove(seq_id)
-                elif seq_id in train_ids:
-                    train_ids.remove(seq_id)
+                else:
+                    del self.train_sampler[seq_id]
 
         self.buf.hooks.append(SplitHook())
 
-        self.train_sampler = buffer.Sampler()
         self.train_ds = data.Slices(
             buf=self.buf,
             sampler=self.train_sampler,
             **dataset_cfg,
         )
-        self.batch_iter = iter(self.train_ds)
 
-        self.val_sampler = buffer.Sampler()
+        self.train_loader = data.DataLoader(
+            dataset=self.train_ds,
+            batch_size=cfg.dataset.batch_size,
+            collate_fn=self.train_ds.collate_fn,
+        )
+        self.batch_iter = iter(self.train_loader)
 
         self.wm_trainer.setup(self.wm)
 
@@ -174,6 +183,8 @@ class Runner:
         self._ep_ids = defaultdict(lambda: None)
         self._ep_rets = defaultdict(lambda: 0.0)
         self._env_steps = defaultdict(lambda: 0)
+
+        self._prev_states = {}
 
         self.env_step = 0
         self.exp.register_step("env_step", lambda: self.env_step, default=True)
@@ -207,23 +218,53 @@ class Runner:
             with self.buf_mtx:
                 wm_batch = next(self.batch_iter)
 
+            wm_batch = self._move_to_device(wm_batch)
+
+            for pos in self._prev_states:
+                if pos not in wm_batch["pos"]:
+                    del self._prev_states[pos]
+
+            starts = []
+            for pos in wm_batch["pos"]:
+                state = self._prev_states.get(pos, None)
+                starts.append(state)
+            wm_batch["start"] = starts
+
             with self.fwd_mtx:
                 loss, metrics, states = self.wm_trainer.compute(wm_batch)
 
             self.wm_trainer.opt_step(loss)
 
+            slice_len = len(states)
+            for idx, (seq_id, offset) in enumerate(wm_batch["pos"]):
+                last = offset + slice_len
+                self._prev_states[seq_id, last] = states[-1, idx]
+
             for k, v in metrics.items():
                 self.exp.add_scalar(f"wm/{k}", v)
 
-            ac_batch = {"states": states[-1], "term": wm_batch["term"]}
+            ac_batch = {
+                "states": states.flatten(),
+                "term": wm_batch["term"].flatten(),
+            }
+
             with self.fwd_mtx:
                 loss, metrics = self.ac_trainer.compute(ac_batch)
+
             self.ac_trainer.opt_step(loss)
 
             for k, v in metrics.items():
                 self.exp.add_scalar(f"ac/{k}", v)
 
             self.opt_step += 1
+
+    def _move_to_device(self, batch: dict):
+        res = {}
+        for k, v in batch.items():
+            if isinstance(v, Tensor):
+                v = v.to(self.device)
+            res[k] = v
+        return res
 
     def _make_until(self, cfg):
         if isinstance(cfg, dict):

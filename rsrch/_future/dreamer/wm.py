@@ -23,6 +23,7 @@ class Config:
     clip_grad: float | None
     reward_fn: Literal["id", "clip", "tanh", "sign"]
     clip_rew: tuple[float, float] | None
+    kl: dict
 
 
 class WorldModel(nn.Module):
@@ -72,7 +73,10 @@ class WorldModel(nn.Module):
     def _make_decoder(self, space: spaces.torch.Space, **args):
         cls = find_class(nets, args["type"] + "_decoder")
         del args["type"]
-        return cls(self.state_size, space, **args)
+        return nn.Sequential(
+            rssm.AsTensor(),
+            cls(self.state_size, space, **args),
+        )
 
     def reset(self, obs):
         state = self.rssm.initial
@@ -99,10 +103,10 @@ class Trainer:
         if cfg.reward_fn == "clip":
             clip_low, clip_high = cfg.clip_rew
             self.reward_space = spaces.torch.Box((), low=clip_low, high=clip_high)
-            self._reward_fn = lambda r: np.clip(r, *cfg.clip_rew)
+            self._reward_fn = lambda r: torch.clamp(r, *cfg.clip_rew)
         elif cfg.reward_fn in ("sign", "tanh"):
             self.reward_space = spaces.torch.Box((), low=-1.0, high=1.0)
-            self._reward_fn = np.sign if cfg.reward_fn == "sign" else np.tanh
+            self._reward_fn = torch.sign if cfg.reward_fn == "sign" else torch.tanh
         elif cfg.reward_fn == "id":
             self.reward_space = spaces.torch.Space((), dtype=torch.float32)
             self._reward_fn = lambda r: r
@@ -160,7 +164,7 @@ class Trainer:
             losses["kl"] = kl_loss
             mets["kl_value"] = kl_value.detach().mean()
 
-            for name, decoder in self.decoders.items():
+            for name, decoder in self.wm.decoders.items():
                 recon: D.Distribution = over_seq(decoder)(states)
                 losses[name] = -recon.log_prob(batch[name]).mean()
 

@@ -3,6 +3,7 @@ from typing import Literal
 import numpy as np
 import torch
 from torch.utils import data
+from torch.utils.data import DataLoader
 
 from rsrch import spaces
 from rsrch._future import rl
@@ -43,19 +44,18 @@ class Slices(data.IterableDataset):
 
         while True:
             for ep_idx in [*cur_eps]:
-                seq, begin = cur_eps[ep_idx]
-                end = begin + self.slice_len
-                if end > len(seq["obs"]):
+                ep = cur_eps[ep_idx]
+                if ep["start"] + self.slice_len > ep["stop"]:
                     del cur_eps[ep_idx]
                     continue
 
             while len(cur_eps) < self.batch_size:
                 ep_id = next(ep_id_iter)
                 seq = self.buf[ep_id]
-                if not self.ongoing and not seq["term"]:
+                if not self.ongoing and not seq[-1]["term"]:
                     continue
 
-                total = len(seq["obs"])
+                total = len(seq)
                 if total < self.minlen:
                     continue
 
@@ -71,47 +71,52 @@ class Slices(data.IterableDataset):
 
                 index = min(np.random.randint(upper), total - length)
 
-                subseq = self._subseq(seq, index, index + length)
-                subseq["seq_idx"] = next_idx
-                cur_eps[next_idx] = [subseq, 0]
-
+                cur_eps[next_idx] = {
+                    "seq": seq,
+                    "start": index,
+                    "stop": index + length,
+                    "ep_id": ep_id,
+                    "pos": (next_idx, index),
+                }
                 next_idx += 1
 
             batch = []
             for ep_idx in [*cur_eps]:
-                seq, begin = cur_eps[ep_idx]
-                end = begin + self.slice_len
+                ep = cur_eps[ep_idx]
 
-                subseq = {}
-                for k, v in seq.items():
-                    if hasattr(v, "__getitem__"):
-                        subseq[k] = v[begin:end]
-                    else:
-                        subseq[k] = v
-
+                cur_stop = ep["start"] + self.slice_len
+                subseq = self._subseq(ep["seq"], ep["start"], cur_stop)
+                for k in ("ep_id", "pos"):
+                    subseq[k] = ep[k]
                 batch.append(subseq)
-                cur_eps[ep_idx] = [seq, end]
+
+                ep["start"] = cur_stop
 
             yield from batch
 
-    def dataloader(self):
-        return data.DataLoader(
-            dataset=self,
-            batch_size=self.batch_size,
-            pin_memory=True,
-        )
+    def _subseq(self, seq: list[dict], start, stop):
+        seq = seq[start:stop]
 
-    def _subseq(self, seq: dict, start, stop):
-        r = {}
-        for k, vs in seq.items():
-            if k == "act":
-                r["act"] = vs[max(start - 1, 0) : stop - 1]
-                if start == 0:
-                    r["act"] = [r["act"][0], *r["act"]]
-            elif hasattr(vs, "__getitem__"):
-                r[k] = vs[start:stop]
-                if k == "reward":
-                    r[k] = self._reward_fn(r[k])
-            else:
-                r[k] = vs
-        return r
+        res = {
+            "obs": torch.stack([step["obs"] for step in seq]),
+            "reward": torch.tensor(np.array([step["reward"] for step in seq])),
+            "term": torch.tensor(np.array([step["term"] for step in seq])),
+        }
+
+        res["act"] = [step.get("act", None) for step in seq]
+        if res["act"][0] is None:
+            res["act"][0] = torch.zeros_like(res["act"][-1])
+        res["act"] = torch.stack(res["act"])
+
+        return res
+
+    @staticmethod
+    def collate_fn(batch):
+        return {
+            "obs": torch.stack([seq["obs"] for seq in batch], 1),
+            "act": torch.stack([seq["act"] for seq in batch], 1),
+            "reward": torch.stack([seq["reward"] for seq in batch], 1),
+            "term": torch.stack([seq["term"] for seq in batch], 1),
+            "ep_id": np.asarray([seq["ep_id"] for seq in batch]),
+            "pos": [seq["pos"] for seq in batch],
+        }

@@ -74,9 +74,38 @@ class Buffer(Mapping):
 class Wrapper:
     def __init__(self, buf: Buffer):
         self.buf = buf
+        self._unwrapped: Buffer = getattr(buf, "_unwrapped", buf)
 
-    def __getattr__(self, __name):
-        return getattr(self.buf, __name)
+    @property
+    def hooks(self):
+        return self._unwrapped.hooks
+
+    def save(self):
+        return self._unwrapped.save()
+
+    def load(self, state):
+        self._unwrapped.load(state)
+
+    def __iter__(self):
+        return iter(self._unwrapped)
+
+    def __len__(self):
+        return len(self._unwrapped)
+
+    def __getitem__(self, seq_id: int):
+        return self.buf[seq_id]
+
+    def __delitem__(self, seq_id: int):
+        del self.buf[seq_id]
+
+    def reset(self, obs):
+        return self.buf.reset(obs)
+
+    def step(self, seq_id, act, next_obs):
+        return self.buf.step(seq_id, act, next_obs)
+
+    def push(self, seq_id, step, final):
+        return self._unwrapped.push(seq_id, step, final)
 
 
 class SizeLimited(Wrapper):
