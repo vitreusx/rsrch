@@ -85,16 +85,19 @@ class Box(Space):
         sample_size: tuple[int, ...] = (),
         gen: np.random.Generator | None = None,
     ):
-        if gen is None:
-            gen = np.random.random.__self__
-
         shape = [*sample_size, *self.shape]
         if np.issubdtype(self.dtype, np.floating):
-            u = np.random.random(shape, self.dtype)
+            if gen is None:
+                u = np.random.rand(shape, self.dtype)
+            else:
+                u = gen.random(shape, self.dtype)
             u = np.where(self.bounded, u * (self.high - self.low), u)
             u = np.where(self.bounded_below, self.low + u, u)
         elif np.issubdtype(self.dtype, np.integer):
-            u = gen.integers(self.low, self.high, shape, self.dtype)
+            if gen is None:
+                u = np.random.randint(self.low, self.high, size=shape, dtype=self.dtype)
+            else:
+                u = gen.integers(self.low, self.high, size=shape, dtype=self.dtype)
         return u
 
     def __repr__(self):
@@ -131,13 +134,12 @@ class Image(Box):
         *,
         dtype: np.dtype = np.uint8,
         channel_last=True,
-        seed: np.random.Generator | None = None,
     ):
         if dtype == np.uint8:
             low, high = 0, 255
         elif dtype == np.float32:
             low, high = 0.0, 1.0
-        super().__init__(shape, low=low, high=high, dtype=dtype, seed=seed)
+        super().__init__(shape, low=low, high=high, dtype=dtype)
 
         self.channel_last = channel_last
         if channel_last:

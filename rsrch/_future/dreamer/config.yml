@@ -1,8 +1,8 @@
-vars:
+_vars:
   act: &act elu
   norm: &norm none
   conv: &conv
-    depth: &depth 48 
+    depth: &depth 48
     kernels: [4, 4, 4, 4]
     act: *act
     norm: *norm
@@ -43,6 +43,7 @@ wm:
     act: *act
     norm: *norm
     hidden_size: 1024
+    jit: true
   opt:
     type: adam_w
     lr: 1e-4
@@ -66,14 +67,14 @@ wm:
       type: auto
       box:
         <<: [*mlp]
-        dist: {type: mse}
+        dist: { type: mse }
       image:
         <<: [*conv_t]
-        dist: {type: mse}
+        dist: { type: mse }
     reward:
       type: box
       <<: [*mlp]
-      dist: {type: mse}
+      dist: { type: mse }
     term:
       type: discrete
       <<: [*mlp]
@@ -81,8 +82,8 @@ ac:
   actor: *mlp
   critic:
     <<: [*mlp]
-    dist: {type: mse}
-  target_critic: {every: 100}
+    dist: { type: mse }
+  target_critic: { every: 100 }
   opt:
     type: adam_w
     actor: { lr: 8e-5, weight_decay: "${1e-6/lr}" }
@@ -102,6 +103,10 @@ ac:
   coef: {}
 debug:
   deterministic: false
+profile:
+  enabled: false
+  schedule: { wait: 5, warmup: 1, active: 3, repeat: 4 }
+  functions: [_opt_step, take_env_step]
 mode: train
 train:
   dataset:
@@ -119,3 +124,4 @@ train:
   prefill: 10e3
   total: 100e6
   opt_every: 5
+  log_every: 16

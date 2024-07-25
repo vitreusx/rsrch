@@ -1,0 +1,20 @@
+atari:
+  env:
+    type: atari
+    atari.env_id: Pong-v5
+  wm:
+    rssm.deter_size: 600
+    rssm.hidden_size: 600
+    opt.lr: 2e-4
+    coef: { kl: 0.1, term: 5.0 }
+  ac:
+    gamma: 0.999
+    actor_ent: 1e-3
+    opt.actor.lr: 4e-5
+    opt.critic.lr: 1e-4
+  train:
+    prefill: 100e3
+    total: 200e6
+    opt_every: 64
+  # profile:
+  #   enabled: true

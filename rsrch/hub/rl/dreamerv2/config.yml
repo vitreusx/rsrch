@@ -77,11 +77,6 @@ wm:
     term:
       $type: discrete
       <<: [*fc]
-  train_mode: step
-  stop_criteria:
-    margin: 0.0
-    patience: 5
-  val_every: 256
 ac:
   actor: *fc
   critic:
@@ -112,7 +107,6 @@ total: { n: 100e6, of: env_step }
 prefill: { n: 10e3, of: env_step }
 log_every: { n: 8, of: opt_step }
 save_every: { n: "${total.n/10}", of: "${total.of}" }
-mode: train
 trainer:
   mode: iterative
   basic:
@@ -130,16 +124,13 @@ trainer:
         min_steps: 10e3
     wm: *iterative
     ac: *iterative
-sampler: ~
 dataset:
   capacity: 2e6
   batch_size: 16
   slice_len: 50
   subseq_len: [50, 50]
-  prefill: 10e3
   prioritize_ends: true
   ongoing: false
-  preload: ~
 debug:
   enabled: true
   detect_anomaly: false

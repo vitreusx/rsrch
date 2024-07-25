@@ -21,12 +21,3 @@ fast:
 # atari_der:
 #   trainer:
 #     basic.sched: { n: 32, of: env_step }
-# sample:
-#   mode: sample
-#   sampler:
-#     num_samples: 100e3
-#     ckpt_path: "runs/dreamerv2/ALE-Pong-v5__2024-07-09_06-39-03/ckpts/env_step=7100004.pth"
-#     env_mode: train
-#     agent_mode: train
-preload:
-  dataset.preload: runs/dreamerv2/ALE-Pong-v5__2024-07-09_19-44-05/samples.pkl

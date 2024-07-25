@@ -17,7 +17,7 @@ from . import board
 from .board import Board, StepMixin
 from .board.base import Image, Step, VideoClip
 from .git import create_exp_commit
-from .logging import setupLogger
+from .logging import get_logger
 
 yaml = YAML(typ="safe", pure=True)
 
@@ -73,9 +73,9 @@ class Experiment:
         for board in self.boards:
             board.register_step(name, value_fn, default=default)
 
-    def log(self, message):
+    def log(self, level, message):
         for board in self.boards:
-            board.log(message)
+            board.log(level, message)
 
     def add_scalar(self, tag: str, value: Number, *, step: Step = None):
         for board in self.boards:

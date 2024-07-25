@@ -26,33 +26,12 @@ class ColorFormatter(logging.Formatter):
         return super().format(record)
 
 
-class _LoggerMixin:
-    def log(self, level: int, msg: str, *args):
-        raise NotImplementedError()
-
-    def debug(self, msg: str, *args):
-        self.log(logging.DEBUG, msg, *args)
-
-    def info(self, msg: str, *args):
-        self.log(logging.INFO, msg, *args)
-
-    def warning(self, msg: str, *args):
-        self.log(logging.WARNING, msg, *args)
-
-    def warn(self, msg: str, *args):
-        self.warning(msg, *args)
-
-    def error(self, msg: str, *args):
-        self.log(logging.ERROR, msg, *args)
-
-    def critical(self, msg: str, *args):
-        self.log(logging.CRITICAL, msg, *args)
-
-    def fatal(self, msg: str, *args):
-        self.log(logging.FATAL, msg, *args)
-
-
-def setupLogger(name: str | None = None, handlers=[], level=logging.INFO, no_ansi=True):
+def get_logger(
+    name: str | None = None,
+    handlers: list[tuple[int, logging.Handler] | logging.Handler] = [],
+    level: int = logging.INFO,
+    no_ansi=False,
+):
     logger = logging.getLogger(name)
     logger.setLevel(level)
 
@@ -71,3 +50,5 @@ def setupLogger(name: str | None = None, handlers=[], level=logging.INFO, no_ans
             formatter = ColorFormatter(fmt)
         handler.setFormatter(formatter)
         logger.addHandler(handler)
+
+    return logger

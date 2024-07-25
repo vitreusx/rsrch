@@ -25,11 +25,6 @@ class Factory(ABC):
         self.act_space = act_space
 
         self.seed_seq = np.random.SeedSequence(seed)
-        seeds = self.seed_seq.spawn(1)[0].generate_state(4).tolist()
-        self.env_obs_space.seed(seeds[0])
-        self.obs_space.seed(seeds[1])
-        self.env_act_space.seed(seeds[2])
-        self.act_space.seed(seeds[3])
 
     @abstractmethod
     def env(self, mode: str, record: bool = False) -> gym.Env:

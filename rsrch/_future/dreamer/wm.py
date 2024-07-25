@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 import torch
@@ -79,7 +79,7 @@ class WorldModel(nn.Module):
         )
 
     def reset(self, obs):
-        state = self.rssm.initial
+        state = self.rssm.initial()
         state = state[None].expand(len(obs), *state.shape)
         obs = self.obs_enc(obs.to(state.device))
         act = torch.zeros((len(obs), self.act_size)).type_as(obs)
@@ -97,8 +97,10 @@ class Trainer:
         cfg: Config,
         compute_dtype=None,
     ):
+        super().__init__()
         self.cfg = cfg
         self.compute_dtype = compute_dtype
+        self.modules = set()
 
         if cfg.reward_fn == "clip":
             clip_low, clip_high = cfg.clip_rew
@@ -110,6 +112,17 @@ class Trainer:
         elif cfg.reward_fn == "id":
             self.reward_space = spaces.torch.Space((), dtype=torch.float32)
             self._reward_fn = lambda r: r
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if isinstance(value, nn.Module):
+            self.modules.add(value)
+
+    def __delattr__(self, name):
+        value = getattr(self, name)
+        if isinstance(value, nn.Module):
+            self.modules.remove(value)
+        super().__delattr__(name)
 
     def setup(self, wm: WorldModel):
         self.wm = wm
@@ -143,18 +156,27 @@ class Trainer:
                 dtype=self.compute_dtype,
             )
 
-    def compute(self, batch: dict):
+    KEYS = Literal["obs", "act", "reward", "start", "term"]
+
+    def compute(self, batch: dict[KEYS, Any], train: bool = False):
         mets, losses = {}, {}
         rssm = self.wm.rssm
 
+        for module in self.modules:
+            if module.training != train:
+                module.train(mode=train)
+
         with self.autocast():
+            batch = {**batch}
+            batch["obs"] = batch["obs"] - 0.5
+
             enc_obs: Tensor = over_seq(self.wm.obs_enc)(batch["obs"])
             enc_act: Tensor = over_seq(self.wm.act_enc)(batch["act"])
             batch["reward"] = self._reward_fn(batch["reward"])
 
             is_first = np.array([x is None for x in batch["start"]])
             enc_act[0, is_first].zero_()
-            starts = torch.stack([x or rssm.initial for x in batch["start"]])
+            starts = torch.stack([x or rssm.initial() for x in batch["start"]])
 
             states, post, prior = rssm.observe(enc_obs, enc_act, starts)
             mets["prior_ent"] = prior.detach().entropy().mean()
@@ -172,7 +194,7 @@ class Trainer:
             loss = sum(coef.get(k, 1.0) * v for k, v in losses.items())
 
             mets["loss"] = loss.detach()
-            for k, v in losses:
+            for k, v in losses.items():
                 mets[f"{k}_loss"] = v.detach()
 
         return loss, mets, states.detach()

@@ -137,14 +137,19 @@ def cast(x, t):
         return None
     elif is_dataclass(t):
         args = {}
-        for field in fields(t):
-            if field.name in x:
-                field_t = field.type
-                if isinstance(field_t, str):
-                    # For some insane reason, sometimes field.type is a name
-                    # of the class, like 'str' or 'bool'
-                    field_t = eval(field_t)
-                args[field.name] = cast(x[field.name], field_t)
+        for name in x:
+            if name.startswith("_"):
+                continue
+
+            field = next(field for field in fields(t) if field.name == name)
+
+            field_t = field.type
+            if isinstance(field_t, str):
+                # For some insane reason, sometimes field.type is a name
+                # of the class, like 'str' or 'bool'
+                field_t = eval(field_t)
+            args[field.name] = cast(x[field.name], field_t)
+
         return t(**args)
     elif t in (typing.Union, typing.Optional, types.UnionType):
         for ti in t_args:

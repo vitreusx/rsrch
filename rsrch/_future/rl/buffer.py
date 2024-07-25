@@ -28,6 +28,14 @@ class Buffer(Mapping):
     def load(self, state):
         self.data, self._next_id = state
 
+    def __getstate__(self):
+        raise RuntimeError(
+            "Pickling a buffer is prohibited, in order to prevent accidental "
+            "use of torch DataLoader (in which case the different worker processes"
+            " would add data to *different* buffers.) Use save()/load() "
+            "functions instead."
+        )
+
     def __iter__(self):
         return iter(self.data)
 

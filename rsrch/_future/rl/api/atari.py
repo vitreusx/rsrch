@@ -306,7 +306,8 @@ class BufferWrapper(buffer.Wrapper):
         x = {**x}
         x["obs"] = torch.as_tensor(np.asarray(x["obs"]))
         x["obs"] = x["obs"] / 255.0
-        x["act"] = torch.as_tensor(np.asarray(x["act"]))
+        if "act" in x:
+            x["act"] = torch.as_tensor(np.asarray(x["act"]))
         return x
 
 

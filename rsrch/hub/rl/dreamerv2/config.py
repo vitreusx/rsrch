@@ -11,22 +11,16 @@ NormType: TypeAlias = Literal["none", "batch", "layer"]
 
 
 @dataclass
-class _Until:
+class Until:
     n: int
     of: str | None = None
-
-
-Until = int | _Until
 
 
 @dataclass
-class _Every:
+class Every:
     n: int
     of: str | None = None
     iters: int | None = 1
-
-
-Every = int | _Every
 
 
 @dataclass
@@ -96,7 +90,12 @@ class Dataset:
     subseq_len: int | tuple[int, int] | None
     ongoing: bool
     prioritize_ends: bool
-    preload: str | None
+
+
+@dataclass
+class Agent:
+    expl_noise: float
+    eval_noise: float
 
 
 @dataclass
@@ -115,18 +114,28 @@ class Debug:
 
 
 @dataclass
-class Agent:
-    expl_noise: float
-    eval_noise: float
+class Trainer:
+    @dataclass
+    class Basic:
+        sched: Every
 
+    @dataclass
+    class Iterative:
+        @dataclass
+        class Slice:
+            iterative: bool
+            reset_every: int | None
+            reset_coef: float
+            opt_every: Every
+            val_every: int
+            stop_criteria: EarlyStop
 
-@dataclass
-class Train:
-    load_samples: Path | None
-    load_ckpt: Path | None
-    prefill: Until
-    agent: Agent
-    num_envs: int
+        wm: Slice
+        ac: Slice
+
+    mode: Literal["basic", "iterative"]
+    basic: Basic
+    iterative: Iterative
 
 
 @dataclass
@@ -138,10 +147,13 @@ class Config:
     wm: WorldModel
     ac: ActorCritic
     dataset: Dataset
+    total: Until
+    prefill: Until
+    save_every: Every
     log_every: Every
+    agent: Agent
     debug: Debug
-    mode: Literal["sample", "train"]
-    train: Train
+    trainer: Trainer
 
 
 def get_class(namespace: Any, name: str):

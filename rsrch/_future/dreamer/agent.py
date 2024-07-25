@@ -11,8 +11,9 @@ from rsrch import spaces
 from rsrch._future import rl
 
 from .ac import Actor
-from .wm import WorldModel
 from .utils import autocast
+from .wm import WorldModel
+
 
 @dataclass
 class Config:
@@ -42,11 +43,14 @@ class Agent(rl.VecAgent):
     def compute_ctx(func):
         @wraps(func)
         def wrapped(self: "Agent", *args, **kwargs):
+            if self.actor.training:
+                self.actor.eval()
+
             with torch.inference_mode():
                 with autocast(self._device, self.compute_dtype):
                     return func(self, *args, **kwargs)
 
-        return wrapped 
+        return wrapped
 
     @compute_ctx
     def reset(self, idxes, obs: Tensor):
@@ -86,7 +90,7 @@ class Agent(rl.VecAgent):
                 high = self.act_space.high.type_as(act)
                 act = (act + noise * eps).clamp(low, high)
         return act
-    
+
     @compute_ctx
     def step(self, idxes, act: Tensor, next_obs: Tensor):
         act, next_obs = act.to(self._device), next_obs.to(self._device)

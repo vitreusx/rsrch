@@ -46,11 +46,10 @@ lpips = "^0.1.4"
 fast-pytorch-kmeans = "^0.2.0.1"
 fvcore = "^0.1.5.post20221221"
 ale-py = "^0.8.0"
+colorama = "^0.4.6"
+numpy = "<2"
+dm-control = "^1.0.20"
 
-[[tool.poetry.source]]
-name = "torch_cpu"
-url = "https://download.pytorch.org/whl/cpu"
-priority = "explicit"
 
 [tool.poetry.group.dev.dependencies]
 tomli = "^2.0.1"

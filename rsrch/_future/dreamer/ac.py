@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Callable, Literal
+from typing import Any, Callable, Literal
 
 import torch
 from torch import Tensor, nn
@@ -85,10 +85,22 @@ class Trainer:
         super().__init__()
         self.cfg = cfg
         self.compute_dtype = compute_dtype
+        self.modules = set()
 
         self.rew_norm = nets.StreamNorm(**cfg.rew_norm)
         self.actor_grad_mix = self._make_sched(cfg.actor_grad_mix)
         self.actor_ent = self._make_sched(cfg.actor_ent)
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if isinstance(value, nn.Module):
+            self.modules.add(value)
+
+    def __delattr__(self, name):
+        value = getattr(self, name)
+        if isinstance(value, nn.Module):
+            self.modules.remove(value)
+        super().__delattr__(name)
 
     def setup(
         self,
@@ -169,8 +181,14 @@ class Trainer:
                 dtype=self.compute_dtype,
             )
 
-    def compute(self, batch: dict):
+    KEYS = Literal["initial", "term"]
+
+    def compute(self, batch: dict[KEYS, Any], train: bool = False):
         losses, mets = {}, {}
+
+        for module in self.modules:
+            if module.training != train:
+                module.train(mode=train)
 
         if self.update_target is not None:
             self.update_target.step()
@@ -210,7 +228,7 @@ class Trainer:
                 weight = weight.cumprod(0)
 
         with self.autocast():
-            policies = self.actor(states[:-2].detach())
+            policies = over_seq(self.actor)(states[:-2].detach())
             if self.actor_grad == "dynamics":
                 objective = target[1:]
             elif self.actor_grad == "reinforce":
@@ -230,15 +248,13 @@ class Trainer:
             policy_ent = policies.entropy()
             mets["policy_ent"] = policy_ent.mean()
             objective = objective + ent_scale * policy_ent
-            actor_loss = -(weight[:-2] * objective).mean()
-            mets["actor_loss"] = actor_loss
+            losses["actor"] = -(weight[:-2] * objective).mean()
 
             value_dist = over_seq(self.critic)(states[:-1].detach())
             mets["value"] = (value_dist.mean).mean()
-            critic_loss = (weight[:-1] * -value_dist.log_prob(target)).mean()
-            mets["critic_loss"] = critic_loss
+            losses["critic"] = (weight[:-1] * -value_dist.log_prob(target)).mean()
 
-            for k, v in losses:
+            for k, v in losses.items():
                 mets[f"{k}_loss"] = v.detach()
 
             coef = self.cfg.coef

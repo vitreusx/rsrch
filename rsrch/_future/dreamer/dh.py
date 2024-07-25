@@ -7,6 +7,13 @@ import rsrch.distributions as D
 from rsrch import spaces
 
 
+def get_out_features(space: spaces.torch.Space):
+    if isinstance(space, spaces.torch.Image):
+        return space.num_channels
+    else:
+        return math.prod(space.shape)
+
+
 class Normal(nn.Module):
     def __init__(
         self,
@@ -20,9 +27,10 @@ class Normal(nn.Module):
         self.space = space
         self.norm_std = std_type
 
-        out_features = math.prod(space.shape)
+        out_features = get_out_features(space)
         if std_type != "const":
             out_features *= 2
+
         self.layer = layer_ctor(out_features)
 
         self._event_dims = len(space.shape)
@@ -47,7 +55,9 @@ class Beta(nn.Module):
         super().__init__()
         self.space = space
 
-        out_features = 2 * math.prod(space.shape)
+        out_features = get_out_features(space)
+        out_features *= 2
+
         self.layer = layer_ctor(out_features)
 
         self._event_dims = len(space.shape)
@@ -73,7 +83,7 @@ class MSEProxy(nn.Module):
         super().__init__()
         self.space = space
 
-        out_features = math.prod(space.shape)
+        out_features = get_out_features(space)
         self.layer = layer_ctor(out_features)
 
         self._event_dims = len(space.shape)

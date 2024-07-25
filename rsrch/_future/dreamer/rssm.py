@@ -24,6 +24,7 @@ class Config:
     act: nets.ActType
     norm: nets.NormType
     hidden_size: int
+    jit: bool
 
 
 class State(Tensorlike):
@@ -152,7 +153,6 @@ class GenericRSSM(nn.Module):
 
         return ctor
 
-    @property
     def initial(self):
         return State(self.deter0, self.stoch0)
 
@@ -223,7 +223,7 @@ class OptRSSM(nn.Module):
         "act_size",
         "deter_size",
         "num_tokens",
-        "token_size",
+        "vocab_size",
         "stoch_size",
     ]
 
@@ -243,8 +243,8 @@ class OptRSSM(nn.Module):
 
         self.deter_size = self.cfg.deter_size
         self.num_tokens = cfg.stoch["num_tokens"]
-        self.token_size = cfg.stoch["token_size"]
-        self.stoch_size = self.num_tokens * self.token_size
+        self.vocab_size = cfg.stoch["vocab_size"]
+        self.stoch_size = self.num_tokens * self.vocab_size
         hidden_size = self.cfg.hidden_size
 
         self._img_in_s = nn.Linear(self.stoch_size, hidden_size)
@@ -259,7 +259,7 @@ class OptRSSM(nn.Module):
         self.register_buffer("deter0", torch.zeros(self.deter_size))
         self.register_buffer("stoch0", torch.zeros(self.stoch_size))
 
-    @property
+    @torch.jit.ignore
     def initial(self):
         return State(self.deter0, self.stoch0)
 
@@ -340,14 +340,14 @@ class OptRSSM(nn.Module):
         x = self._img_out(deter)
         x = F.elu(x)
         logits = self._img_proj(x)
-        logits = logits.reshape(-1, self.num_tokens, self.token_size)
+        logits = logits.reshape(-1, self.num_tokens, self.vocab_size)
         return logits
 
     def _obs_dist(self, deter: Tensor, next_obs: Tensor):
         x = self._obs_out_d(deter) + next_obs
         x = F.elu(x)
         logits = self._obs_proj(x)
-        logits = logits.reshape(-1, self.num_tokens, self.token_size)
+        logits = logits.reshape(-1, self.num_tokens, self.vocab_size)
         return logits
 
     def _discrete_sample(self, logits: Tensor):
@@ -356,19 +356,18 @@ class OptRSSM(nn.Module):
         unif = torch.rand_like(probs).clamp(eps, 1 - eps)
         idxes = (logits - (-unif.log()).log()).argmax(-1)
         # idxes = torch.multinomial(probs, 1, True).squeeze(-1)
-        sample = F.one_hot(idxes, self.token_size).type_as(probs)
+        sample = F.one_hot(idxes, self.vocab_size).type_as(probs)
         sample = pass_gradient(sample, probs)
         sample = sample.reshape(-1, self.stoch_size)
         return sample
 
 
 def RSSM(cfg: Config, obs_size: int, act_size: int) -> OptRSSM | GenericRSSM:
-    # try:
-    #     module = OptRSSM(cfg, obs_size, act_size)
-    #     module: OptRSSM = torch.jit.script(module)
-    # except:
-    #     module = GenericRSSM(cfg, obs_size, act_size)
-    module = GenericRSSM(cfg, obs_size, act_size)
+    if cfg.jit:
+        module = OptRSSM(cfg, obs_size, act_size)
+        module: OptRSSM = torch.jit.script(module)
+    else:
+        module = GenericRSSM(cfg, obs_size, act_size)
     return module
 
 

@@ -41,7 +41,7 @@ class WorldModel(nn.Module):
             act_size: int = self.act_enc(act).shape[1]
 
         self.rssm = rssm_opt.EnsembleRSSM(cfg.rssm, obs_size, act_size)
-        self.rssm: rssm_opt.EnsembleRSSM = torch.jit.script(self.rssm)
+        self.rssm = torch.jit.script(self.rssm)
 
         self.state_size = self.rssm.stoch_size + self.rssm.deter_size
 

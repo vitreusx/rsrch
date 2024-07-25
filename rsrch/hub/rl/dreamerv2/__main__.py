@@ -1,7 +1,6 @@
-import pickle
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from itertools import islice
 from multiprocessing.pool import ThreadPool
 from pathlib import Path
@@ -220,97 +219,6 @@ class map_view(MutableMapping):
         self._keys.add(key)
 
 
-class Sampler(nn.Module):
-    def __init__(self, cfg: config.Config):
-        super().__init__()
-        self.cfg = cfg
-        self._setup_core()
-        self._setup_env()
-        self._setup_nets()
-        self._load_ckpt()
-        self._setup_agent()
-        self.run()
-
-    def _setup_core(self):
-        repro.fix_seeds(
-            seed=self.cfg.seed,
-            deterministic=self.cfg.debug.deterministic,
-        )
-        self.repro = repro.RandomState()
-
-        self.device = torch.device(self.cfg.device)
-        amp.set_policy(compute_dtype=getattr(torch, self.cfg.dtype))
-
-        self.exp = Experiment(
-            project="dreamerv2",
-            run=f"{self.cfg.env.id}__{timestamp()}",
-            config=asdict(self.cfg),
-        )
-
-        self.pbar = tqdm(desc="DreamerV2")
-
-    def _setup_env(self):
-        self.env_f = env.make_factory(
-            cfg=self.cfg.env,
-            device=self.device,
-            seed=self.cfg.seed,
-        )
-        self._frame_skip = getattr(self.env_f, "frame_skip", 1)
-        self.sample_envs = self.env_f.vector_env(1, mode=self.cfg.sampler.env_mode)
-
-    def _setup_nets(self):
-        self.wm = wm.WorldModel(
-            obs_space=self.env_f.obs_space,
-            act_space=self.env_f.act_space,
-            cfg=self.cfg.wm,
-        )
-
-        self.ac = ac.ActorCritic(
-            wm=self.wm,
-            cfg=self.cfg.ac,
-        )
-
-        self.to(self.device)
-
-    def _load_ckpt(self):
-        with open(self.cfg.sampler.ckpt_path, "rb") as f:
-            ckpt = torch.load(f, map_location="cpu")
-            self.load(ckpt)
-
-    def load(self, ckpt):
-        self.wm.load(ckpt["wm"])
-        self.ac.load(ckpt["ac"])
-        self.repro.load(ckpt["repro"])
-
-    def _setup_agent(self):
-        self.sample_agent = ac.Agent(
-            env_f=self.env_f,
-            ac=self.ac,
-            cfg=self.cfg.agent,
-            mode=self.cfg.sampler.agent_mode,
-        )
-        self.env_iter = iter(rollout.steps(self.sample_envs, self.sample_agent))
-        self.ep_ids, self.ep_rets = defaultdict(lambda: None), defaultdict(lambda: 0.0)
-
-    def run(self):
-        cfg = self.cfg.sampler
-        buf = self.env_f.buffer(cfg.num_samples)
-
-        for _ in range(cfg.num_samples):
-            env_idx, step = next(self.env_iter)
-            self.ep_ids[env_idx] = buf.push(self.ep_ids[env_idx], step)
-            self.ep_rets[env_idx] += step.reward
-            if step.done:
-                del self.ep_ids[env_idx]
-                del self.ep_rets[env_idx]
-            self.pbar.update()
-
-        dst = self.exp.dir / "samples.pkl"
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        with open(dst, "wb") as f:
-            pickle.dump(buf.data, f)
-
-
 class TrainerBase(nn.Module):
     def __init__(self, cfg: config.Config):
         super().__init__()
@@ -334,6 +242,7 @@ class TrainerBase(nn.Module):
         amp.set_policy(compute_dtype=getattr(torch, self.cfg.dtype))
 
         self.env_step = self.agent_step = self.opt_step = 0
+        self.pbar = tqdm(desc="DreamerV2", total=self.cfg.total.n)
 
         self.exp = Experiment(
             project="dreamerv2",
@@ -342,8 +251,6 @@ class TrainerBase(nn.Module):
         )
         self.exp.boards += [Tensorboard(self.exp.dir / "board")]
         self.exp.register_step("env_step", lambda: self.env_step, default=True)
-
-        self.pbar = self.exp.pbar(desc="DreamerV2", total=self.cfg.total.n)
 
         self.should_save = self._make_every(self.cfg.save_every)
 
@@ -547,22 +454,9 @@ class IterativeTrainer(TrainerBase):
         self._wm_opt_step, self._ac_opt_step = 0, 0
 
     def _setup_data(self):
-        cfg = self.cfg.dataset
-        self.buf = self.env_f.buffer(cfg.capacity)
-
-        if cfg.preload is not None:
-            with open(cfg.preload, "rb") as f:
-                samp_data: data_rl.BufferData = pickle.load(f)
-
-            samp_steps = data_rl.StepView(
-                data_rl.Buffer(samp_data, self.buf.stack_num),
-            )
-            ep_id = None
-            for step in samp_steps.values():
-                ep_id = self.buf.push(ep_id, step)
-
-        cfg = {**vars(cfg)}
-        del cfg["capacity"], cfg["preload"]
+        cfg = vars(self.cfg.dataset)
+        self.buf = self.env_f.buffer(cfg["capacity"])
+        del cfg["capacity"]
         self._dataset_cfg = cfg
 
         self.all_eps = data_rl.EpisodeView(self.buf)
@@ -587,12 +481,13 @@ class IterativeTrainer(TrainerBase):
         self.train_iter = iter(self.train_ds)
 
     def run(self):
-        if self.cfg.dataset.preload is None:
-            do_prefill = self._make_until(self.cfg.prefill)
-            self.train_agent.mode = "prefill"
-            while do_prefill:
-                self.take_env_step()
-                self._update_eps()
+        do_prefill = self._make_until(self.cfg.prefill)
+
+        self.train_agent.mode = "prefill"
+        while do_prefill:
+            self.take_env_step()
+            self._update_eps()
+        self.train_agent.mode = "train"
 
         self.should_run = self._make_until(self.cfg.total)
         self.should_log = self._make_every(self.cfg.log_every, iters=None)
@@ -623,7 +518,6 @@ class IterativeTrainer(TrainerBase):
         else:
             self.should_reset_ac = cron.Never()
 
-        self.train_agent.mode = "train"
         while self.should_run:
             # We wish to interleave env interaction and opt steps, if possible.
             # The way we do it is as follows: figure out how many env steps to
@@ -816,154 +710,25 @@ class IterativeTrainer(TrainerBase):
         module.apply(_reset)
 
 
-class V2:
-    def __init__(self, cfg: config.Config):
-        self.cfg = cfg
-
-    def _setup_core(self):
-        repro.fix_seeds(
-            seed=self.cfg.seed,
-            deterministic=self.cfg.debug.deterministic,
-        )
-        self.repro = repro.RandomState()
-
-        self.device = torch.device(self.cfg.device)
-        amp.set_policy(compute_dtype=getattr(torch, self.cfg.dtype))
-
-        self.exp = Experiment(
-            project="dreamerv2",
-            run=f"{self.cfg.env.id}__{timestamp()}",
-            config=asdict(self.cfg),
-        )
-
-        self.env_f = env.make_factory(
-            cfg=self.cfg.env,
-            device=self.device,
-            seed=self.cfg.seed,
-        )
-
-        self.wm = wm.WorldModel(
-            obs_space=self.env_f.obs_space,
-            act_space=self.env_f.act_space,
-            cfg=self.cfg.wm,
-        )
-        self.wm.apply(self._tf_init)
-
-        self.ac = ac.ActorCritic(
-            wm=self.wm,
-            cfg=self.cfg.ac,
-        )
-        self.ac.apply(self._tf_init)
-
-        self.to(self.device)
-
-    def _tf_init(self, module: nn.Module):
-        if isinstance(module, (nn.Linear, nn.Conv2d, nn.ConvTranspose2d)):
-            nn.init.xavier_uniform_(module.weight)
-            nn.init.zeros_(module.bias)
-
-    def main(self):
-        getattr(self, self.cfg.scenario)()
-
-    def sample(self):
-        raise NotImplementedError()
-
-    def train(self):
-        cfg = self.cfg.train
-
-        self._setup_core()
-        self._setup_train()
-
-        if cfg.load_samples is not None:
-            self.preload(cfg.load_samples)
-        
-        if cfg.load_ckpt is not None:
-            self.load_ckpt(cfg.load_ckpt)
-
-        self.prefill(cfg.prefill)
-
-    def _setup_train(self, cfg: config.Train):
-        self.env_step = 0
-        self.exp.register_step("env_step", lambda: self.env_step, default=True)
-
-        self.buf = self.env_f.buffer(self.cfg.dataset)
-
-        self.train_envs = self.env_f.vector_env(cfg.num_envs, mode="train")
-        self.train_agent = ac.Agent(
-            env_f=self.env_f,
-            ac=self.ac,
-            cfg=cfg.agent,
-            mode="prefill",
-        )
-        self.env_iter = iter(rollout.steps(self.train_envs, self.train_agent))
-
-    def preload(self, path: Path):
-        with open(path, "rb") as f:
-            samples: data_rl.BufferData = pickle.load(f)
-            buf = data_rl.Buffer(samples)
-            eps = data_rl.EpisodeView(buf)
-
-        for ep in eps.values():
-            ep_id = None
-            for idx in range(len(ep["act"])):
-                ep_id = self.buf.push(
-                    ep_id,
-                    data_rl.Step(
-                        ep.obs[idx],
-                        ep.act[idx],
-                        ep.obs[idx + 1],
-                        ep.reward[idx],
-                        ep.term[idx],
-                    ),
-                )
-
-    def load(self, path: Path):
-        with open(path, "rb") as f:
-            ...
-
-    def save(self, path: Path):
-        ...
-
-    def prefill(self, until):
-        should_prefill = self._make_until(until)
-        while should_prefill:
-            self.take_env_step()
-
-    def _make_until(self, until: config.Until):
-        if isinstance(until, int):
-            n, of = until, self.env_step
-        else:
-            n, of = until.n, until.of
-
-        step_fn = lambda: getattr(self, of)
-        return cron.Until(step_fn, n)
-
-    def load_samples(self):
-        ...
-
-    def train_loop(self, until, stages):
-        ...
-
-    def take_env_step(self):
-        ...
-
-    def save(self):
-        return ...
-
-
 def main():
     cfg = config.load(Path(__file__).parent / "config.yml")
 
     presets = config.load(Path(__file__).parent / "presets.yml")
     # preset_names = ["atari", "debug"]
-    preset_names = ["atari", "fast", "preload"]
+    preset_names = ["atari", "fast"]
     for preset in preset_names:
         config.add_preset_(cfg, presets, preset)
 
     cfg = config.parse(cfg, config.Config)
 
-    runner = V2(cfg)
-    runner.main()
+    if cfg.trainer.mode == "basic":
+        trainer = BasicTrainer(cfg)
+    elif cfg.trainer.mode == "iterative":
+        trainer = IterativeTrainer(cfg)
+    else:
+        raise NotImplementedError(cfg.trainer.mode)
+
+    trainer.run()
 
 
 if __name__ == "__main__":

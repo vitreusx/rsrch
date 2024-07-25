@@ -30,7 +30,7 @@ class Every:
             if self.iters is not None:
                 self._acc = self.iters
         elif cur_step - self._sent >= self.every:
-            cycles = self.every // (cur_step - self._sent)
+            cycles = (cur_step - self._sent) // self.every
             self._sent += cycles * self.every
             self._last = cur_step
             if self.iters is not None:
