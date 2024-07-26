@@ -1,8 +1,10 @@
+import logging
 from pathlib import Path
 
 import git
 from ruamel.yaml import YAML
 
+logger = logging.getLogger(__name__)
 yaml = YAML(typ="safe", pure=True)
 
 
@@ -38,6 +40,7 @@ def create_exp_commit(run: str) -> str:
         commit_msg = f"Exp commit for {run}"
         repo.git.commit("--allow-empty", "-m", commit_msg)
         commit_sha = repo.head.object.hexsha
+        logger.info(f"Created exp commit with SHA {commit_sha[:7]}")
     finally:
         # Switch back to the original state
         repo.git.symbolic_ref("HEAD", f"refs/heads/{cur_ref}")

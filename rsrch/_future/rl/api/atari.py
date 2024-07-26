@@ -162,6 +162,25 @@ class ToChannelLast(gym.ObservationWrapper):
         return np.transpose(x, (2, 0, 1))
 
 
+class RecordTotalStepsEP(env.Wrapper):
+    def __init__(self, env: env.Env, frame_skip: int):
+        super().__init__(env)
+        self.frameskip = frame_skip
+        self._total_steps = 0
+
+    def reset(self):
+        obs = super().reset()
+        self._total_steps += self.frameskip
+        obs["total_steps"] = self._total_steps
+        return obs
+
+    def step(self, act):
+        next_obs, final = super().step(act)
+        self._total_steps += self.frameskip
+        next_obs["total_steps"] = self._total_steps
+        return next_obs, final
+
+
 # class EnvEpilog(env.Env):
 #     def __init__(self, env: env.Env):
 #         self.env = env
@@ -344,8 +363,8 @@ class API:
         seed: int | None = None,
     ):
         envs = None
-        # if self.cfg.use_envpool and not render:
-        #     envs = self._try_envpool(num_envs, mode, seed)
+        if self.cfg.use_envpool and not render:
+            envs = self._try_envpool(num_envs, mode, seed)
 
         if envs is None:
             if seed is None:
@@ -391,7 +410,7 @@ class API:
         if seed is None:
             seed = np.random.randint(int(2**31))
 
-        return env.Envpool(
+        envs = env.Envpool(
             task_id=f"{task_name}-v5",
             num_envs=num_envs,
             max_episode_steps=max_steps,
@@ -410,6 +429,9 @@ class API:
             full_action_space=False,
             seed=seed,
         )
+
+        envs = [RecordTotalStepsEP(e, self.cfg.frame_skip) for e in envs]
+        return envs
 
     def _env(
         self,

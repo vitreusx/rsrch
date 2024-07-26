@@ -1,17 +1,16 @@
-import logging
-from logging import LogRecord
+from logging import *
 
 from colorama import Fore, Style, just_fix_windows_console
 
 
-class ColorFormatter(logging.Formatter):
+class ColorFormatter(Formatter):
     STYLES = {
-        logging.FATAL: Style.BRIGHT + Fore.CYAN,
-        logging.CRITICAL: Style.BRIGHT + Fore.MAGENTA,
-        logging.ERROR: Style.BRIGHT + Fore.RED,
-        logging.WARNING: Style.BRIGHT + Fore.YELLOW,
-        logging.INFO: Style.RESET_ALL + Fore.WHITE,
-        logging.DEBUG: Style.BRIGHT + Fore.BLACK,
+        FATAL: Style.BRIGHT + Fore.CYAN,
+        CRITICAL: Style.BRIGHT + Fore.MAGENTA,
+        ERROR: Style.BRIGHT + Fore.RED,
+        WARNING: Style.BRIGHT + Fore.YELLOW,
+        INFO: Style.RESET_ALL + Fore.WHITE,
+        DEBUG: Style.BRIGHT + Fore.BLACK,
     }
 
     RESET = Style.RESET_ALL
@@ -26,29 +25,26 @@ class ColorFormatter(logging.Formatter):
         return super().format(record)
 
 
-def get_logger(
-    name: str | None = None,
-    handlers: list[tuple[int, logging.Handler] | logging.Handler] = [],
-    level: int = logging.INFO,
-    no_ansi=False,
+def setup(
+    level: int = INFO,
+    extra_handlers: list[tuple[Handler, int]] = [],
 ):
-    logger = logging.getLogger(name)
-    logger.setLevel(level)
+    logger = getLogger()
+    logger.setLevel(DEBUG)
 
-    for handler in handlers:
-        if isinstance(handler, tuple):
-            handler, handlerLevel = handler
-        else:
-            handlerLevel = handler
+    # Default handler is a StreamHandler to stderr
+    err_handler = logger.handlers[0]
+    err_handler.setLevel(level)
 
-        handler.setLevel(handlerLevel)
-        if no_ansi:
-            fmt = "%(asctime)s - %(name)-13s - %(levelname)-8s - %(message)s"
-            formatter = logging.Formatter(fmt)
-        else:
-            fmt = "%(name)-13s: %(color_on)s%(levelname)-8s%(color_off)s %(message)s"
-            formatter = ColorFormatter(fmt)
-        handler.setFormatter(formatter)
+    for handler, level in extra_handlers:
+        handler.setLevel(level)
         logger.addHandler(handler)
 
-    return logger
+    for handler in logger.handlers:
+        if hasattr(handler, "stream") and handler.stream.isatty():
+            fmt = "%(name)-13s: %(color_on)s%(levelname)-8s%(color_off)s %(message)s"
+            formatter = ColorFormatter(fmt)
+        else:
+            fmt = "%(asctime)s - %(name)-13s - %(levelname)-8s - %(message)s"
+            formatter = Formatter(fmt)
+        handler.setFormatter(formatter)

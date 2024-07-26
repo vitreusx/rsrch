@@ -1,1 +1,3 @@
-from .utils import fixes
+import warnings
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)

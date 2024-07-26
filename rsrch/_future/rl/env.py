@@ -24,6 +24,19 @@ class Env(ABC):
         ...
 
 
+class Wrapper(Env):
+    def __init__(self, env: Env):
+        self.env = env
+        self.obs_space = env.obs_space
+        self.act_space = env.act_space
+
+    def reset(self):
+        return self.env.reset()
+
+    def step(self, act):
+        return self.env.step(act)
+
+
 class FromGym(Env):
     def __init__(self, env: gym.Env, seed=None, render=False):
         super().__init__()

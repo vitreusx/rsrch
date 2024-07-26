@@ -13,11 +13,10 @@ from tqdm.auto import tqdm
 
 from rsrch.utils.path import sanitize
 
-from . import board
+from . import board, logging
 from .board import Board, StepMixin
 from .board.base import Image, Step, VideoClip
 from .git import create_exp_commit
-from .logging import get_logger
 
 yaml = YAML(typ="safe", pure=True)
 
@@ -43,16 +42,24 @@ class Experiment:
         config: dict | None = None,
         create_commit: bool = True,
     ):
-        info = {}
-        info["project"] = project
-        info["argv"] = sys.argv
-
         if run is None:
             run = timestamp()
-        info["run"] = run
 
         self.dir = sanitize("runs", project, run)
         self.dir.mkdir(parents=True, exist_ok=True)
+
+        logging.setup(
+            extra_handlers=[
+                (logging.FileHandler(self.dir / "log.txt"), logging.DEBUG),
+            ],
+        )
+        self.logger = logging.getLogger(project)
+
+        info = {
+            "project": project,
+            "argv": sys.argv,
+            "run": run,
+        }
 
         if config is not None:
             with open(self.dir / "config.yml", "w") as f:
@@ -74,6 +81,7 @@ class Experiment:
             board.register_step(name, value_fn, default=default)
 
     def log(self, level, message):
+        self.logger.log(level, message)
         for board in self.boards:
             board.log(level, message)
 

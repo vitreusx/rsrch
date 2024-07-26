@@ -1,10 +1,10 @@
 {
   "configurations": [
     {
-      "name": "DreamerV2.1",
+      "name": "Dreamer",
       "type": "debugpy",
       "request": "launch",
-      "module": "rsrch._future.dreamer",
+      "module": "rsrch.hub.rl.dreamer",
       "pythonArgs": [
         "-O"
       ],
@@ -20,21 +20,6 @@
       "type": "debugpy",
       "request": "launch",
       "module": "rsrch.hub.vis.seq_vq",
-      "pythonArgs": [
-        "-O"
-      ],
-      "env": {
-        // "CUDA_LAUNCH_BLOCKING": "1", 
-        // "MUJOCO_GL": "osmesa",
-        "KINETO_LOG_LEVEL": "3", // ERROR
-      },
-      "justMyCode": false
-    },
-    {
-      "name": "DreamerV2",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "rsrch.hub.rl.dreamerv2",
       "pythonArgs": [
         "-O"
       ],
