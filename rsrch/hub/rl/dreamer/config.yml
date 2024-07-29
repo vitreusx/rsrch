@@ -107,7 +107,9 @@ profile:
   enabled: false
   schedule: { wait: 5, warmup: 1, active: 3, repeat: 4 }
   functions: [_opt_step, take_env_step]
-mode: train
+agent:
+  train_noise: 0.0
+  eval_noise: 0.0
 train:
   dataset:
     capacity: 2e6
@@ -118,10 +120,12 @@ train:
     ongoing: false
   val_frac: 0.0
   num_envs: 1
-  agent:
-    expl_noise: 0.0
-    eval_noise: 0.0
-  prefill: 10e3
-  total: 100e6
-  opt_every: 5
-  log_every: 16
+stages:
+  - env_rollout:
+      until: 10e3
+      mode: rand
+  - train_loop:
+      until: 100e6
+      tasks:
+        - do_opt_step: ~
+          every: 5

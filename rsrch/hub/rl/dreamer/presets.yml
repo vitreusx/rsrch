@@ -12,9 +12,14 @@ atari:
     actor_ent: 1e-3
     opt.actor.lr: 4e-5
     opt.critic.lr: 1e-4
-  train:
-    prefill: 100e3
-    total: 200e6
-    opt_every: 64
+  stages:
+    - env_rollout:
+        until: 50e3 # 200e3
+        mode: rand
+    - train_loop:
+        until: 200e6
+        tasks:
+          - do_opt_step: ~
+            every: 64
   # profile:
   #   enabled: true

@@ -18,10 +18,17 @@ class API(Protocol):
     obs_space: spaces.torch.Space
     act_space: spaces.torch.Space
 
-    def make_envs(self, num_envs: int, **kwargs) -> list[env.Env]:
+    def make_envs(
+        self,
+        num_envs: int,
+        **kwargs,
+    ) -> list[env.Env]:
         ...
 
-    def wrap_buffer(self, buf: buffer.Buffer) -> buffer.Buffer:
+    def wrap_buffer(
+        self,
+        buf: buffer.Buffer,
+    ) -> buffer.Buffer:
         ...
 
     def rollout(
@@ -32,6 +39,6 @@ class API(Protocol):
         ...
 
 
-def make(cfg: Config) -> API:
+def make(cfg: Config) -> atari.API:
     if cfg.type == "atari":
         return atari.API(cfg.atari)

@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from typing import MutableMapping
 
 import numpy as np
 
@@ -16,7 +17,7 @@ class Hook:
         pass
 
 
-class Buffer(Mapping):
+class Buffer(MutableMapping):
     def __init__(self):
         self.data = {}
         self._next_id = 0
@@ -44,6 +45,9 @@ class Buffer(Mapping):
 
     def __getitem__(self, seq_id: int):
         return self.data[seq_id]
+
+    def __setitem__(self, seq_id: int, seq):
+        raise RuntimeError("Cannot set buffer sequence directly.")
 
     def __delitem__(self, seq_id: int):
         seq = self.data[seq_id]
@@ -79,7 +83,7 @@ class Buffer(Mapping):
             return seq_id
 
 
-class Wrapper:
+class Wrapper(MutableMapping):
     def __init__(self, buf: Buffer):
         self.buf = buf
         self._unwrapped: Buffer = getattr(buf, "_unwrapped", buf)
@@ -102,6 +106,9 @@ class Wrapper:
 
     def __getitem__(self, seq_id: int):
         return self.buf[seq_id]
+
+    def __setitem__(self, seq_id: int, seq):
+        raise RuntimeError("Cannot set buffer sequence directly.")
 
     def __delitem__(self, seq_id: int):
         del self.buf[seq_id]

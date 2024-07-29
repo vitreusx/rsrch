@@ -42,8 +42,11 @@ class Experiment:
         config: dict | None = None,
         create_commit: bool = True,
     ):
+        self.project = project
+
         if run is None:
             run = timestamp()
+        self.run = run
 
         self.dir = sanitize("runs", project, run)
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -54,6 +57,9 @@ class Experiment:
             ],
         )
         self.logger = logging.getLogger(project)
+        self.boards: list[Board] = []
+
+        self.log(logging.INFO, f"Exp dir: {self.dir}")
 
         info = {
             "project": project,
@@ -71,8 +77,6 @@ class Experiment:
 
         with open(self.dir / "info.yml", "w") as f:
             yaml.dump(info, f)
-
-        self.boards: list[Board] = []
 
         self.pbar = partial(tqdm, dynamic_ncols=True)
 

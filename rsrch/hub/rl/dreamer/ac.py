@@ -35,23 +35,14 @@ class Config:
 class Actor(nn.Module):
     def __init__(self, wm: WorldModel, cfg: Config):
         super().__init__()
-        self.wm = wm
         self.cfg = cfg
 
         mlp = nets.MLP(wm.state_size, None, **cfg.actor)
         head = nets.ActorHead(mlp.out_features, wm.act_space)
         self.net = nn.Sequential(rssm.AsTensor(), mlp, head)
 
-    def forward(self, state: rssm.State):
+    def forward(self, state):
         return self.net(state)
-
-    def policy(self, state: rssm.State, sample=True):
-        enc_act_dist: D.Distribution = self(state)
-        if sample:
-            enc_act = enc_act_dist.sample()
-        else:
-            enc_act = enc_act_dist.mode
-        return self.wm.act_enc.inverse(enc_act)
 
 
 class Critic(nn.Sequential):
@@ -181,14 +172,20 @@ class Trainer:
                 dtype=self.compute_dtype,
             )
 
+    def train(self):
+        for module in self.modules:
+            if not module.training:
+                module.train()
+
+    def eval(self):
+        for module in self.modules:
+            if module.training:
+                module.eval()
+
     KEYS = Literal["initial", "term"]
 
-    def compute(self, batch: dict[KEYS, Any], train: bool = False):
+    def compute(self, batch: dict[KEYS, Any]):
         losses, mets = {}, {}
-
-        for module in self.modules:
-            if module.training != train:
-                module.train(mode=train)
 
         if self.update_target is not None:
             self.update_target.step()

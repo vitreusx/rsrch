@@ -137,11 +137,13 @@ def cast(x, t):
         return None
     elif is_dataclass(t):
         args = {}
+        field_map = {field.name: field for field in fields(t)}
+
         for name in x:
             if name.startswith("_"):
                 continue
 
-            field = next(field for field in fields(t) if field.name == name)
+            field = field_map[name]
 
             field_t = field.type
             if isinstance(field_t, str):

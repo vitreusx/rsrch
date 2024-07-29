@@ -1,3 +1,4 @@
+from collections import deque
 from typing import Literal
 
 import numpy as np
@@ -7,6 +8,24 @@ from torch.utils.data import DataLoader
 
 from rsrch import spaces
 from rsrch._future import rl
+
+
+class StateCache:
+    def __init__(self, size: int):
+        self.size = size
+        self.states = {}
+        self._order = deque(maxlen=size)
+
+    def get(self, key):
+        return self.states.get(key)
+
+    def __setitem__(self, key, value):
+        if key not in self.states:
+            if len(self._order) == self.size:
+                oldest = self._order.popleft()
+                del self.states[oldest]
+            self._order.append(key)
+        self.states[key] = value
 
 
 class Slices(data.IterableDataset):
@@ -36,6 +55,8 @@ class Slices(data.IterableDataset):
         else:
             self.minlen, self.maxlen = subseq_len, subseq_len
         self.minlen = max(self.minlen, self.slice_len)
+
+        self.states = StateCache(self.batch_size)
 
     def __iter__(self):
         cur_eps = {}
@@ -88,6 +109,7 @@ class Slices(data.IterableDataset):
                 subseq = self._subseq(ep["seq"], ep["start"], cur_stop)
                 for k in ("ep_id", "pos"):
                     subseq[k] = ep[k]
+                subseq["start"] = self.states.get(ep["pos"])
                 batch.append(subseq)
 
                 ep["start"] = cur_stop
@@ -110,6 +132,12 @@ class Slices(data.IterableDataset):
 
         return res
 
+    def update_states(self, batch: dict, final):
+        pos = batch["pos"]
+        for (seq_id, offset), state in zip(pos, final):
+            end = offset + self.slice_len
+            self.states[seq_id, end] = state
+
     @staticmethod
     def collate_fn(batch):
         return {
@@ -119,4 +147,5 @@ class Slices(data.IterableDataset):
             "term": torch.stack([seq["term"] for seq in batch], 1),
             "ep_id": np.asarray([seq["ep_id"] for seq in batch]),
             "pos": [seq["pos"] for seq in batch],
+            "start": [seq["start"] for seq in batch],
         }

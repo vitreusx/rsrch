@@ -78,8 +78,8 @@ class GRUCellLN(nn.Module):
         self,
         input_size: int,
         hidden_size: int,
-        act="tanh",
-        norm=False,
+        act: ActLayer = "tanh",
+        norm: bool = False,
         update_bias: float = -1.0,
     ):
         super().__init__()
@@ -174,6 +174,10 @@ class ImageEncoder(nn.Sequential):
         super().__init__(*layers)
         self.space = space
 
+    def forward(self, input: Tensor):
+        input = input - 0.5
+        return super().forward(input)
+
 
 class BoxEncoder(nn.Sequential):
     def __init__(self, space: spaces.torch.Box, **mlp):
@@ -240,6 +244,10 @@ class ImageDecoder(nn.Sequential):
         layers.append(dh.make(layer_ctor, space, **dist))
 
         super().__init__(*layers)
+
+    def forward(self, input: Tensor):
+        dist = super().forward(input)
+        return D.Affine(dist, loc=0.5, scale=1.0)
 
 
 class BoxDecoder(nn.Sequential):

@@ -17,7 +17,7 @@ from .wm import WorldModel
 
 @dataclass
 class Config:
-    expl_noise: float
+    train_noise: float
     eval_noise: float
 
 
@@ -25,13 +25,15 @@ class Agent(rl.VecAgent):
     def __init__(
         self,
         actor: Actor,
+        wm: WorldModel,
         cfg: Config,
         act_space: spaces.torch.Space,
-        mode: Literal["prefill", "expl", "eval"] = "prefill",
+        mode: Literal["rand", "train", "eval"] = "rand",
         compute_dtype: torch.dtype | None = None,
     ):
         super().__init__()
         self.actor = actor
+        self.wm = wm
         self.cfg = cfg
         self.act_space = act_space
         self.mode = mode
@@ -45,6 +47,8 @@ class Agent(rl.VecAgent):
         def wrapped(self: "Agent", *args, **kwargs):
             if self.actor.training:
                 self.actor.eval()
+            if self.wm.training:
+                self.wm.eval()
 
             with torch.inference_mode():
                 with autocast(self._device, self.compute_dtype):
@@ -55,7 +59,7 @@ class Agent(rl.VecAgent):
     @compute_ctx
     def reset(self, idxes, obs: Tensor):
         obs = obs.to(self._device)
-        state = self.actor.wm.reset(obs)
+        state = self.wm.reset(obs)
         if self._state is None:
             self._state = state
         else:
@@ -63,16 +67,18 @@ class Agent(rl.VecAgent):
 
     @compute_ctx
     def policy(self, idxes):
-        if self.mode == "prefill":
+        if self.mode == "rand":
             act = self.act_space.sample([len(idxes)])
         else:
-            if self.mode == "expl":
+            if self.mode == "train":
                 sample = True
-                noise = self.cfg.expl_noise
+                noise = self.cfg.train_noise
             elif self.mode == "eval":
                 sample = False
                 noise = self.cfg.eval_noise
-            act = self.actor.policy(self._state[idxes], sample)
+            policy = self.actor(self._state[idxes])
+            enc_act = policy.sample() if sample else policy.mode
+            act = self.wm.act_enc.inverse(enc_act)
             act = act.cpu()
             act = self._apply_noise(act, noise)
         return act
@@ -94,5 +100,5 @@ class Agent(rl.VecAgent):
     @compute_ctx
     def step(self, idxes, act: Tensor, next_obs: Tensor):
         act, next_obs = act.to(self._device), next_obs.to(self._device)
-        state = self.actor.wm.step(self._state[idxes], act, next_obs)
+        state = self.wm.step(self._state[idxes], act, next_obs)
         self._state[idxes] = state.type_as(self._state)

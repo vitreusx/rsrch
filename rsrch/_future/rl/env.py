@@ -118,7 +118,7 @@ class VecAgent(ABC):
                     for idx, res in zip(args[0], results):
                         responses[idx].put(res)
 
-        worker = threading.Thread(target=worker_fn)
+        worker = threading.Thread(target=worker_fn, daemon=True)
         worker.start()
 
         class Subagent(Agent):
@@ -174,7 +174,7 @@ def pool(*iterables: Iterable[T]) -> Iterable[tuple[int, T]]:
 
     workers = []
     for idx in range(len(iterables)):
-        worker = threading.Thread(target=worker_fn, args=(idx,))
+        worker = threading.Thread(target=worker_fn, args=(idx,), daemon=True)
         worker.start()
         workers.append(worker)
 
@@ -235,7 +235,7 @@ def Envpool(task_id: str, **kwargs) -> list[Env]:
             for env_id, step in zip(info["env_id"], steps):
                 responses[env_id].put(step)
 
-    worker = threading.Thread(target=worker_fn)
+    worker = threading.Thread(target=worker_fn, daemon=True)
     worker.start()
 
     class Slice(Env):

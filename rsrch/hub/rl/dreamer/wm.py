@@ -156,20 +156,38 @@ class Trainer:
                 dtype=self.compute_dtype,
             )
 
+    def train(self):
+        for module in self.modules:
+            if not module.training:
+                module.train()
+
+    def eval(self):
+        for module in self.modules:
+            if module.training:
+                module.eval()
+
     KEYS = Literal["obs", "act", "reward", "start", "term"]
 
-    def compute(self, batch: dict[KEYS, Any], train: bool = False):
+    def get_states(self, batch: dict[KEYS, Any]):
+        rssm = self.wm.rssm
+
+        with self.autocast():
+            enc_obs: Tensor = over_seq(self.wm.obs_enc)(batch["obs"])
+            enc_act: Tensor = over_seq(self.wm.act_enc)(batch["act"])
+
+            is_first = np.array([x is None for x in batch["start"]])
+            enc_act[0, is_first].zero_()
+            starts = torch.stack([x or rssm.initial() for x in batch["start"]])
+
+            states, _, _ = rssm.observe(enc_obs, enc_act, starts)
+
+        return states
+
+    def compute(self, batch: dict[KEYS, Any]):
         mets, losses = {}, {}
         rssm = self.wm.rssm
 
-        for module in self.modules:
-            if module.training != train:
-                module.train(mode=train)
-
         with self.autocast():
-            batch = {**batch}
-            batch["obs"] = batch["obs"] - 0.5
-
             enc_obs: Tensor = over_seq(self.wm.obs_enc)(batch["obs"])
             enc_act: Tensor = over_seq(self.wm.act_enc)(batch["act"])
             batch["reward"] = self._reward_fn(batch["reward"])
