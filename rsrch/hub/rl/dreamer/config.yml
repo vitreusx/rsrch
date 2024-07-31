@@ -19,6 +19,7 @@ _vars:
 seed: 42
 device: cuda
 compute_dtype: float16
+def_step: env_step
 env:
   type: atari
   atari:
@@ -31,7 +32,6 @@ env:
     term_on_life_loss: false
     time_limit: 108e3
     stack_num: ~
-    use_envpool: true
 wm:
   rssm:
     ensemble: 1
@@ -129,3 +129,4 @@ stages:
       tasks:
         - do_opt_step: ~
           every: 5
+        - do_env_step

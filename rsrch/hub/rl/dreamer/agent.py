@@ -50,7 +50,7 @@ class Agent(rl.VecAgent):
             if self.wm.training:
                 self.wm.eval()
 
-            with torch.inference_mode():
+            with torch.no_grad():
                 with autocast(self._device, self.compute_dtype):
                     return func(self, *args, **kwargs)
 

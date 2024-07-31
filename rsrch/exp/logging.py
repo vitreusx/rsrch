@@ -22,6 +22,8 @@ class ColorFormatter(Formatter):
     def format(self, record: LogRecord) -> str:
         record.color_on = self.STYLES[record.levelno]
         record.color_off = self.RESET
+        if len(record.name) > 13:
+            record.name = f"{record.name[:6]}~{record.name[-6:]}"
         return super().format(record)
 
 

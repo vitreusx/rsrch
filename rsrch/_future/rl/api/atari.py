@@ -23,7 +23,6 @@ class Config:
     term_on_life_loss: bool = False
     time_limit: int | None = int(108e3)
     stack_num: int | None = 4
-    use_envpool: bool = False
 
 
 class NoopResetEnv(gym.Wrapper):
@@ -160,42 +159,6 @@ class ToChannelLast(gym.ObservationWrapper):
 
     def observation(self, x):
         return np.transpose(x, (2, 0, 1))
-
-
-class RecordTotalStepsEP(env.Wrapper):
-    def __init__(self, env: env.Env, frame_skip: int):
-        super().__init__(env)
-        self.frameskip = frame_skip
-        self._total_steps = 0
-
-    def reset(self):
-        obs = super().reset()
-        self._total_steps += self.frameskip
-        obs["total_steps"] = self._total_steps
-        return obs
-
-    def step(self, act):
-        next_obs, final = super().step(act)
-        self._total_steps += self.frameskip
-        next_obs["total_steps"] = self._total_steps
-        return next_obs, final
-
-
-# class EnvEpilog(env.Env):
-#     def __init__(self, env: env.Env):
-#         self.env = env
-#         self.obs_space = env.obs_space
-#         self.act_space = env.act_space
-
-#     def reset(self):
-#         step = self.env.reset()
-#         step["total_steps"] = step["frame_number"]
-#         return step
-
-#     def step(self, act):
-#         step, final = self.env.step()
-#         step["total_steps"] = step["frame_number"]
-#         return step, final
 
 
 class VecAgentWrapper(env.VecAgent):
@@ -362,75 +325,20 @@ class API:
         render: bool = False,
         seed: int | None = None,
     ):
-        envs = None
-        if self.cfg.use_envpool and not render:
-            envs = self._try_envpool(num_envs, mode, seed)
-
-        if envs is None:
-            if seed is None:
-                seed = np.random.randint(int(2**31))
-
-            if num_envs > 1:
-
-                def env_fn(idx):
-                    return lambda: self._env(mode, seed + idx, render)
-
-                envs = []
-                for env_idx in range(num_envs):
-                    envs.append(env.ProcEnv(env_fn(env_idx)))
-            else:
-                envs = [self._env(mode, seed, render)]
-
-        return envs
-
-    def _try_envpool(
-        self,
-        num_envs: int,
-        mode: Literal["train", "val"],
-        seed: int | None,
-    ):
-        if self.cfg.obs_type == "ram":
-            return
-
-        task_id = self.cfg.env_id
-        task_name, task_version = task_id.split("-")
-        if task_version not in ("v4", "v5"):
-            return
-
-        max_steps = self.cfg.time_limit or int(1e6)
-        max_steps = max_steps // self.cfg.frame_skip
-
-        if isinstance(self.cfg.screen_size, tuple):
-            img_w, img_h = self.cfg.screen_size
-        else:
-            img_w = img_h = self.cfg.screen_size
-
-        repeat_prob = {"v5": 0.25, "v4": 0.0}[task_version]
-
         if seed is None:
             seed = np.random.randint(int(2**31))
 
-        envs = env.Envpool(
-            task_id=f"{task_name}-v5",
-            num_envs=num_envs,
-            max_episode_steps=max_steps,
-            img_height=img_h,
-            img_width=img_w,
-            stack_num=1,
-            gray_scale=self.cfg.obs_type == "grayscale",
-            frame_skip=self.cfg.frame_skip,
-            noop_max=self.cfg.noop_max,
-            episodic_life=self.cfg.term_on_life_loss and mode == "train",
-            zero_discount_on_life_loss=False,
-            reward_clip=False,
-            repeat_action_probability=repeat_prob,
-            use_inter_area_resize=True,
-            use_fire_reset=self.cfg.fire_reset,
-            full_action_space=False,
-            seed=seed,
-        )
+        if num_envs > 1:
 
-        envs = [RecordTotalStepsEP(e, self.cfg.frame_skip) for e in envs]
+            def env_fn(idx):
+                return lambda: self._env(mode, seed + idx, render)
+
+            envs = []
+            for env_idx in range(num_envs):
+                envs.append(env.ProcEnv(env_fn(env_idx)))
+        else:
+            envs = [self._env(mode, seed, render)]
+
         return envs
 
     def _env(

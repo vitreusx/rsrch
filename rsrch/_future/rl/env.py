@@ -92,7 +92,7 @@ class VecAgent(ABC):
         batch_size: int | None = None,
     ) -> list[Agent]:
         requests = Queue()
-        responses = [Queue(1) for _ in range(num_envs)]
+        responses = [Queue() for _ in range(num_envs)]
 
         if batch_size is None:
             batch_size = num_envs
@@ -182,80 +182,13 @@ def pool(*iterables: Iterable[T]) -> Iterable[tuple[int, T]]:
         yield results.get()
 
 
-def _split(x, n):
+def unbind(x):
     if isinstance(x, dict):
-        x = {k: _split(v, n) for k, v in x.items()}
+        x = {k: unbind(v) for k, v in x.items()}
+        n = len(next(iter(x.values())))
         return [{k: v[i] for k, v in x.items()} for i in range(n)]
     else:
         return x
-
-
-def Envpool(task_id: str, **kwargs) -> list[Env]:
-    pool = envpool.make(
-        task_id,
-        env_type="gymnasium",
-        gym_reset_return_info=True,
-        **kwargs,
-    )
-    num_envs = pool.config["num_envs"]
-    batch_size = pool.config["batch_size"]
-
-    requests = Queue()
-    responses = [Queue() for _ in range(num_envs)]
-
-    def worker_fn():
-        reset_act = pool.action_space.sample()
-
-        while True:
-            batch = {"action": [], "env_id": []}
-            for _ in range(batch_size):
-                act, env_id = requests.get()
-                if act is None:
-                    act = reset_act
-                batch["action"].append(act)
-                batch["env_id"].append(env_id)
-
-            batch["action"] = np.asarray(batch["action"])
-            batch["env_id"] = np.asarray(batch["env_id"], dtype=np.int32)
-
-            next_obs, reward, term, trunc, info = pool.step(**batch)
-            # NOTE: For some reason, info["env_id"] is all zeros?
-            info["env_id"] = batch["env_id"]
-
-            steps = _split(
-                {
-                    "obs": next_obs,
-                    "reward": reward,
-                    "term": term,
-                    "trunc": trunc,
-                    **info,
-                },
-                batch_size,
-            )
-            for env_id, step in zip(info["env_id"], steps):
-                responses[env_id].put(step)
-
-    worker = threading.Thread(target=worker_fn, daemon=True)
-    worker.start()
-
-    class Slice(Env):
-        def __init__(self, env_id):
-            self.env_id = env_id
-            self.obs_space = {"obs": from_gym(pool.observation_space)}
-            self.act_space = from_gym(pool.action_space)
-
-        def reset(self):
-            requests.put((None, self.env_id))
-            step = responses[self.env_id].get()
-            return step
-
-        def step(self, act):
-            requests.put((act, self.env_id))
-            step = responses[self.env_id].get()
-            final = step["term"] | step["trunc"]
-            return step, final
-
-    return [Slice(env_id) for env_id in range(num_envs)]
 
 
 class ProcEnv(Env):

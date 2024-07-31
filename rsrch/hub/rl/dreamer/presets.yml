@@ -12,14 +12,39 @@ atari:
     actor_ent: 1e-3
     opt.actor.lr: 4e-5
     opt.critic.lr: 1e-4
+train:
   stages:
     - env_rollout:
-        until: 50e3 # 200e3
+        until: 200e3
         mode: rand
     - train_loop:
         until: 200e6
         tasks:
           - do_opt_step: ~
             every: 64
-  # profile:
-  #   enabled: true
+          - do_env_step
+          - save_ckpt: ~
+            every: 1e6
+sample:
+  stages:
+    - load_ckpt:
+        path: runs/dreamerv2/Pong-v5__2024-07-29_12-17-06/ckpts/ckpt.env_step=6.2e+06.pth
+    - env_rollout:
+        until: 400e3
+        mode: train
+    - save_data: ~
+offline:
+  def_step: wm_opt_step
+  stages:
+    - load_data:
+        path: runs/dreamerv2/Pong-v5__2024-07-30_09-32-03/data/samples.env_step=400004.pkl.lzma
+    - train_loop:
+        until: 100e3
+        tasks:
+          - do_opt_step
+          - val_epoch: ~
+            every: 10e3
+          - save_ckpt: ~
+            every: 25e3
+default:
+  $extends: [atari, offline]

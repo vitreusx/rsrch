@@ -20,6 +20,9 @@ class Board:
     def register_step(self, name: str, value_fn, default=False):
         pass
 
+    def set_as_default(self, name: str):
+        pass
+
     def add_scalar(self, tag: str, value: Number, *, step: Step = None):
         pass
 
@@ -40,6 +43,9 @@ class StepMixin:
         self._steps[name] = value_fn
         if default:
             self._def_step = name
+
+    def set_as_default(self, name: str):
+        self._def_step = name
 
     def _get_step(self, step: int | str | None = None):
         if step is None:

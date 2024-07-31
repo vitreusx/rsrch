@@ -4,7 +4,7 @@ from datetime import datetime
 from functools import partial
 from numbers import Number
 from pathlib import Path
-from typing import Callable
+from typing import Callable, ParamSpec, TypeVar
 
 import numpy as np
 from ruamel.yaml import YAML
@@ -31,6 +31,13 @@ def str2bool(s: str) -> bool:
 
 def timestamp():
     return f"{datetime.now():%Y-%m-%d_%H-%M-%S}"
+
+
+P, R = ParamSpec("P"), TypeVar("R")
+
+
+def partial_typed(f: Callable[P, R], *args, **kwargs) -> Callable[P, R]:
+    return partial(f, *args, **kwargs)
 
 
 class Experiment:
@@ -78,11 +85,15 @@ class Experiment:
         with open(self.dir / "info.yml", "w") as f:
             yaml.dump(info, f)
 
-        self.pbar = partial(tqdm, dynamic_ncols=True)
+        self.pbar = partial_typed(tqdm, dynamic_ncols=True)
 
     def register_step(self, name: str, value_fn, default=False):
         for board in self.boards:
             board.register_step(name, value_fn, default=default)
+
+    def set_as_default(self, step: str):
+        for board in self.boards:
+            board.set_as_default(step)
 
     def log(self, level, message):
         self.logger.log(level, message)

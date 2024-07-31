@@ -277,11 +277,12 @@ def load(path: str | Path):
 
 
 def add_preset_(cfg: dict, presets: dict, name: str):
-    """Update config dict with a preset. If the preset contains $extends key,
-    the indicated extensions are added as well."""
+    """Update config dict with a preset. If the preset contains `$extends` key,
+    the indicated presets are added as well."""
 
     preset = presets.get(name, {})
     if "$extends" in preset:
         for ext in preset["$extends"]:
             add_preset_(cfg, presets, ext)
+        del preset["$extends"]
     merge_(cfg, preset)

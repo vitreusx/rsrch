@@ -1,3 +1,5 @@
+import concurrent.futures
+import logging
 import lzma
 import pickle
 from collections import defaultdict, deque
@@ -12,6 +14,7 @@ from typing import Literal
 import numpy as np
 import torch
 from torch import Tensor, nn
+from tqdm import tqdm
 
 from rsrch import spaces
 from rsrch._future import rl
@@ -55,6 +58,7 @@ class Config:
     seed: int
     device: str
     compute_dtype: Literal["float16", "float32"]
+    def_step: str
 
     debug: Debug
     profile: Profile
@@ -81,6 +85,8 @@ class Runner:
                 assert len(stage) == 1
                 name = next(iter(stage.keys()))
                 params = stage[name]
+                if params is None:
+                    params = {}
                 func = lambda: getattr(self, name)(**params)
             func()
 
@@ -103,8 +109,7 @@ class Runner:
 
         board = Tensorboard(dir=self.exp.dir / "board", min_delay=1e-1)
         self.exp.boards.append(board)
-
-        self.pbar = self.exp.pbar(desc="DreamerV2")
+        self.exp.set_as_default(self.cfg.def_step)
 
         # We need the trainer to deduce the reward space, even if we don't
         # run the training.
@@ -145,6 +150,8 @@ class Runner:
             wm=self.wm,
             cfg=self.cfg.agent,
             act_space=self.env_api.act_space,
+            mode="train",
+            compute_dtype=self.compute_dtype,
         )
 
         self.env_iter = iter(self.env_api.rollout(self.envs, self.agent))
@@ -153,28 +160,35 @@ class Runner:
         self._env_steps = defaultdict(lambda: 0)
 
         self.env_step = 0
-        self.exp.register_step("env_step", lambda: self.env_step, default=True)
+        self.exp.register_step("env_step", lambda: self.env_step)
         self.agent_step = 0
+        self.exp.register_step("agent_step", lambda: self.agent_step)
+
+    def _get_until_params(self, cfg: dict | str):
+        if isinstance(cfg, dict):
+            max_value, of = cfg["n"], cfg["of"]
+        else:
+            max_value = cfg
+            of = self.cfg.def_step
+        return max_value, of
 
     def _make_until(self, cfg):
-        if isinstance(cfg, dict):
-            n = cfg["n"]
-            step_fn = lambda: getattr(self, cfg["of"])
-        else:
-            n = cfg
-            step_fn = lambda: self.env_step
-        return cron.Until(step_fn, n)
+        max_value, of = self._get_until_params(cfg)
+        return cron.Until(lambda of=of: getattr(self, of), max_value)
 
-    def _make_every(self, cfg):
+    def _get_every_params(self, cfg: dict | str):
         if isinstance(cfg, dict):
-            every = cfg["n"]
-            step_fn = lambda: getattr(self, cfg["of"])
+            every, of = cfg["n"], cfg["of"]
             iters = cfg.get("iters", 1)
         else:
             every = cfg
-            step_fn = lambda: self.env_step
+            of = self.cfg.def_step
             iters = 1
-        return cron.Every(step_fn, every, iters)
+        return every, of, iters
+
+    def _make_every(self, cfg):
+        every, of, iters = self._get_every_params(cfg)
+        return cron.Every(lambda of=of: getattr(self, of), every, iters)
 
     def _tf_init(self, module: nn.Module):
         if isinstance(module, (nn.Linear, nn.Conv2d, nn.ConvTranspose2d)):
@@ -278,7 +292,8 @@ class Runner:
 
     def save_data(self, tag: str | None = None):
         if tag is None:
-            tag = f"env_step={self.env_step}"
+            cur_step = getattr(self, self.cfg.def_step)
+            tag = f"{self.cfg.def_step}={cur_step:g}"
 
         dst = self.exp.dir / "data" / f"samples.{tag}.pkl.lzma"
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -286,9 +301,15 @@ class Runner:
         with lzma.open(dst, "wb") as f:
             pickle.dump(self.buf.save(), f)
 
+        self.exp.log(logging.INFO, f"Saved buffer data to: {str(dst)}")
+
     def load_data(self, path: str | Path):
+        path = Path(path)
+
         with lzma.open(path, "rb") as f:
             self.buf.load(pickle.load(f))
+
+        self.exp.log(logging.INFO, f"Loaded buffer data from: {str(path)}")
 
     def save_ckpt(self, full: bool = False):
         state = {
@@ -305,14 +326,19 @@ class Runner:
                 "repro": repro.state.save(),
             }
 
-        tag = f"ckpt.env_step={self.env_step:g}"
+        cur_step = getattr(self, self.cfg.def_step)
+        tag = f"ckpt.{self.cfg.def_step}={cur_step:g}"
         dst = self.exp.dir / "ckpts" / f"{tag}.pth"
         dst.parent.mkdir(parents=True, exist_ok=True)
 
         with open(dst, "wb") as f:
             torch.save(state, f)
 
+        self.exp.log(logging.INFO, f"Saved checkpoint to: {str(dst)}")
+
     def load_ckpt(self, path: str | Path):
+        path = Path(path)
+
         with open(path, "rb") as f:
             state = torch.load(f, map_location="cpu")
 
@@ -325,14 +351,33 @@ class Runner:
             self.buf.load(state["buf"])
             repro.state.load(state["repro"])
 
+        self.exp.log(logging.INFO, f"Loaded checkpoint from: {str(path)}")
+
     def env_rollout(self, until, mode):
         should_do = self._make_until(until)
         self.agent.mode = mode
+
+        pbar = self._make_pbar("Env rollout", until)
         while should_do:
             self.do_env_step()
+            self._update_pbar(pbar, should_do)
 
-    def do_env_step(self):
+    def _make_pbar(self, desc, until_cfg: dict | str):
+        max_value, of = self._get_until_params(until_cfg)
+
+        return self.exp.pbar(
+            desc=desc,
+            initial=getattr(self, of),
+            total=max_value,
+            unit=f" {of}",
+        )
+
+    def _update_pbar(self, pbar: tqdm, until: cron.Until):
+        pbar.update(until.step_fn() - pbar.n)
+
+    def do_env_step(self, mode="train"):
         with self.fwd_mtx:
+            self.agent.mode = mode
             env_idx, (step, final) = next(self.env_iter)
 
         with self.buf_mtx:
@@ -354,24 +399,32 @@ class Runner:
             self.env_step += diff
             self._env_steps[env_idx] = step["total_steps"]
         else:
-            diff = 1
             self.env_step += 1
 
-        self.pbar.update(diff)
-
-    def train_loop(self, until: dict | str, tasks: list[str | dict]):
+    def train_loop(
+        self,
+        until: dict | str,
+        tasks: list[dict | str],
+    ):
         self._setup_train()
 
         task_functions = []
         should_run = []
 
-        for task in tasks:
-            task = {**task}
-            assert len(tasks) == 2 and "every" in task
+        _, of = self._get_until_params(until)
 
-            should_run_task = self._make_every(task.get("every", 1))
+        for task in tasks:
+            if isinstance(task, str):
+                task = {task: {}}
+                every = 1
+            else:
+                task = {**task}
+                every = task.get("every", 1)
+                if "every" in task:
+                    del task["every"]
+
+            should_run_task = self._make_every({"n": every, "of": of})
             should_run.append(should_run_task)
-            del task["every"]
 
             name = next(iter(task.keys()))
             params = task[name]
@@ -381,21 +434,34 @@ class Runner:
             task_functions.append(func)
 
         pool = ThreadPoolExecutor(len(tasks))
-        task_futures = [None for _ in range(len(tasks))]
+        futures = {}
+        active_tasks = set()
 
         should_loop = self._make_until(until)
 
+        pbar = self._make_pbar("Train loop", until)
+
         while should_loop:
-            for idx in range(len(tasks)):
-                if not should_run[idx]:
+            completed, _ = concurrent.futures.wait(
+                futures,
+                return_when="FIRST_COMPLETED",
+            )
+            for fut in completed:
+                fut.result()
+                task_idx = futures[fut]
+                del futures[fut]
+                active_tasks.remove(task_idx)
+
+            for task_idx in range(len(tasks)):
+                if task_idx in active_tasks:
                     continue
 
-                if task_futures[idx] is not None:
-                    task_futures[idx].result()
+                if should_run[task_idx]:
+                    fut = pool.submit(task_functions[task_idx])
+                    futures[fut] = task_idx
+                    active_tasks.add(task_idx)
 
-                task_futures[idx] = pool.submit(task_functions[idx])
-
-            self.do_env_step()
+            self._update_pbar(pbar, should_loop)
 
     def do_opt_step(self, n=1):
         if n > 1:
@@ -432,12 +498,39 @@ class Runner:
         self.wm_opt_step += 1
         self.ac_opt_step += 1
 
-    def val_epoch(self, limit=None):
+    def val_epoch(self, limit=None, episodes=32):
         wm_loss = self.do_wm_val_epoch(limit)
-        self.exp.add_scalar("wm/val_loss", wm_loss, step="wm_opt_step")
+        if wm_loss is not None:
+            self.exp.add_scalar("wm/val_loss", wm_loss, step="wm_opt_step")
 
         ac_loss = self.do_ac_val_epoch(limit)
-        self.exp.add_scalar("ac/val_loss", ac_loss, step="ac_opt_step")
+        if ac_loss is not None:
+            self.exp.add_scalar("ac/val_loss", ac_loss, step="ac_opt_step")
+
+        val_envs = self.env_api.make_envs(min(episodes, 8), mode="val")
+        val_agent = agent.Agent(
+            self.actor,
+            self.wm,
+            self.cfg.agent,
+            self.env_api.act_space,
+            mode="eval",
+            compute_dtype=self.compute_dtype,
+        )
+
+        val_iter = iter(self.env_api.rollout(val_envs, val_agent))
+        env_rets = defaultdict(lambda: 0.0)
+        all_rets = []
+
+        with self.fwd_mtx:
+            for env_idx, (step, final) in val_iter:
+                env_rets[env_idx] += step["reward"]
+                if final:
+                    all_rets.append(env_rets[env_idx])
+                    del env_rets[env_idx]
+                    if len(all_rets) >= 32:
+                        break
+
+        self.exp.add_scalar("val/mean_ep_ret", np.mean(all_rets))
 
     def train_wm(self, early_stop, val_every, val_limit=None):
         should_stop = EarlyStopping(**early_stop)
@@ -465,7 +558,7 @@ class Runner:
         self.wm.load_state_dict(best_state["wm"])
         self.wm_trainer.load(best_state["wm_trainer"])
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def do_wm_val_epoch(self, limit=None):
         val_loss, val_n = 0.0, 0
 
@@ -489,7 +582,10 @@ class Runner:
             val_loss += loss
             val_n += 1
 
-        val_loss = val_loss / val_n
+        if val_n > 0:
+            val_loss = val_loss / val_n
+        else:
+            val_loss = None
         return val_loss
 
     def do_wm_opt_step(self, n=1):
@@ -541,7 +637,7 @@ class Runner:
         self.actor.load_state_dict(best_state["actor"])
         self.ac_trainer.load(best_state["ac_trainer"])
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def do_ac_val_epoch(self, limit=None):
         val_loss, val_n = 0.0, 0
 
@@ -570,7 +666,10 @@ class Runner:
             val_loss += loss
             val_n += 1
 
-        val_loss = val_loss / val_n
+        if val_n > 0:
+            val_loss = val_loss / val_n
+        else:
+            val_loss = None
         return val_loss
 
     def do_ac_opt_step(self, n=1):

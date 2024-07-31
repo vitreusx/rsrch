@@ -71,7 +71,10 @@ class Slices(data.IterableDataset):
                     continue
 
             while len(cur_eps) < self.batch_size:
-                ep_id = next(ep_id_iter)
+                ep_id = next(ep_id_iter, None)
+                if ep_id is None:
+                    return
+
                 seq = self.buf[ep_id]
                 if not self.ongoing and not seq[-1]["term"]:
                     continue
