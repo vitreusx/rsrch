@@ -10,15 +10,29 @@ import rsrch.distributions as D
 from rsrch import spaces
 from rsrch._future import rl
 
-from .ac import Actor
-from .utils import autocast
-from .wm import WorldModel
+from .common import nets
+from .common.utils import autocast
 
 
 @dataclass
 class Config:
     train_noise: float
     eval_noise: float
+
+
+class Actor(nn.Module):
+    def __call__(self, state) -> D.Distribution:
+        ...
+
+
+class WorldModel(nn.Module):
+    act_enc: nets.ActionEncoder
+
+    def reset(self, obs: Tensor) -> Tensor:
+        ...
+
+    def step(self, state: Tensor, act: Tensor, next_obs: Tensor) -> Tensor:
+        ...
 
 
 class Agent(rl.VecAgent):

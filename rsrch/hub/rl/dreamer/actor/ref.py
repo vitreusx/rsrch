@@ -10,9 +10,8 @@ from rsrch.nn.utils import over_seq
 from rsrch.rl.utils import polyak
 from rsrch.utils import sched
 
-from . import nets, rssm
-from .utils import find_class, null_ctx
-from .wm import WorldModel
+from ..common import nets
+from ..common.utils import TrainerBase, find_class, null_ctx
 
 
 @dataclass
@@ -24,7 +23,6 @@ class Config:
     target_critic: dict | None
     rew_norm: dict
     actor_grad: Literal["dynamics", "reinforce", "auto"]
-    horizon: int
     clip_grad: float | None
     gamma: float
     gae_lambda: float
@@ -32,26 +30,25 @@ class Config:
     actor_ent: float | dict
 
 
-class Actor(nn.Module):
-    def __init__(self, wm: WorldModel, cfg: Config):
+class Actor(nn.Sequential):
+    def __init__(
+        self,
+        cfg: Config,
+        state_size: int,
+        act_space: spaces.torch.Space,
+    ):
         super().__init__()
         self.cfg = cfg
 
-        mlp = nets.MLP(wm.state_size, None, **cfg.actor)
-        head = nets.ActorHead(mlp.out_features, wm.act_space)
-        self.net = nn.Sequential(rssm.AsTensor(), mlp, head)
-
-    def forward(self, state):
-        return self.net(state)
+        mlp = nets.MLP(state_size, None, **cfg.actor)
+        head = nets.ActorHead(mlp.out_features, act_space)
+        super().__init__(mlp, head)
 
 
-class Critic(nn.Sequential):
-    def __init__(self, wm: WorldModel, cfg: Config):
+class Critic(nets.BoxDecoder):
+    def __init__(self, cfg: Config, state_size: int):
         vf_space = spaces.torch.Box((), dtype=torch.float32)
-        super().__init__(
-            rssm.AsTensor(),
-            nets.BoxDecoder(wm.state_size, vf_space, **cfg.critic),
-        )
+        super().__init__(state_size, vf_space, **cfg.critic)
 
 
 def gae_lambda(rew, val, gamma, bootstrap, lambda_):
@@ -67,39 +64,27 @@ def gae_lambda(rew, val, gamma, bootstrap, lambda_):
     return torch.stack(returns)
 
 
-class Trainer:
+class Trainer(TrainerBase):
     def __init__(
         self,
         cfg: Config,
         compute_dtype: torch.dtype | None,
     ):
-        super().__init__()
+        super().__init__(
+            clip_grad=cfg.clip_grad,
+            compute_dtype=compute_dtype,
+        )
         self.cfg = cfg
-        self.compute_dtype = compute_dtype
-        self.modules = set()
 
         self.rew_norm = nets.StreamNorm(**cfg.rew_norm)
         self.actor_grad_mix = self._make_sched(cfg.actor_grad_mix)
         self.actor_ent = self._make_sched(cfg.actor_ent)
 
-    def __setattr__(self, name, value):
-        super().__setattr__(name, value)
-        if isinstance(value, nn.Module):
-            self.modules.add(value)
-
-    def __delattr__(self, name):
-        value = getattr(self, name)
-        if isinstance(value, nn.Module):
-            self.modules.remove(value)
-        super().__delattr__(name)
-
     def setup(
         self,
-        wm: WorldModel,
         actor: Actor,
         make_critic: Callable[[], nn.Module],
     ):
-        self.wm = wm
         self.actor = actor
 
         self.critic = make_critic()
@@ -156,62 +141,17 @@ class Trainer:
             del cfg["type"]
             return cls(**cfg)
 
-    def save(self):
-        return {"opt": self.opt.state_dict(), "scaler": self.scaler.state_dict()}
-
-    def load(self, ckpt):
-        self.opt.load_state_dict(ckpt["opt"])
-        self.scaler.load_state_dict(ckpt["scaler"])
-
-    def autocast(self):
-        if self.compute_dtype is None:
-            return null_ctx()
-        else:
-            return torch.autocast(
-                device_type=self._device.type,
-                dtype=self.compute_dtype,
-            )
-
-    def train(self):
-        for module in self.modules:
-            if not module.training:
-                module.train()
-
-    def eval(self):
-        for module in self.modules:
-            if module.training:
-                module.eval()
-
-    KEYS = Literal["initial", "term"]
-
-    def compute(self, batch: dict[KEYS, Any]):
+    def compute(self, states, action, reward, term):
         losses, mets = {}, {}
 
         if self.update_target is not None:
             self.update_target.step()
-
-        with self.autocast():
-            state = batch["initial"]
-            states, acts = [state], []
-            for _ in range(self.cfg.horizon):
-                policy: D.Distribution = self.actor(state.detach())
-                act: Tensor = policy.rsample()
-                acts.append(act)
-                state = self.wm.rssm.img_step(state, act)
-                states.append(state)
-            states, acts = torch.stack(states), torch.stack(acts)
 
         # For reinforce, we detach `target` variable, so requiring gradients on
         # any computation leading up to it will cause autograd to leak memory
         no_grad = torch.no_grad if self.actor_grad == "reinforce" else null_ctx
         with no_grad():
             with self.autocast():
-                rew_dist = over_seq(self.wm.decoders["reward"])(states)
-                reward = self.rew_norm(rew_dist.mode)
-
-                term_dist = over_seq(self.wm.decoders["term"])(states)
-                term = term_dist.mean
-                term[0] = batch["term"].float()
                 gamma = self.cfg.gamma * (1.0 - term)
 
                 vt = over_seq(self.target_critic)(states).mode
@@ -231,11 +171,11 @@ class Trainer:
             elif self.actor_grad == "reinforce":
                 baseline = over_seq(self.target_critic)(states[:-2]).mode
                 adv = (target[1:] - baseline).detach()
-                objective = adv * policies.log_prob(acts[:-1].detach())
+                objective = adv * policies.log_prob(action[:-1].detach())
             elif self.actor_grad == "both":
                 baseline = over_seq(self.target_critic)(states[:-2]).mode
                 adv = (target[1:] - baseline).detach()
-                objective = adv * policies.log_prob(acts[:-1].detach())
+                objective = adv * policies.log_prob(action[:-1].detach())
                 mix = self.actor_grad_mix(self.opt_iter)
                 mets["actor_grad_mix"] = mix
                 objective = mix * target[1:] + (1.0 - mix) * objective
@@ -258,12 +198,3 @@ class Trainer:
             loss = sum(coef.get(k, 1.0) * v for k, v in losses.items())
 
         return loss, mets
-
-    def opt_step(self, loss: Tensor):
-        self.opt.zero_grad(set_to_none=True)
-        self.scaler.scale(loss).backward()
-        self.scaler.unscale_(self.opt)
-        if self.cfg.clip_grad is not None:
-            nn.utils.clip_grad_norm_(self.parameters, max_norm=self.cfg.clip_grad)
-        self.scaler.step(self.opt)
-        self.scaler.update()

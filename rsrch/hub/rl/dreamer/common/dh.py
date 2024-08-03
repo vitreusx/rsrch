@@ -1,6 +1,7 @@
 import math
 from typing import Callable, Literal
 
+import torch
 from torch import Tensor, nn
 
 import rsrch.distributions as D
@@ -101,6 +102,7 @@ class Bernoulli(nn.Module):
         space: spaces.torch.Discrete,
     ):
         super().__init__()
+        assert space.n == 2 and space.dtype == torch.bool
         self.layer = layer_ctor(1)
 
     def forward(self, input: Tensor):

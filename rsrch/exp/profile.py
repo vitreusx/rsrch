@@ -34,7 +34,10 @@ class Profiler:
         _func: Callable[P, R],
         name: str | None = None,
     ) -> Callable[P, R]:
-        """Transforms a function so as to profile it. To be specific, on the first execution, we repeat the function call until Torch profiler finishes, and save the results to a trace json file. Subsequent calls behave as usual."""
+        """Transform a function into a profiled one.
+
+        Transforms a function so as to profile it. To be specific, on the first execution, we repeat the function call until Torch profiler finishes, and save the results to a trace json file. Subsequent calls behave as usual.
+        """
 
         if not self.enabled:
             return _func

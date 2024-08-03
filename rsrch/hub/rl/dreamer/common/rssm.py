@@ -13,7 +13,6 @@ from rsrch.nn.utils import over_seq, pass_gradient, safe_mode
 from rsrch.types import Tensorlike
 
 from . import dh, nets
-from .utils import find_class
 
 
 @dataclass

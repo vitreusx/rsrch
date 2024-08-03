@@ -32,81 +32,12 @@ env:
     term_on_life_loss: false
     time_limit: 108e3
     stack_num: ~
-wm:
-  rssm:
-    ensemble: 1
-    deter_size: 1024
-    stoch:
-      type: discrete
-      num_tokens: 32
-      vocab_size: 32
-    act: *act
-    norm: *norm
-    hidden_size: 1024
-    jit: true
-  opt:
-    type: adam_w
-    lr: 1e-4
-    eps: 1e-5
-    weight_decay: "${1e-6/lr}"
-  kl:
-    free: 0.0
-    forward: false
-    balance: 0.8
-    free_avg: true
-  reward_fn: tanh
-  clip_rew: [-1.0, 1.0]
-  coef: {}
-  clip_grad: 1.0e2
-  encoder:
-    type: auto
-    box: *mlp
-    image: *conv
-  decoders:
-    obs:
-      type: auto
-      box:
-        <<: [*mlp]
-        dist: { type: mse }
-      image:
-        <<: [*conv_t]
-        dist: { type: mse }
-    reward:
-      type: box
-      <<: [*mlp]
-      dist: { type: mse }
-    term:
-      type: discrete
-      <<: [*mlp]
-ac:
-  actor: *mlp
-  critic:
-    <<: [*mlp]
-    dist: { type: mse }
-  target_critic: { every: 100 }
-  opt:
-    type: adam_w
-    actor: { lr: 8e-5, weight_decay: "${1e-6/lr}" }
-    critic: { lr: 2e-4, weight_decay: "${1e-6/lr}" }
-    eps: 1e-5
-  horizon: 15
-  rew_norm:
-    momentum: 1.0
-    scale: 1.0
-    eps: 1e-8
-  gamma: 0.99
-  gae_lambda: 0.95
-  actor_grad: auto
-  actor_grad_mix: 0.1
-  actor_ent: 2e-3
-  clip_grad: 1.0e2
-  coef: {}
 debug:
   deterministic: false
 profile:
   enabled: false
   schedule: { wait: 5, warmup: 1, active: 3, repeat: 4 }
-  functions: [_opt_step, take_env_step]
+  functions: [do_opt_step, do_env_step]
 agent:
   train_noise: 0.0
   eval_noise: 0.0
@@ -120,6 +51,100 @@ train:
     ongoing: false
   val_frac: 0.0
   num_envs: 1
+  horizon: 15
+
+wm:
+  type: dreamer
+  dreamer:
+    rssm:
+      ensemble: 1
+      deter_size: 1024
+      stoch:
+        type: discrete
+        num_tokens: 32
+        vocab_size: 32
+      act: *act
+      norm: *norm
+      hidden_size: 1024
+      jit: true
+    opt:
+      type: adam_w
+      lr: 1e-4
+      eps: 1e-5
+      weight_decay: "${1e-6/lr}"
+    kl:
+      free: 0.0
+      forward: false
+      balance: 0.8
+      free_avg: true
+    reward_fn: tanh
+    clip_rew: [-1.0, 1.0]
+    coef: {}
+    clip_grad: 1.0e2
+    encoder:
+      type: auto
+      box: *mlp
+      image: *conv
+    decoders:
+      obs:
+        type: auto
+        box:
+          <<: [*mlp]
+          dist: { type: mse }
+        image:
+          <<: [*conv_t]
+          dist: { type: mse }
+      reward:
+        type: box
+        <<: [*mlp]
+        dist: { type: mse }
+      term:
+        type: discrete
+        <<: [*mlp]
+
+ac:
+  _common: &ac_common
+    actor: *mlp
+    rew_norm:
+      momentum: 1.0
+      scale: 1.0
+      eps: 1e-8
+    gamma: 0.99
+    gae_lambda: 0.95
+    actor_grad: reinforce
+    actor_grad_mix: 0.1
+    actor_ent: 2e-3
+    clip_grad: 1.0e2
+    coef: {}
+
+  type: ref
+  ref:
+    <<: [*ac_common]
+    critic:
+      <<: [*mlp]
+      dist: { type: mse }
+    target_critic: { every: 100 }
+    opt:
+      type: adam_w
+      actor: { lr: 8e-5, weight_decay: "${1e-6/lr}" }
+      critic: { lr: 2e-4, weight_decay: "${1e-6/lr}" }
+      eps: 1e-5
+
+  sac:
+    <<: [*ac_common]
+    vf:
+      <<: [*mlp]
+      dist: { type: mse }
+    target_vf: { every: 100 }
+    opt:
+      type: adam_w
+      actor: { lr: 8e-5, weight_decay: "${1e-6/lr}" }
+      vf: { lr: 2e-4, weight_decay: "${1e-6/lr}" }
+      eps: 1e-5
+    use_log_ent: false
+    min_q: false
+    use_adv_norm: false
+
 stages:
   - env_rollout:
       until: 10e3

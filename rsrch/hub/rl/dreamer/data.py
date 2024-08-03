@@ -128,7 +128,7 @@ class Slices(data.IterableDataset):
             "term": torch.tensor(np.array([step["term"] for step in seq])),
         }
 
-        res["act"] = [step.get("act", None) for step in seq]
+        res["act"] = [step.get("act") for step in seq]
         if res["act"][0] is None:
             res["act"][0] = torch.zeros_like(res["act"][-1])
         res["act"] = torch.stack(res["act"])

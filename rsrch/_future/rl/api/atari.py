@@ -328,16 +328,12 @@ class API:
         if seed is None:
             seed = np.random.randint(int(2**31))
 
-        if num_envs > 1:
+        def env_fn(idx):
+            return lambda: self._env(mode, seed + idx, render)
 
-            def env_fn(idx):
-                return lambda: self._env(mode, seed + idx, render)
-
-            envs = []
-            for env_idx in range(num_envs):
-                envs.append(env.ProcEnv(env_fn(env_idx)))
-        else:
-            envs = [self._env(mode, seed, render)]
+        envs = []
+        for env_idx in range(num_envs):
+            envs.append(env.ProcEnv(env_fn(env_idx)))
 
         return envs
 
