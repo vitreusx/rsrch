@@ -3,8 +3,10 @@ atari:
     type: atari
     atari.env_id: Pong-v5
   wm.dreamer:
-    rssm.deter_size: 600
-    rssm.hidden_size: 600
+    rssm:
+      deter_size: 600
+      hidden_size: 600
+      stoch: { num_tokens: 32, vocab_size: 32 }
     opt.lr: 2e-4
     coef: { kl: 0.1, term: 5.0 }
   ac:
@@ -20,7 +22,18 @@ atari:
       <<: [*ac_common]
       opt.actor.lr: 4e-5
       opt.vf.lr: 1e-4
+atari_s:
+  _vars:
+    conv.depth: 32
+    mlp.hidden: 256
+  wm.dreamer:
+    rssm:
+      deter_size: 448
+      hidden_size: 448
+      stoch: { num_tokens: 24, vocab_size: 32 }
 train:
+  train:
+    val_frac: 0.15
   stages:
     - env_rollout:
         until: 50e3 # 200e3
@@ -30,9 +43,11 @@ train:
         tasks:
           - do_opt_step: ~
             every: 64
-          # - save_ckpt: ~
-          #   every: 1e6
+          - save_ckpt: ~
+            every: 1e6
           - do_env_step
+          - val_epoch: ~
+            every: 100e3
 sample:
   stages:
     - load_ckpt:
@@ -42,36 +57,37 @@ sample:
         mode: train
     - save_data: ~
 sample_layered:
+  _ckpt_dir: runs/dreamerv2/Pong-v5__2024-07-29_12-17-06/ckpts
   stages:
     - env_rollout:
         until: 100e3
         mode: rand
     - load_ckpt:
-        path: runs/dreamerv2/Pong-v5__2024-07-29_12-17-06/ckpts/ckpt.env_step=200004.pth
+        path: ${_ckpt_dir}/ckpt.env_step=200004.pth
     - env_rollout:
         until: 200e3
     - load_ckpt:
-        path: runs/dreamerv2/Pong-v5__2024-07-29_12-17-06/ckpts/ckpt.env_step=1.2e+06.pth
+        path: ${_ckpt_dir}/ckpt.env_step=1.2e+06.pth
     - env_rollout:
         until: 300e3
     - load_ckpt:
-        path: runs/dreamerv2/Pong-v5__2024-07-29_12-17-06/ckpts/ckpt.env_step=2.2e+06.pth
+        path: ${_ckpt_dir}/ckpt.env_step=2.2e+06.pth
     - env_rollout:
         until: 400e3
     - load_ckpt:
-        path: runs/dreamerv2/Pong-v5__2024-07-29_12-17-06/ckpts/ckpt.env_step=3.2e+06.pth
+        path: ${_ckpt_dir}/ckpt.env_step=3.2e+06.pth
     - env_rollout:
         until: 500e3
     - load_ckpt:
-        path: runs/dreamerv2/Pong-v5__2024-07-29_12-17-06/ckpts/ckpt.env_step=4.2e+06.pth
+        path: ${_ckpt_dir}/ckpt.env_step=4.2e+06.pth
     - env_rollout:
         until: 600e3
     - load_ckpt:
-        path: runs/dreamerv2/Pong-v5__2024-07-29_12-17-06/ckpts/ckpt.env_step=5.2e+06.pth
+        path: ${_ckpt_dir}/ckpt.env_step=5.2e+06.pth
     - env_rollout:
         until: 700e3
     - load_ckpt:
-        path: runs/dreamerv2/Pong-v5__2024-07-29_12-17-06/ckpts/ckpt.env_step=6.2e+06.pth
+        path: ${_ckpt_dir}/ckpt.env_step=6.2e+06.pth
     - env_rollout:
         until: 800e3
     - save_data: ~
@@ -92,5 +108,4 @@ offline:
           - save_ckpt: ~
             every: 25e3
 default:
-  $extends: [atari, train]
-  ac.type: sac
+  $extends: [atari, atari_s, train]

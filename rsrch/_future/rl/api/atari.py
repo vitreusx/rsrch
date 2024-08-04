@@ -1,5 +1,7 @@
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import partial
 from typing import Literal, Sequence
 
 import gymnasium as gym
@@ -23,6 +25,7 @@ class Config:
     term_on_life_loss: bool = False
     time_limit: int | None = int(108e3)
     stack_num: int | None = 4
+    use_envpool: bool = True
 
 
 class NoopResetEnv(gym.Wrapper):
@@ -161,7 +164,20 @@ class ToChannelLast(gym.ObservationWrapper):
         return np.transpose(x, (2, 0, 1))
 
 
-class VecAgentWrapper(env.VecAgent):
+class RecordTotalStepsEP(env.VecEnv):
+    def __init__(self, env: env.VecEnv, frame_skip=1):
+        self.env = env
+        self.frame_skip = frame_skip
+        self._total_steps = [0 for _ in range(self.env.num_envs)]
+
+    def rollout(self, agent: env.VecAgent):
+        for env_idx, (step, final) in self.env.rollout(agent):
+            self._total_steps[env_idx] += self.frame_skip
+            step["total_steps"] = self._total_steps[env_idx]
+            yield env_idx, (step, final)
+
+
+class WrapVecAgent(env.VecAgent):
     def __init__(self, agent: env.VecAgent, stack_num: int | None):
         super().__init__()
         self.agent = agent
@@ -174,16 +190,16 @@ class VecAgentWrapper(env.VecAgent):
 
     def policy(self, idxes):
         act: torch.Tensor = self.agent.policy(idxes)
-        return act.numpy()
+        return act.to(torch.int32).numpy()
 
     def step(self, idxes, act, next_obs):
-        act = torch.as_tensor(np.stack(act))
+        act = torch.as_tensor(np.stack(act), dtype=torch.long)
         next_obs = torch.as_tensor(np.stack(next_obs))
         next_obs = next_obs / 255.0
         self.agent.step(idxes, act, next_obs)
 
 
-class AgentWrapper(env.Agent):
+class WrapAgent(env.Agent):
     def __init__(self, agent: env.Agent, stack_num: int | None):
         super().__init__()
         self.agent = agent
@@ -289,7 +305,7 @@ class BufferWrapper(buffer.Wrapper):
         x["obs"] = torch.as_tensor(np.asarray(x["obs"]))
         x["obs"] = x["obs"] / 255.0
         if "act" in x:
-            x["act"] = torch.as_tensor(np.asarray(x["act"]))
+            x["act"] = torch.as_tensor(np.asarray(x["act"]), dtype=torch.long)
         return x
 
 
@@ -328,13 +344,72 @@ class API:
         if seed is None:
             seed = np.random.randint(int(2**31))
 
+        if self.cfg.use_envpool and not render:
+            envs = self._try_envpool(
+                num_envs=num_envs,
+                mode=mode,
+                seed=seed,
+            )
+            if envs is not None:
+                return envs
+
         def env_fn(idx):
             return lambda: self._env(mode, seed + idx, render)
 
-        envs = []
-        for env_idx in range(num_envs):
-            envs.append(env.ProcEnv(env_fn(env_idx)))
+        with ThreadPoolExecutor() as pool:
+            task_fn = lambda env_idx: env.ProcEnv(env_fn(env_idx))
+            envs = [*pool.map(task_fn, range(num_envs))]
 
+        return env.EnvSet(envs)
+
+    def _try_envpool(
+        self,
+        num_envs: int,
+        mode: Literal["train", "val"],
+        seed: int | None,
+    ):
+        if self.cfg.obs_type == "ram":
+            return
+
+        task_id = self.cfg.env_id
+        task_name, task_version = task_id.split("-")
+        if task_version not in ("v4", "v5"):
+            return
+
+        max_steps = self.cfg.time_limit or int(1e6)
+        max_steps = max_steps // self.cfg.frame_skip
+
+        if isinstance(self.cfg.screen_size, tuple):
+            img_w, img_h = self.cfg.screen_size
+        else:
+            img_w = img_h = self.cfg.screen_size
+
+        repeat_prob = {"v5": 0.25, "v4": 0.0}[task_version]
+
+        if seed is None:
+            seed = np.random.randint(int(2**31))
+
+        envs = env.Envpool(
+            task_id=f"{task_name}-v5",
+            num_envs=num_envs,
+            max_episode_steps=max_steps,
+            img_height=img_h,
+            img_width=img_w,
+            stack_num=1,
+            gray_scale=self.cfg.obs_type == "grayscale",
+            frame_skip=self.cfg.frame_skip,
+            noop_max=self.cfg.noop_max,
+            episodic_life=self.cfg.term_on_life_loss and mode == "train",
+            zero_discount_on_life_loss=False,
+            reward_clip=False,
+            repeat_action_probability=repeat_prob,
+            use_inter_area_resize=True,
+            use_fire_reset=self.cfg.fire_reset,
+            full_action_space=False,
+            seed=seed,
+        )
+
+        envs = RecordTotalStepsEP(envs, frame_skip=self.cfg.frame_skip)
         return envs
 
     def _env(
@@ -382,20 +457,20 @@ class API:
         if self.cfg.time_limit is not None:
             env_ = TimeLimit(env_, self.cfg.time_limit)
 
-        env_ = env.FromGym(env_, seed=seed, render=render)
+        env_ = env.GymEnv(env_, seed=seed, render=render)
 
         return env_
 
     def wrap_buffer(self, buf: buffer.Buffer):
         return BufferWrapper(buf, stack_num=self.cfg.stack_num)
 
-    def rollout(self, envs: list[env.Env], agent: env.VecAgent):
-        agent = VecAgentWrapper(agent, self.cfg.stack_num)
-        agents = agent.subagents(num_envs=len(envs))
-        agents = [AgentWrapper(agent, self.cfg.stack_num) for agent in agents]
-
-        rollouts = [env.rollout(env_, agent) for env_, agent in zip(envs, agents)]
-        return env.pool(*rollouts)
+    def rollout(self, envs: env.VecEnv, agent: env.VecAgent):
+        agent = WrapVecAgent(agent, self.cfg.stack_num)
+        agent = env.Pointwise(
+            agent=agent,
+            transform=partial(WrapAgent, stack_num=self.cfg.stack_num),
+        )
+        return envs.rollout(agent)
 
     def collate_fn(self, batch: list[dict]):
         r = {}

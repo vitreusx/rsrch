@@ -1,6 +1,5 @@
-from copy import copy
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 import torch
@@ -10,8 +9,8 @@ import rsrch.distributions as D
 from rsrch import spaces
 from rsrch.nn.utils import over_seq, safe_mode
 
-from ..common import nets, rssm
-from ..common.utils import TrainerBase, find_class
+from . import nets, rssm
+from .utils import find_class, null_ctx
 
 
 @dataclass
@@ -55,18 +54,6 @@ class WorldModel(nn.Module):
 
         self.state_size = self.rssm.stoch_size + self.rssm.deter_size
 
-        self.obs_dec = self._make_decoder(
-            space=obs_space,
-            **self.cfg.decoders["obs"],
-        )
-        self.reward_dec = self._make_decoder(
-            space=rew_space,
-            **self.cfg.decoders["reward"],
-        )
-        self.term_dec = self._make_decoder(
-            space=spaces.torch.Discrete(2), **self.cfg.decoders["term"]
-        )
-
         spaces_ = {
             "obs": obs_space,
             "reward": rew_space,
@@ -103,34 +90,17 @@ class WorldModel(nn.Module):
         next_obs = self.obs_enc(next_obs)
         return self.rssm.obs_step(state, act, next_obs)
 
-    def img_step(self, state, enc_act):
-        return self.rssm.img_step(state, enc_act)
 
-    def observe(self, obs, act, start):
-        enc_obs: Tensor = over_seq(self.obs_enc)(obs)
-        enc_act: Tensor = over_seq(self.act_enc)(act)
-
-        is_first = np.array([x is None for x in start])
-        enc_act[0, is_first].zero_()
-        starts = torch.stack([self.rssm.initial() if x is None else x for x in start])
-
-        return self.rssm.observe(enc_obs, enc_act, starts)
-
-    def as_tensor(self, state: rssm.State):
-        return state.as_tensor()
-
-
-class Trainer(TrainerBase):
+class Trainer:
     def __init__(
         self,
         cfg: Config,
         compute_dtype=None,
     ):
-        super().__init__(
-            clip_grad=cfg.clip_grad,
-            compute_dtype=compute_dtype,
-        )
+        super().__init__()
         self.cfg = cfg
+        self.compute_dtype = compute_dtype
+        self.modules = set()
 
         if cfg.reward_fn == "clip":
             clip_low, clip_high = cfg.clip_rew
@@ -143,10 +113,33 @@ class Trainer(TrainerBase):
             self.reward_space = spaces.torch.Space((), dtype=torch.float32)
             self._reward_fn = lambda r: r
 
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if isinstance(value, nn.Module):
+            self.modules.add(value)
+
+    def __delattr__(self, name):
+        value = getattr(self, name)
+        if isinstance(value, nn.Module):
+            self.modules.remove(value)
+        super().__delattr__(name)
+
     def setup(self, wm: WorldModel):
         self.wm = wm
-        self.parameters = [*self.wm.parameters()]
         self.opt = self._make_opt()
+        self.parameters = self.wm.parameters()
+        self._device = next(self.wm.parameters()).device
+        self.scaler = getattr(torch, self._device.type).amp.GradScaler()
+
+    def save(self):
+        return {
+            "opt": self.opt.state_dict(),
+            "scaler": self.scaler.state_dict(),
+        }
+
+    def load(self, ckpt):
+        self.opt.load_state_dict(ckpt["opt"])
+        self.scaler.load_state_dict(ckpt["scaler"])
 
     def _make_opt(self):
         cfg = {**self.cfg.opt}
@@ -154,14 +147,56 @@ class Trainer(TrainerBase):
         del cfg["type"]
         return cls(self.wm.parameters(), **cfg)
 
-    def compute(self, obs, act, reward, term, start):
+    def autocast(self):
+        if self.compute_dtype is None:
+            return null_ctx()
+        else:
+            return torch.autocast(
+                device_type=self._device.type,
+                dtype=self.compute_dtype,
+            )
+
+    def train(self):
+        for module in self.modules:
+            if not module.training:
+                module.train()
+
+    def eval(self):
+        for module in self.modules:
+            if module.training:
+                module.eval()
+
+    KEYS = Literal["obs", "act", "reward", "start", "term"]
+
+    def get_states(self, batch: dict[KEYS, Any]):
+        rssm = self.wm.rssm
+
+        with self.autocast():
+            enc_obs: Tensor = over_seq(self.wm.obs_enc)(batch["obs"])
+            enc_act: Tensor = over_seq(self.wm.act_enc)(batch["act"])
+
+            is_first = np.array([x is None for x in batch["start"]])
+            enc_act[0, is_first].zero_()
+            starts = torch.stack([x or rssm.initial() for x in batch["start"]])
+
+            states, _, _ = rssm.observe(enc_obs, enc_act, starts)
+
+        return states
+
+    def compute(self, batch: dict[KEYS, Any]):
         mets, losses = {}, {}
         rssm = self.wm.rssm
 
         with self.autocast():
-            reward = self._reward_fn(reward)
+            enc_obs: Tensor = over_seq(self.wm.obs_enc)(batch["obs"])
+            enc_act: Tensor = over_seq(self.wm.act_enc)(batch["act"])
+            batch["reward"] = self._reward_fn(batch["reward"])
 
-            states, post, prior = self.wm.observe(obs, act, start)
+            is_first = np.array([x is None for x in batch["start"]])
+            enc_act[0, is_first].zero_()
+            starts = torch.stack([x or rssm.initial() for x in batch["start"]])
+
+            states, post, prior = rssm.observe(enc_obs, enc_act, starts)
             mets["prior_ent"] = prior.detach().entropy().mean()
             mets["post_ent"] = post.detach().entropy().mean()
 
@@ -169,17 +204,9 @@ class Trainer(TrainerBase):
             losses["kl"] = kl_loss
             mets["kl_value"] = kl_value.detach().mean()
 
-            obs_dist = over_seq(self.wm.obs_dec)(states)
-            losses["obs"] = -obs_dist.log_prob(obs).mean()
-
-            rew_dist = over_seq(self.wm.reward_dec)(states)
-            rew_loss = -rew_dist.log_prob(reward)
-            is_first = np.array([x is None for x in start])
-            rew_loss[0, is_first].zero_()
-            losses["reward"] = rew_loss.mean()
-
-            term_dist = over_seq(self.wm.term_dec)(states)
-            losses["term"] = -term_dist.log_prob(term).mean()
+            for name, decoder in self.wm.decoders.items():
+                recon: D.Distribution = over_seq(decoder)(states)
+                losses[name] = -recon.log_prob(batch[name]).mean()
 
             coef = self.cfg.coef
             loss = sum(coef.get(k, 1.0) * v for k, v in losses.items())
@@ -216,5 +243,11 @@ class Trainer(TrainerBase):
             loss = mix * loss_lhs + (1.0 - mix) * loss_rhs
         return loss, value
 
-
-AsTensor = rssm.AsTensor
+    def opt_step(self, loss: Tensor):
+        self.opt.zero_grad(set_to_none=True)
+        self.scaler.scale(loss).backward()
+        self.scaler.unscale_(self.opt)
+        if self.cfg.clip_grad is not None:
+            nn.utils.clip_grad_norm_(self.parameters, max_norm=self.cfg.clip_grad)
+        self.scaler.step(self.opt)
+        self.scaler.update()

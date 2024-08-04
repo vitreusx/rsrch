@@ -113,8 +113,10 @@ class Resolver:
         if m is not None:
             resolver = m["resolver"] or "eval"
             if resolver == "eval":
-                g, cur = self.stack[0], self.stack[-2]
-                g = {**g, **cur, "cfg": g, "math": math, "np": np}
+                g = {"math": math, "np": np}
+                for scope in self.stack[:-1]:
+                    if isinstance(scope, dict):
+                        g.update(scope)
                 g = to_attr_dict(g)
                 return eval(m["expr"], g)
             elif resolver == "env":
@@ -140,9 +142,6 @@ def cast(x, t):
         field_map = {field.name: field for field in fields(t)}
 
         for name in x:
-            if name.startswith("_"):
-                continue
-
             field = field_map[name]
 
             field_t = field.type
@@ -195,6 +194,20 @@ def cast(x, t):
 T = TypeVar("T")
 
 
+def hide_private(x: Any):
+    if isinstance(x, dict):
+        r = {}
+        for k, v in x.items():
+            if isinstance(k, str) and k.startswith("_"):
+                continue
+            r[k] = hide_private(v)
+        return r
+    elif isinstance(x, list):
+        return [hide_private(xi) for xi in x]
+    else:
+        return x
+
+
 def unravel(x: Any):
     """Recursively replace all keys in the dict of form <k1>.<k2>...: v
     with k1: {k2: ... }."""
@@ -237,6 +250,7 @@ def parse(data: dict, cls: Type[T]) -> T:
     """Given a config dict, parse it into a config object of a given type."""
     data = unravel(data)
     data = Resolver().resolve(data)
+    data = hide_private(data)
     return cast(data, cls)
 
 

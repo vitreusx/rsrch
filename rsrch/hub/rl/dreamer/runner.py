@@ -73,6 +73,7 @@ class Config:
     device: str
     compute_dtype: Literal["float16", "float32"]
     def_step: str
+    val_envs: int
 
     debug: Debug
     profile: Profile
@@ -126,12 +127,12 @@ class Runner:
         self.exp.boards.append(board)
         self.exp.set_as_default(self.cfg.def_step)
 
-        # We need the trainer to deduce the reward space, even if we don't
-        # run the training.
         if self.cfg.wm.type == "dreamer":
             wm = dreamer
             wm_cfg = self.cfg.wm.dreamer
 
+            # We need the trainer to deduce the reward space, even if we don't
+            # run the training.
             wm_trainer = wm.Trainer(wm_cfg, self.compute_dtype)
             rew_space = wm_trainer.reward_space
 
@@ -195,6 +196,16 @@ class Runner:
         self.exp.register_step("env_step", lambda: self.env_step)
         self.agent_step = 0
         self.exp.register_step("agent_step", lambda: self.agent_step)
+
+        self.val_envs = self.env_api.make_envs(self.cfg.val_envs, mode="val")
+        self.val_agent = agent.Agent(
+            self.actor,
+            self.wm,
+            self.cfg.agent,
+            self.env_api.act_space,
+            mode="eval",
+            compute_dtype=self.compute_dtype,
+        )
 
     def _get_until_params(self, cfg: dict | str):
         if isinstance(cfg, dict):
@@ -295,13 +306,15 @@ class Runner:
         self.val_ds = data.Slices(
             buf=self.buf,
             sampler=self.val_ids,
-            **dataset_cfg,
+            batch_size=cfg.dataset.batch_size,
+            slice_len=cfg.dataset.slice_len,
         )
 
         self.val_loader = data.DataLoader(
             dataset=self.val_ds,
             batch_size=cfg.dataset.batch_size,
             collate_fn=self.val_ds.collate_fn,
+            drop_last=False,
         )
 
         wm_type = self.cfg.wm.type
@@ -413,11 +426,10 @@ class Runner:
 
     def env_rollout(self, until, mode="train"):
         should_do = self._make_until(until)
-        self.agent.mode = mode
 
         pbar = self._make_pbar("Env rollout", until)
         while should_do:
-            self.do_env_step()
+            self.do_env_step(mode=mode)
             self._update_pbar(pbar, should_do)
 
     def _make_pbar(self, desc, until_cfg: dict | str):
@@ -491,35 +503,43 @@ class Runner:
             func = lambda name=name, params=params: getattr(self, name)(**params)
             task_functions.append(func)
 
-        pool = concurrent.futures.ThreadPoolExecutor(len(tasks))
-        futures = {}
-        active_tasks = set()
-
         should_loop = self._make_until(until)
-
         pbar = self._make_pbar("Train loop", until)
 
-        while should_loop:
-            completed, _ = concurrent.futures.wait(
-                futures,
-                return_when="FIRST_COMPLETED",
-            )
-            for fut in completed:
-                fut.result()
-                task_idx = futures[fut]
-                del futures[fut]
-                active_tasks.remove(task_idx)
+        async_mode = not self.cfg.profile.enabled
 
-            for task_idx in range(len(tasks)):
-                if task_idx in active_tasks:
-                    continue
+        if async_mode:
+            pool = concurrent.futures.ThreadPoolExecutor(len(tasks))
+            futures = {}
+            active_tasks = set()
 
-                if should_run[task_idx]:
-                    fut = pool.submit(task_functions[task_idx])
-                    futures[fut] = task_idx
-                    active_tasks.add(task_idx)
+            while should_loop:
+                completed, _ = concurrent.futures.wait(
+                    futures,
+                    return_when="FIRST_COMPLETED",
+                )
+                for fut in completed:
+                    fut.result()
+                    task_idx = futures[fut]
+                    del futures[fut]
+                    active_tasks.remove(task_idx)
 
-            self._update_pbar(pbar, should_loop)
+                for task_idx in range(len(tasks)):
+                    if task_idx in active_tasks:
+                        continue
+
+                    if should_run[task_idx]:
+                        fut = pool.submit(task_functions[task_idx])
+                        futures[fut] = task_idx
+                        active_tasks.add(task_idx)
+
+                self._update_pbar(pbar, should_loop)
+        else:
+            while should_loop:
+                for task_idx in range(len(tasks)):
+                    if should_run[task_idx]:
+                        task_functions[task_idx]()
+                    self._update_pbar(pbar, should_loop)
 
     def do_opt_step(self, n=1):
         if n > 1:
@@ -590,7 +610,7 @@ class Runner:
 
         return states, actions, reward, term_
 
-    def val_epoch(self, limit=None, episodes=32):
+    def val_epoch(self, limit=None):
         wm_loss = self.do_wm_val_epoch(limit)
         if wm_loss is not None:
             self.exp.add_scalar("wm/val_loss", wm_loss, step="wm_opt_step")
@@ -599,17 +619,7 @@ class Runner:
         if ac_loss is not None:
             self.exp.add_scalar("ac/val_loss", ac_loss, step="ac_opt_step")
 
-        val_envs = self.env_api.make_envs(min(episodes, 8), mode="val")
-        val_agent = agent.Agent(
-            self.actor,
-            self.wm,
-            self.cfg.agent,
-            self.env_api.act_space,
-            mode="eval",
-            compute_dtype=self.compute_dtype,
-        )
-
-        val_iter = iter(self.env_api.rollout(val_envs, val_agent))
+        val_iter = iter(self.env_api.rollout(self.val_envs, self.val_agent))
         env_rets = defaultdict(lambda: 0.0)
         all_rets = []
 
@@ -654,6 +664,7 @@ class Runner:
     def do_wm_val_epoch(self, limit=None):
         val_loss, val_n = 0.0, 0
 
+        self.val_ds.states.clear()
         val_iter = iter(islice(self.val_loader, 0, limit))
 
         while True:
@@ -745,6 +756,7 @@ class Runner:
     def do_ac_val_epoch(self, limit=None):
         val_loss, val_n = 0.0, 0
 
+        self.val_ds.states.clear()
         val_iter = iter(islice(self.val_loader, 0, limit))
 
         while True:
@@ -762,8 +774,8 @@ class Runner:
                 wm_states = self.wm.observe(
                     obs=wm_batch["obs"],
                     act=wm_batch["act"],
-                    state=wm_batch["start"],
-                )
+                    start=wm_batch["start"],
+                )[0]
 
                 (ac_states, action, reward, term) = self._imagine(
                     initial=wm_states.flatten(),
@@ -807,8 +819,8 @@ class Runner:
                 wm_states = self.wm.observe(
                     obs=wm_batch["obs"],
                     act=wm_batch["act"],
-                    state=wm_batch["start"],
-                )
+                    start=wm_batch["start"],
+                )[0]
 
             (ac_states, action, reward, term) = self._imagine(
                 initial=wm_states.flatten(),

@@ -27,6 +27,10 @@ class StateCache:
             self._order.append(key)
         self.states[key] = value
 
+    def clear(self):
+        self.states.clear()
+        self._order.clear()
+
 
 class Slices(data.IterableDataset):
     def __init__(
@@ -48,13 +52,13 @@ class Slices(data.IterableDataset):
         self.subseq_len = subseq_len
         self.prioritize_ends = prioritize_ends
 
-        if subseq_len is None:
-            self.minlen, self.maxlen = 1, None
-        elif isinstance(subseq_len, tuple):
+        if isinstance(subseq_len, tuple):
             self.minlen, self.maxlen = subseq_len
-        else:
+        elif subseq_len is not None:
             self.minlen, self.maxlen = subseq_len, subseq_len
-        self.minlen = max(self.minlen, self.slice_len)
+
+        if hasattr(self, "minlen"):
+            self.minlen = max(self.minlen, self.slice_len)
 
         self.states = StateCache(self.batch_size)
 
@@ -73,34 +77,30 @@ class Slices(data.IterableDataset):
             while len(cur_eps) < self.batch_size:
                 ep_id = next(ep_id_iter, None)
                 if ep_id is None:
-                    return
+                    break
 
                 seq = self.buf[ep_id]
                 if not self.ongoing and not seq[-1]["term"]:
                     continue
 
                 total = len(seq)
-                if total < self.minlen:
-                    continue
 
-                length = total
-                if self.maxlen:
-                    length = min(length, self.maxlen)
-                length -= np.random.randint(self.minlen)
-                length = max(self.minlen, length)
-
-                upper = total - length + 1
-                if self.prioritize_ends:
-                    upper += self.minlen
-
-                index = min(np.random.randint(upper), total - length)
+                if self.subseq_len is None:
+                    index, length = 0, total
+                else:
+                    length = np.random.randint(self.minlen, self.maxlen + 1)
+                    if self.prioritize_ends:
+                        index = np.random.randint(total)
+                        index = min(index, total - length)
+                    else:
+                        index = np.random.randint(total - length + 1)
 
                 cur_eps[next_idx] = {
                     "seq": seq,
                     "start": index,
                     "stop": index + length,
                     "ep_id": ep_id,
-                    "pos": (next_idx, index),
+                    "seq_id": next_idx,
                 }
                 next_idx += 1
 
@@ -108,19 +108,25 @@ class Slices(data.IterableDataset):
             for ep_idx in [*cur_eps]:
                 ep = cur_eps[ep_idx]
 
-                cur_stop = ep["start"] + self.slice_len
-                subseq = self._subseq(ep["seq"], ep["start"], cur_stop)
-                for k in ("ep_id", "pos"):
-                    subseq[k] = ep[k]
-                subseq["start"] = self.states.get(ep["pos"])
+                end = min(ep["start"] + self.slice_len, ep["stop"])
+                start = end - self.slice_len
+                subseq = self._subseq(ep["seq"], start, end)
+
+                subseq["ep_id"] = ep["ep_id"]
+                subseq["pos"] = (ep["seq_id"], start)
+                subseq["start"] = self.states.get(subseq["pos"])
+
                 batch.append(subseq)
 
-                ep["start"] = cur_stop
+                ep["start"] = end
+
+            if len(batch) == 0:
+                break
 
             yield from batch
 
-    def _subseq(self, seq: list[dict], start, stop):
-        seq = seq[start:stop]
+    def _subseq(self, seq: list[dict], start, end):
+        seq = seq[start:end]
 
         res = {
             "obs": torch.stack([step["obs"] for step in seq]),

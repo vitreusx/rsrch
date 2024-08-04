@@ -1,21 +1,21 @@
-_vars:
-  act: &act elu
-  norm: &norm none
+_:
+  act: elu
+  norm: none
   conv: &conv
-    depth: &depth 48
+    depth: 48
     kernels: [4, 4, 4, 4]
-    act: *act
-    norm: *norm
+    act: ${_.act}
+    norm: ${_.norm}
   conv_t: &conv_t
-    depth: *depth
+    depth: ${_.conv.depth}
     kernels: [5, 5, 6, 6]
-    act: *act
-    norm: *norm
+    act: ${_.act}
+    norm: ${_.norm}
   mlp: &mlp
     hidden: 400
     layers: 4
-    act: *act
-    norm: *norm
+    act: ${_.act}
+    norm: ${_.norm}
 seed: 42
 device: cuda
 compute_dtype: float16
@@ -52,6 +52,7 @@ train:
   val_frac: 0.0
   num_envs: 1
   horizon: 15
+val_envs: 4
 
 wm:
   type: dreamer
@@ -63,8 +64,8 @@ wm:
         type: discrete
         num_tokens: 32
         vocab_size: 32
-      act: *act
-      norm: *norm
+      act: ${_.act}
+      norm: ${_.norm}
       hidden_size: 1024
       jit: true
     opt:
