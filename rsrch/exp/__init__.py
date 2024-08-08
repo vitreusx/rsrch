@@ -4,7 +4,7 @@ from datetime import datetime
 from functools import partial
 from numbers import Number
 from pathlib import Path
-from typing import Callable, ParamSpec, TypeVar
+from typing import Callable, Literal, ParamSpec, TypeVar
 
 import numpy as np
 from ruamel.yaml import YAML
@@ -40,6 +40,9 @@ def partial_typed(f: Callable[P, R], *args, **kwargs) -> Callable[P, R]:
     return partial(f, *args, **kwargs)
 
 
+LevelStr = Literal["INFO", "WARN", "ERROR", "DEBUG"]
+
+
 class Experiment:
     def __init__(
         self,
@@ -66,7 +69,7 @@ class Experiment:
         self.logger = logging.getLogger(project)
         self.boards: list[Board] = []
 
-        self.log(logging.INFO, f"Exp dir: {self.dir}")
+        self.log("INFO", f"Exp dir: {self.dir}")
 
         info = {
             "project": project,
@@ -77,6 +80,7 @@ class Experiment:
         if config is not None:
             with open(self.dir / "config.yml", "w") as f:
                 yaml.dump(config, f)
+            self.log("INFO", f"Saved config to: {self.dir / 'config.yml'}")
 
         if create_commit:
             commit = create_exp_commit(run)
@@ -84,6 +88,7 @@ class Experiment:
 
         with open(self.dir / "info.yml", "w") as f:
             yaml.dump(info, f)
+            self.log("INFO", f"Saved extra info to: {self.dir / 'info.yml'}")
 
         self.pbar = partial_typed(tqdm, dynamic_ncols=True)
 
@@ -95,7 +100,9 @@ class Experiment:
         for board in self.boards:
             board.set_as_default(step)
 
-    def log(self, level, message):
+    def log(self, level: int | LevelStr, message):
+        if isinstance(level, str):
+            level = getattr(logging, level.upper())
         self.logger.log(level, message)
         for board in self.boards:
             board.log(level, message)
