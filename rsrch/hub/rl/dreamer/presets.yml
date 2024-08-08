@@ -32,8 +32,9 @@ atari_s:
       hidden_size: 448
       stoch: { num_tokens: 24, vocab_size: 32 }
 train:
+  _opt_freq: 64
   train:
-    val_frac: 0.15
+    val_frac: 0.1
   stages:
     - env_rollout:
         until: 50e3 # 200e3
@@ -42,16 +43,19 @@ train:
         until: 200e6
         tasks:
           - do_opt_step: ~
-            every: 64
+            every: ${_opt_freq}
           - save_ckpt: ~
             every: 1e6
           - do_env_step
           - val_epoch: ~
             every: 100e3
+train_sr:
+  _opt_freq: 16
 sample:
+  _ckpt_dir: runs/dreamerv2/Pong-v5__2024-07-29_12-17-06/ckpts
   stages:
     - load_ckpt:
-        path: runs/dreamerv2/Pong-v5__2024-07-29_12-17-06/ckpts/ckpt.env_step=6.2e+06.pth
+        path: ${_ckpt_dir}/ckpt.env_step=6.2e+06.pth
     - env_rollout:
         until: 400e3
         mode: train
@@ -108,4 +112,4 @@ offline:
           - save_ckpt: ~
             every: 25e3
 default:
-  $extends: [atari, atari_s, train]
+  $extends: [atari, train, train_sr]
