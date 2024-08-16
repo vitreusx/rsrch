@@ -33,6 +33,11 @@ def timestamp():
     return f"{datetime.now():%Y-%m-%d_%H-%M-%S}"
 
 
+def timestamp2():
+    now = datetime.now()
+    return f"{now:%Y-%m-%d}", f"{now:%H-%M-%S}"
+
+
 P, R = ParamSpec("P"), TypeVar("R")
 
 
@@ -48,17 +53,20 @@ class Experiment:
         self,
         *,
         project: str,
-        run: str | None = None,
+        prefix: str | None = None,
         config: dict | None = None,
         create_commit: bool = True,
     ):
         self.project = project
 
-        if run is None:
-            run = timestamp()
-        self.run = run
+        day, time = timestamp2()
+        if prefix is None:
+            self.run = f"{day}_{time}"
+            self.dir = Path("runs") / sanitize(project) / day / time
+        else:
+            self.run = f"{prefix}__{day}_{time}"
+            self.dir = Path("runs") / sanitize(project) / day / f"{prefix}__{time}"
 
-        self.dir = sanitize("runs", project, run)
         self.dir.mkdir(parents=True, exist_ok=True)
 
         logging.setup(
@@ -72,9 +80,9 @@ class Experiment:
         self.log("INFO", f"Exp dir: {self.dir}")
 
         info = {
-            "project": project,
+            "project": self.project,
             "argv": sys.argv,
-            "run": run,
+            "run": self.run,
         }
 
         if config is not None:
@@ -83,7 +91,7 @@ class Experiment:
             self.log("INFO", f"Saved config to: {self.dir / 'config.yml'}")
 
         if create_commit:
-            commit = create_exp_commit(run)
+            commit = create_exp_commit(self.run)
             info["commit_sha"] = commit
 
         with open(self.dir / "info.yml", "w") as f:

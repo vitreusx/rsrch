@@ -35,7 +35,7 @@ class StateCache:
 class Slices(data.IterableDataset):
     def __init__(
         self,
-        buf: rl.Buffer,
+        buf: rl.data.Buffer,
         sampler: data.Sampler,
         batch_size: int,
         slice_len: int,
@@ -80,10 +80,13 @@ class Slices(data.IterableDataset):
                     break
 
                 seq = self.buf[ep_id]
-                if not self.ongoing and not seq[-1]["term"]:
-                    continue
 
                 total = len(seq)
+                if total < self.slice_len:
+                    continue
+
+                if not self.ongoing and not (seq[-1]["term"] or seq[-1]["trunc"]):
+                    continue
 
                 if self.subseq_len is None:
                     index, length = 0, total
@@ -130,8 +133,8 @@ class Slices(data.IterableDataset):
 
         res = {
             "obs": torch.stack([step["obs"] for step in seq]),
-            "reward": torch.tensor(np.array([step["reward"] for step in seq])),
-            "term": torch.tensor(np.array([step["term"] for step in seq])),
+            "reward": torch.tensor(np.array([step.get("reward", 0.0) for step in seq])),
+            "term": torch.tensor(np.array([step.get("term", False) for step in seq])),
         }
 
         res["act"] = [step.get("act") for step in seq]

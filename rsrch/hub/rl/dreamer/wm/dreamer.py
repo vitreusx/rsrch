@@ -11,7 +11,8 @@ from rsrch import spaces
 from rsrch.nn.utils import over_seq, safe_mode
 
 from ..common import nets, rssm
-from ..common.utils import TrainerBase, find_class
+from ..common.trainer import TrainerBase
+from ..common.utils import find_class, tf_init
 
 
 @dataclass
@@ -31,9 +32,9 @@ class WorldModel(nn.Module):
     def __init__(
         self,
         cfg: Config,
-        obs_space: spaces.torch.Space,
-        act_space: spaces.torch.Space,
-        rew_space: spaces.torch.Space,
+        obs_space: spaces.torch.Tensor,
+        act_space: spaces.torch.Tensor,
+        rew_space: spaces.torch.Tensor,
     ):
         super().__init__()
         self.cfg = cfg
@@ -41,7 +42,7 @@ class WorldModel(nn.Module):
         self.act_space = act_space
         self.rew_space = rew_space
 
-        self.obs_enc = self._make_encoder(self.obs_space, **cfg.encoder)
+        self.obs_enc = nets.make_encoder(self.obs_space, **cfg.encoder)
         self.act_enc = nets.ActionEncoder(self.act_space)
 
         with safe_mode(self):
@@ -64,7 +65,8 @@ class WorldModel(nn.Module):
             **self.cfg.decoders["reward"],
         )
         self.term_dec = self._make_decoder(
-            space=spaces.torch.Discrete(2), **self.cfg.decoders["term"]
+            space=spaces.torch.Discrete(2),
+            **self.cfg.decoders["term"],
         )
 
         spaces_ = {
@@ -78,24 +80,19 @@ class WorldModel(nn.Module):
             dec = self._make_decoder(spaces_[key], **self.cfg.decoders[key])
             self.decoders[key] = dec
 
-    def _make_encoder(self, space: spaces.torch.Space, **args):
-        cls = find_class(nets, args["type"] + "_encoder")
-        del args["type"]
-        return cls(space, **args)
+        self.apply(tf_init)
 
-    def _make_decoder(self, space: spaces.torch.Space, **args):
-        cls = find_class(nets, args["type"] + "_decoder")
-        del args["type"]
+    def _make_decoder(self, space: spaces.torch.Tensor, **kwargs):
         return nn.Sequential(
             rssm.AsTensor(),
-            cls(self.state_size, space, **args),
+            nets.make_decoder(self.state_size, space, **kwargs),
         )
 
     def reset(self, obs):
         state = self.rssm.initial()
-        state = state[None].expand(len(obs), *state.shape)
+        state = state[None].expand(obs.shape[0], *state.shape)
         obs = self.obs_enc(obs.to(state.device))
-        act = torch.zeros((len(obs), self.act_size)).type_as(obs)
+        act = torch.zeros((obs.shape[0], self.act_size)).type_as(obs)
         return self.rssm.obs_step(state, act, obs)
 
     def step(self, state, act, next_obs):
@@ -140,7 +137,7 @@ class Trainer(TrainerBase):
             self.reward_space = spaces.torch.Box((), low=-1.0, high=1.0)
             self._reward_fn = torch.sign if cfg.reward_fn == "sign" else torch.tanh
         elif cfg.reward_fn == "id":
-            self.reward_space = spaces.torch.Space((), dtype=torch.float32)
+            self.reward_space = spaces.torch.Tensor((), dtype=torch.float32)
             self._reward_fn = lambda r: r
 
     def setup(self, wm: WorldModel):
@@ -152,11 +149,10 @@ class Trainer(TrainerBase):
         cfg = {**self.cfg.opt}
         cls = find_class(torch.optim, cfg["type"])
         del cfg["type"]
-        return cls(self.wm.parameters(), **cfg)
+        return cls(self.parameters, **cfg)
 
     def compute(self, obs, act, reward, term, start):
         mets, losses = {}, {}
-        rssm = self.wm.rssm
 
         with self.autocast():
             reward = self._reward_fn(reward)
@@ -170,13 +166,23 @@ class Trainer(TrainerBase):
             mets["kl_value"] = kl_value.detach().mean()
 
             obs_dist = over_seq(self.wm.obs_dec)(states)
-            losses["obs"] = -obs_dist.log_prob(obs).mean()
+            if isinstance(obs_dist, dict):
+                for name, dist in obs_dist.items():
+                    losses[name] = -dist.log_prob(obs[name]).mean()
+                mets["obs_loss"] = sum(losses[name].detach() for name in obs_dist)
+            else:
+                losses["obs"] = -obs_dist.log_prob(obs).mean()
 
             rew_dist = over_seq(self.wm.reward_dec)(states)
             rew_loss = -rew_dist.log_prob(reward)
             is_first = np.array([x is None for x in start])
             rew_loss[0, is_first].zero_()
             losses["reward"] = rew_loss.mean()
+
+            mets["reward_mean"] = reward.mean()
+            mets["reward_std"] = reward.std()
+            mets["reward_pred_mean"] = rew_dist.mean.mean()
+            mets["reward_pred_std"] = rew_dist.mean.std()
 
             term_dist = over_seq(self.wm.term_dec)(states)
             losses["term"] = -term_dist.log_prob(term).mean()

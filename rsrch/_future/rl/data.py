@@ -64,8 +64,9 @@ class Buffer(MutableMapping):
             hook.on_create(seq_id, seq)
         return seq_id
 
-    def step(self, seq_id: int, act, next_obs):
+    def step(self, seq_id: int, act, step):
         seq = self.data[seq_id]
+        next_obs, final = step
         seq.append({**next_obs, "act": act})
         for hook in self.hooks:
             hook.on_update(seq_id, seq)
@@ -77,7 +78,7 @@ class Buffer(MutableMapping):
             step = {**step}
             act = step["act"]
             del step["act"]
-            self.step(seq_id, act, step)
+            self.step(seq_id, act, (step, final))
             if final:
                 seq_id = None
             return seq_id

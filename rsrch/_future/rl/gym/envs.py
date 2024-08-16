@@ -1,28 +1,21 @@
 import concurrent.futures as cf
 import io
 import multiprocessing as mp
+import threading
 from abc import ABC, abstractmethod
-from multiprocessing.reduction import AbstractReducer, ForkingPickler
+from queue import Queue
 from typing import Any, Callable, Iterable, Literal
 
+import cloudpickle
 import envpool
 import gymnasium as gym
 import numpy as np
-from cloudpickle import CloudPickler
 
+from rsrch import spaces
 from rsrch.spaces.utils import from_gym
+from rsrch.types.shared import shared_ndarray
 
-
-class Agent(ABC):
-    def reset(self, obs):
-        pass
-
-    @abstractmethod
-    def policy(self):
-        ...
-
-    def step(self, act, next_obs):
-        pass
+from .agents import Agent, VecAgent
 
 
 class Env(ABC):
@@ -55,16 +48,18 @@ class Env(ABC):
                 obs = None
 
 
-class VecAgent(ABC):
-    def reset(self, idxes: np.ndarray, obs):
-        pass
+class EnvWrapper(Env):
+    def __init__(self, env: Env):
+        super().__init__()
+        self.env = env
+        self.obs_space = env.obs_space
+        self.act_space = env.act_space
 
-    @abstractmethod
-    def policy(self, idxes: np.ndarray):
-        ...
+    def reset(self):
+        return self.env.reset()
 
-    def step(self, idxes: np.ndarray, act, next_obs):
-        pass
+    def step(self, act):
+        return self.env.step(act)
 
 
 class VecEnv(ABC):
@@ -73,8 +68,16 @@ class VecEnv(ABC):
     act_space: Any
 
     @abstractmethod
-    def rollout(self, agent: VecAgent) -> Iterable[tuple[int, dict, bool]]:
+    def rollout(self, agent: VecAgent) -> Iterable[tuple[int, tuple[dict, bool]]]:
         ...
+
+
+class VecEnvWrapper(VecEnv):
+    def __init__(self, env: VecEnv):
+        self.env = env
+        self.num_envs = env.num_envs
+        self.act_space = env.act_space
+        self.obs_space = env.obs_space
 
 
 def unbind(x):
@@ -86,17 +89,78 @@ def unbind(x):
         return x
 
 
+class MonotonicF:
+    def __init__(self, f: Callable[[np.ndarray], np.ndarray]):
+        self.f = f
+
+    def __call__(self, x):
+        if isinstance(x, dict):
+            return {k: self(v) for k, v in x.items()}
+        else:
+            return self.f(x)
+
+    def codomain(self, X: spaces.np.Array):
+        if isinstance(X, dict):
+            return {k: self.codomain(X_k) for k, X_k in X.items()}
+        elif isinstance(X, spaces.np.Discrete):
+            dtype = self(X.low).dtype
+            return spaces.np.Discrete(X.n, dtype=dtype)
+        elif isinstance(X, spaces.np.Box):
+            low, high = self(X.low), self(X.high)
+            return spaces.np.Box(low.shape, low=low, high=high)
+        else:
+            x = self(X.sample())
+            return spaces.np.Array(x.shape, x.dtype)
+
+
+class CastActionF(MonotonicF):
+    def __init__(self):
+        super().__init__(self._cast)
+
+    @staticmethod
+    def _cast(x: np.ndarray):
+        if np.issubdtype(x.dtype, np.integer):
+            x = x.astype(np.int32)
+        return x
+
+
+class ComposeF:
+    def __init__(self, *fs):
+        self.fs = fs
+
+    def __call__(self, x):
+        for f in self.fs:
+            x = f(x)
+        return x
+
+    def __codomain__(self, X):
+        for f in self.fs:
+            X = f.codomain(X)
+        return X
+
+
+cast_action = CastActionF()
+
+
 class Envpool(VecEnv):
     """A vec env created via envpool."""
 
-    def __init__(self, task_id: str, **kwargs):
+    def __init__(self, task_id: str, obs_f=None, act_f=None, **kwargs):
         self.pool = envpool.make(task_id, env_type="gymnasium", **kwargs)
-        self.obs_space = {"obs": from_gym(self.pool.observation_space)}
-        self.act_space = from_gym(self.pool.action_space)
+        self.obs_f = obs_f
+        self.act_f = act_f
+
         self.num_envs = self.pool.config["num_envs"]
         self._batch_size = self.pool.config["batch_size"]
+
+        self.obs_space = from_gym(self.pool.observation_space)
+        if self.obs_f is not None:
+            self.obs_space = self.obs_f.codomain(self.obs_space)
+        self.obs_space = {"obs": self.obs_space}
+
+        self.act_space = from_gym(self.pool.action_space)
+        self.act_space = cast_action.codomain(self.act_space)
         self._actions = self.act_space.sample([self.num_envs])
-        self._actions = self._actions.astype(np.int32)
 
     def rollout(self, agent: VecAgent):
         self.pool.async_reset()
@@ -105,15 +169,25 @@ class Envpool(VecEnv):
         while True:
             obs, reward, term, trunc, info = self.pool.recv()
             env_ids = info["env_id"].astype(np.int32)
-            obs = {
-                "obs": obs,
-                "act": [self._actions[env_id] for env_id in env_ids],
-                "reward": reward,
-                "term": term,
-                "trunc": trunc,
-                **info,
-            }
-            all_obs = unbind(obs)
+
+            all_obs = unbind(
+                {
+                    "obs": obs,
+                    "act": [self._actions[env_id].copy() for env_id in env_ids],
+                    "reward": reward,
+                    "term": term,
+                    "trunc": trunc,
+                    **info,
+                }
+            )
+
+            for idx in range(self._batch_size):
+                if next_reset[env_ids[idx]]:
+                    del all_obs[idx]["act"]
+
+            if self.obs_f is not None:
+                for step in all_obs:
+                    step["obs"] = self.obs_f(step["obs"])
 
             reset_ids, reset_obs = [], []
             step_ids, step_acts, step_obs = [], [], []
@@ -168,7 +242,7 @@ class GymEnv(Env):
     def reset(self):
         obs, info = self.env.reset(seed=self.seed)
         self.seed = None
-        res = {"obs": obs, "reward": 0.0, "term": False, "trunc": False, **info}
+        res = {"obs": obs, **info}
         if self.render:
             res["render"] = self.env.render()
         return res
@@ -182,17 +256,75 @@ class GymEnv(Env):
         return res, final
 
 
-class CloudForkingPickler(ForkingPickler):
-    @classmethod
-    def dumps(cls, obj: Any, protocol: int | None = None) -> memoryview:
-        buf = io.BytesIO()
-        CloudPickler(buf, protocol).dump(obj)
-        return buf.getbuffer()
+class ThreadEnv(gym.Env):
+    def __init__(self, env_fn: Callable[[], gym.Env]):
+        self.send_c, self.recv_c = Queue(1), Queue(1)
+
+        self.thr = threading.Thread(
+            target=self.target,
+            args=(env_fn, self.send_c, self.recv_c),
+            daemon=True,
+        )
+        self.thr.start()
+
+        self.obs_space, self.act_space = self.recv_c.get()
+
+    def reset(self):
+        self.send_c.put(("reset",))
+        return self.recv_c.get()
+
+    def step(self, act):
+        self.send_c.put(("step", act))
+        return self.recv_c.get()
+
+    def __del__(self):
+        self.send_c.put(None)
+        self.thr.join()
+
+    @staticmethod
+    def target(env_fn, recv_c, send_c):
+        env = env_fn()
+        send_c.put((env.obs_space, env.act_space))
+        while True:
+            req = recv_c.get()
+            if req is None:
+                break
+            res = getattr(env, req[0])(*req[1:])
+            send_c.put(res)
 
 
-class CloudReducer(AbstractReducer):
-    ForkingPickler = CloudForkingPickler
-    register = CloudForkingPickler.register
+class Shared:
+    def __init__(self):
+        self._shm_cache = {}
+
+    def share(self, x: Any, id=""):
+        if isinstance(x, tuple):
+            return tuple(self.share(elem, f"{id}.{idx}") for idx, elem in enumerate(x))
+        elif isinstance(x, dict):
+            return {key: self.share(value, f"{id}.{key}") for key, value in x.items()}
+        elif isinstance(x, np.ndarray):
+            cache_key = (id, x.shape, x.dtype)
+            if cache_key not in self._shm_cache:
+                shm = shared_ndarray(shape=x.shape, dtype=x.dtype)
+                self._shm_cache[cache_key] = shm
+            else:
+                shm = self._shm_cache[cache_key]
+            shm[:] = x
+            return shm
+        else:
+            return x
+
+    @staticmethod
+    def unshare(x: Any):
+        unshare = Shared.unshare
+        if isinstance(x, tuple):
+            return tuple(unshare(elem) for elem in x)
+        elif isinstance(x, dict):
+            return {key: unshare(value) for key, value in x.items()}
+        elif isinstance(x, shared_ndarray):
+            return np.array(x)
+        else:
+            return x
 
 
 class ProcEnv(Env):
@@ -207,11 +339,9 @@ class ProcEnv(Env):
         recv_c, self.send_c = mp.Pipe(duplex=False)
 
         ctx = mp.get_context(spawn_method)
-        ctx.reducer = CloudReducer
-
         self.proc = ctx.Process(
             target=self.target,
-            args=(env_fn, recv_c, send_c),
+            args=(cloudpickle.dumps(env_fn), recv_c, send_c),
             daemon=True,
         )
         self.proc.start()
@@ -220,11 +350,13 @@ class ProcEnv(Env):
 
     def reset(self):
         self.send_c.send(("reset",))
-        return self.recv_c.recv()
+        res = self.recv_c.recv()
+        return Shared.unshare(res)
 
     def step(self, act):
         self.send_c.send(("step", act))
-        return self.recv_c.recv()
+        res = self.recv_c.recv()
+        return Shared.unshare(res)
 
     def __del__(self):
         self.send_c.send(None)
@@ -232,14 +364,17 @@ class ProcEnv(Env):
 
     @staticmethod
     def target(env_fn, recv_c, send_c):
-        env: Env = env_fn()
+        env: Env = cloudpickle.loads(env_fn)()
         send_c.send((env.obs_space, env.act_space))
+
+        shm = Shared()
 
         while True:
             req = recv_c.recv()
             if req is None:
                 break
             res = getattr(env, req[0])(*req[1:])
+            res = shm.share(res)
             send_c.send(res)
 
 
@@ -290,8 +425,10 @@ class EnvSet(VecEnv):
                             step_actions.append(actions[env_idx])
                             obs, final = fut.result()
                             step_obs.append(obs)
-                            steps.append((env_idx, (obs, final)))
+                            step = {**obs, "act": actions[env_idx]}
+                            steps.append((env_idx, (step, final)))
                             if final:
+                                actions[env_idx] = None
                                 fut = pool.submit(self.envs[env_idx].reset)
                                 futures[fut] = env_idx
                             else:
@@ -314,65 +451,6 @@ class EnvSet(VecEnv):
                 policy_idxes = np.array(policy_idxes)
                 policy = agent.policy(policy_idxes)
                 for env_idx, action in zip(policy_idxes, policy):
+                    actions[env_idx] = action
                     fut = pool.submit(self.envs[env_idx].step, action)
                     futures[fut] = env_idx
-
-
-class Pointwise(VecAgent):
-    """A vec agent wrapper which (implicitly) applies a transform to each "sub-agent" of a vec agent (hence 'pointwise.')"""
-
-    class Proxy(Agent):
-        def __init__(self, parent: "Pointwise", env_idx: int):
-            super().__init__()
-            self.parent = parent
-            self.env_idx = env_idx
-
-        def reset(self, obs):
-            self.parent._argv.append((obs,))
-
-        def policy(self):
-            return self.parent._policy[self.env_idx]
-
-        def step(self, act, next_obs):
-            self.parent._argv.append((act, next_obs))
-
-    def __init__(self, agent: VecAgent, transform: Callable[[Agent], Agent]):
-        super().__init__()
-        self.agent = agent
-        self.transform = transform
-        self._agents: dict[int, Agent] = {}
-        self._argv = []
-        self._policy = {}
-
-    def _make_proxy(self, env_idx: int):
-        return self.transform(self.Proxy(self, env_idx))
-
-    def reset(self, idxes: np.ndarray, obs):
-        self._argv.clear()
-        for env_idx, env_obs in zip(idxes, obs):
-            if env_idx not in self._agents:
-                self._agents[env_idx] = self._make_proxy(env_idx)
-            self._agents[env_idx].reset(env_obs)
-        self.agent.reset(idxes, *zip(*self._argv))
-
-    def policy(self, idxes: np.ndarray):
-        actions = self.agent.policy(idxes)
-        for env_idx, action in zip(idxes, actions):
-            self._policy[env_idx] = action
-
-        actions = []
-        for env_idx in idxes:
-            if env_idx not in self._agents:
-                self._agents[env_idx] = self._make_proxy(env_idx)
-            action = self._agents[env_idx].policy()
-            actions.append(action)
-
-        return actions
-
-    def step(self, idxes: np.ndarray, act, next_obs):
-        self._argv.clear()
-        for env_idx, env_act, env_obs in zip(idxes, act, next_obs):
-            if env_idx not in self._agents:
-                self._agents[env_idx] = self._make_proxy(env_idx)
-            self._agents[env_idx].step(env_act, env_obs)
-        self.agent.step(idxes, *zip(*self._argv))

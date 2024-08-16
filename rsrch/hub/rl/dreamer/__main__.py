@@ -7,12 +7,13 @@ from .runner import Config, Runner
 
 
 def main():
-    cfg = config.load(Path(__file__).parent / "config.yml")
+    cfg = config.cli(
+        config_yml=Path(__file__).parent / "config.yml",
+        presets_yml=Path(__file__).parent / "presets.yml",
+        def_presets=["default"],
+    )
+    cfg = config.cast(cfg, Config)
 
-    presets = config.load(Path(__file__).parent / "presets.yml")
-    config.add_preset_(cfg, presets, "default")
-
-    cfg = config.parse(cfg, Config)
     runner = Runner(cfg)
     runner.main()
 

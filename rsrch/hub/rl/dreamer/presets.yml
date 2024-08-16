@@ -1,115 +1,169 @@
 atari:
-  env:
-    type: atari
-    atari.env_id: Pong-v5
-  wm.dreamer:
-    rssm:
-      deter_size: 600
-      hidden_size: 600
-      stoch: { num_tokens: 32, vocab_size: 32 }
-    opt.lr: 2e-4
-    coef: { kl: 0.1, term: 5.0 }
-  ac:
-    _common: &ac_common
+  base:
+    env:
+      type: atari
+      atari.env_id: Pong-v5
+    wm.dreamer:
+      rssm:
+        deter_size: 600
+        hidden_size: 600
+        stoch: { num_tokens: 32, vocab_size: 32 }
+      opt.lr: 2e-4
+      coef: { kl: 0.1, term: 5.0 }
+    ac.ref:
       gamma: 0.999
       actor_ent: 1e-3
       actor_grad: reinforce
-    ref:
-      <<: [*ac_common]
       opt.actor.lr: 4e-5
       opt.critic.lr: 1e-4
-    sac:
-      <<: [*ac_common]
-      opt.actor.lr: 4e-5
-      opt.vf.lr: 1e-4
-atari_s:
-  _vars:
-    conv.depth: 32
-    mlp.hidden: 256
-  wm.dreamer:
-    rssm:
-      deter_size: 448
-      hidden_size: 448
-      stoch: { num_tokens: 24, vocab_size: 32 }
-train:
-  _opt_freq: 64
+  small:
+    _vars:
+      conv.depth: 32
+      mlp.hidden: 256
+    wm.dreamer:
+      rssm:
+        deter_size: 448
+        hidden_size: 448
+        stoch: { num_tokens: 24, vocab_size: 32 }
   train:
-    val_frac: 0.1
-  stages:
-    - env_rollout:
-        until: 50e3 # 200e3
-        mode: rand
-    - train_loop:
-        until: 200e6
-        tasks:
-          - do_opt_step: ~
-            every: ${_opt_freq}
-          - save_ckpt: ~
-            every: 1e6
-          - do_env_step
-          - val_epoch: ~
-            every: 100e3
-train_sr:
-  _opt_freq: 16
-sample:
-  _ckpt_dir: runs/dreamerv2/Pong-v5__2024-07-29_12-17-06/ckpts
-  stages:
-    - load_ckpt:
-        path: ${_ckpt_dir}/ckpt.env_step=6.2e+06.pth
-    - env_rollout:
-        until: 400e3
-        mode: train
-    - save_data: ~
-sample_layered:
-  _ckpt_dir: runs/dreamerv2/Pong-v5__2024-07-29_12-17-06/ckpts
-  stages:
-    - env_rollout:
-        until: 100e3
-        mode: rand
-    - load_ckpt:
-        path: ${_ckpt_dir}/ckpt.env_step=200004.pth
-    - env_rollout:
-        until: 200e3
-    - load_ckpt:
-        path: ${_ckpt_dir}/ckpt.env_step=1.2e+06.pth
-    - env_rollout:
-        until: 300e3
-    - load_ckpt:
-        path: ${_ckpt_dir}/ckpt.env_step=2.2e+06.pth
-    - env_rollout:
-        until: 400e3
-    - load_ckpt:
-        path: ${_ckpt_dir}/ckpt.env_step=3.2e+06.pth
-    - env_rollout:
-        until: 500e3
-    - load_ckpt:
-        path: ${_ckpt_dir}/ckpt.env_step=4.2e+06.pth
-    - env_rollout:
-        until: 600e3
-    - load_ckpt:
-        path: ${_ckpt_dir}/ckpt.env_step=5.2e+06.pth
-    - env_rollout:
-        until: 700e3
-    - load_ckpt:
-        path: ${_ckpt_dir}/ckpt.env_step=6.2e+06.pth
-    - env_rollout:
-        until: 800e3
-    - save_data: ~
-offline:
-  def_step: wm_opt_step
-  stages:
-    - load_data:
-        # via sample
-        # path: runs/dreamerv2/Pong-v5__2024-07-30_09-32-03/data/samples.env_step=400004.pkl.lzma
-        # via sample_layered
-        path: runs/dreamerv2/Pong-v5__2024-07-31_17-00-47/data/samples.env_step=800002.pkl.lzma
-    - train_loop:
-        until: 100e3
-        tasks:
-          - do_opt_step
-          - val_epoch: ~
-            every: 10e3
-          - save_ckpt: ~
-            every: 25e3
+    _opt_freq: 64
+    train:
+      val_frac: 0.1
+    stages:
+      - env_rollout:
+          until: 200e3
+          mode: rand
+      - train_loop:
+          until: 200e6
+          tasks:
+            - do_opt_step: ~
+              every: ${_opt_freq}
+            - save_ckpt: ~
+              every: 1e6
+            - do_env_step
+            - val_epoch: ~
+              every: 100e3
+  sample:
+    _ckpt_dir: runs/dreamerv2/Pong-v5__2024-07-29_12-17-06/ckpts
+    stages:
+      - load_ckpt:
+          path: ${_ckpt_dir}/ckpt.env_step=6.2e+06.pth
+      - env_rollout:
+          until: 400e3
+          mode: train
+      - save_data: ~
+  sample_layered:
+    _ckpt_dir: runs/dreamerv2/Pong-v5__2024-07-29_12-17-06/ckpts
+    stages:
+      - env_rollout:
+          until: 100e3
+          mode: rand
+      - load_ckpt:
+          path: ${_ckpt_dir}/ckpt.env_step=200004.pth
+      - env_rollout:
+          until: 200e3
+      - load_ckpt:
+          path: ${_ckpt_dir}/ckpt.env_step=1.2e+06.pth
+      - env_rollout:
+          until: 300e3
+      - load_ckpt:
+          path: ${_ckpt_dir}/ckpt.env_step=2.2e+06.pth
+      - env_rollout:
+          until: 400e3
+      - load_ckpt:
+          path: ${_ckpt_dir}/ckpt.env_step=3.2e+06.pth
+      - env_rollout:
+          until: 500e3
+      - load_ckpt:
+          path: ${_ckpt_dir}/ckpt.env_step=4.2e+06.pth
+      - env_rollout:
+          until: 600e3
+      - load_ckpt:
+          path: ${_ckpt_dir}/ckpt.env_step=5.2e+06.pth
+      - env_rollout:
+          until: 700e3
+      - load_ckpt:
+          path: ${_ckpt_dir}/ckpt.env_step=6.2e+06.pth
+      - env_rollout:
+          until: 800e3
+      - save_data: ~
+  offline:
+    def_step: wm_opt_step
+    stages:
+      - load_data:
+          # via sample
+          # path: runs/dreamerv2/Pong-v5__2024-07-30_09-32-03/data/samples.env_step=400004.pkl.lzma
+          # via sample_layered
+          path: runs/dreamerv2/Pong-v5__2024-07-31_17-00-47/data/samples.env_step=800002.pkl.lzma
+      - train_loop:
+          until: 100e3
+          tasks:
+            - do_opt_step
+            - val_epoch: ~
+              every: 10e3
+            - save_ckpt: ~
+              every: 25e3
+dmc:
+  base:
+    wm.dreamer:
+      reward_fn: id
+      rssm:
+        hidden_size: 200
+        deter_size: 200
+      opt.lr: 3e-4
+      kl.free: 1.0
+      encoder:
+        type: auto
+        dict.keys: [orientations, velocity]
+      decoders:
+        obs:
+          type: auto
+          dict.keys: [orientations, velocity]
+        term:
+          type: const
+          const.value: false
+    ac.ref:
+      opt.actor.lr: 8e-5
+      opt.critic.lr: 8e-5
+      actor_ent: 1e-4
+    train.dataset.prioritize_ends: false
+    stages:
+      - env_rollout:
+          until: 10e3 # 2e3
+          mode: rand
+      - train_loop:
+          until: { n: 100, of: wm_opt_step }
+          tasks: [do_opt_step]
+      - train_loop:
+          until: 100e6
+          tasks:
+            - do_opt_step: ~
+              every: { n: 5, of: agent_step }
+            - do_env_step
+
+  proprio:
+    env:
+      type: dmc
+      dmc:
+        domain: walker
+        task: walk
+        obs_type: proprio
+        frame_skip: 2
+
+  vision:
+    env:
+      type: dmc
+      dmc:
+        domain: walker
+        task: walk
+        obs_type: visual
+        frame_skip: 2
+        render_size: [64, 64]
+
 default:
-  $extends: [atari, train, train_sr]
+  # $extends: [atari.base, atari.train]
+  # $extends: [dmc.base, dmc.vision]
+  $extends: [dmc.base, dmc.proprio]
+  # debug.detect_anomaly: true
+  # wm.dreamer.rssm.jit: false
+  # extras.discrete_actions: 8

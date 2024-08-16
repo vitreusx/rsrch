@@ -31,4 +31,4 @@ class MSEProxy(Distribution, Tensorlike):
         return sum_rightmost(neg_loss, len(self.event_shape))
 
     def rsample(self, sample_shape: Size = ...) -> Tensor:
-        raise NotImplementedError()
+        return self.value.expand(*sample_shape, *self.value.shape)

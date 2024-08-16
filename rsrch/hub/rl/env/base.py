@@ -13,10 +13,10 @@ from rsrch.rl import data, gym
 class Factory(ABC):
     def __init__(
         self,
-        env_obs_space: spaces.np.Space,
-        obs_space: spaces.torch.Space,
-        env_act_space: spaces.np.Space,
-        act_space: spaces.torch.Space,
+        env_obs_space: spaces.np.Array,
+        obs_space: spaces.torch.Tensor,
+        env_act_space: spaces.np.Array,
+        act_space: spaces.torch.Tensor,
         seed: int,
     ):
         self.env_obs_space = env_obs_space

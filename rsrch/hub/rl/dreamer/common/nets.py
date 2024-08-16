@@ -10,6 +10,7 @@ import rsrch.distributions as D
 from rsrch import spaces
 
 from . import dh
+from .utils import to_camel_case
 
 ActType = Literal["relu", "elu", "tanh"]
 ACT_LAYERS = {"relu": nn.ReLU, "elu": nn.ELU, "tanh": nn.Tanh}
@@ -179,11 +180,16 @@ class ImageEncoder(nn.Sequential):
         return super().forward(input)
 
 
+class Flatten(nn.Module):
+    def forward(self, x: Tensor):
+        return x.reshape(*x.shape[:1], -1)
+
+
 class BoxEncoder(nn.Sequential):
     def __init__(self, space: spaces.torch.Box, **mlp):
         in_features = math.prod(space.shape)
         super().__init__(
-            nn.Flatten(1),
+            Flatten(),
             MLP(in_features, None, **mlp),
         )
         self.space = space
@@ -202,13 +208,48 @@ class DiscreteEncoder(nn.Module):
         return input.argmax(-1)
 
 
-def AutoEncoder(space: spaces.torch.Space, **args):
-    if type(space) == spaces.torch.Image:
+class DictEncoder(nn.ModuleDict):
+    def __init__(
+        self,
+        space: spaces.torch.Dict,
+        encoders: dict[str, nn.Module],
+        keys=None,
+    ):
+        if keys is not None:
+            encoders = {key: encoders[key] for key in keys}
+        super().__init__(encoders)
+        self.space = space
+
+    def forward(self, input: dict):
+        outputs = [self[key](input[key]) for key in self]
+        return torch.cat(outputs, dim=1)
+
+
+def AutoEncoder(space: spaces.torch.Tensor, **args):
+    if isinstance(space, spaces.torch.Dict):
+        return DictEncoder(
+            space,
+            {key: AutoEncoder(value, **args) for key, value in space.items()},
+            **args.get("dict", {}),
+        )
+    elif isinstance(space, spaces.torch.Image):
         return ImageEncoder(space, **args.get("image", {}))
-    elif type(space) == spaces.torch.Box:
-        return BoxEncoder(space, **args.get("box", {}))
-    elif type(space) == spaces.torch.Discrete:
+    elif isinstance(space, spaces.torch.Discrete):
         return DiscreteEncoder(space, **args.get("discrete", {}))
+    elif isinstance(space, spaces.torch.Box):
+        return BoxEncoder(space, **args.get("box", {}))
+    else:
+        raise ValueError(type(space))
+
+
+def make_encoder(space: spaces.torch.Tensor, **kwargs):
+    cls_type = kwargs["type"]
+    cls = globals()[to_camel_case(f"{cls_type}_encoder")]
+    del kwargs["type"]
+    if cls_type == "auto":
+        return cls(space, **kwargs)
+    else:
+        return cls(space, **kwargs.get(cls_type, {}))
 
 
 class ImageDecoder(nn.Sequential):
@@ -280,13 +321,66 @@ class DiscreteDecoder(nn.Sequential):
         super().__init__(mlp, head)
 
 
-def AutoDecoder(in_features: int, space: spaces.torch.Space, **args):
-    if type(space) == spaces.torch.Image:
+class ConstDecoder(nn.Module):
+    def __init__(self, in_features: int, space, value):
+        super().__init__()
+        self.in_features = in_features
+        self.space = space
+        self.value: Tensor
+        self.register_buffer("value", torch.as_tensor(value))
+
+    def forward(self, input: Tensor):
+        value = self.value.expand(input.shape[0], *self.value.shape)
+        return D.Dirac(value, len(self.value.shape))
+
+
+class DictDecoder(nn.ModuleDict):
+    def __init__(
+        self,
+        in_features: int,
+        space: spaces.torch.Dict,
+        decoders: dict[str, nn.Module],
+        keys: list[str] | None = None,
+    ):
+        if keys is not None:
+            decoders = {key: decoders[key] for key in keys}
+        super().__init__(decoders)
+        self.in_features = in_features
+        self.space = space
+
+    def forward(self, input: Tensor):
+        return {name: self[name](input) for name in self}
+
+
+def AutoDecoder(in_features: int, space: spaces.torch.Tensor, **args):
+    if isinstance(space, spaces.torch.Dict):
+        return DictDecoder(
+            in_features,
+            space,
+            {
+                name: AutoDecoder(in_features, value, **args)
+                for name, value in space.items()
+            },
+            **args.get("dict", {}),
+        )
+    elif isinstance(space, spaces.torch.Image):
         return ImageDecoder(in_features, space, **args.get("image", {}))
-    elif type(space) == spaces.torch.Box:
-        return BoxDecoder(in_features, space, **args.get("box", {}))
-    elif type(space) == spaces.torch.Discrete:
+    elif isinstance(space, spaces.torch.Discrete):
         return DiscreteDecoder(in_features, space, **args.get("discrete", {}))
+    elif isinstance(space, spaces.torch.Box):
+        return BoxDecoder(in_features, space, **args.get("box", {}))
+    else:
+        raise ValueError(type(space))
+
+
+def make_decoder(in_features: int, space: spaces.torch.Tensor, **kwargs):
+    cls_type = kwargs["type"]
+    cls = globals()[to_camel_case(f"{cls_type}_decoder")]
+    del kwargs["type"]
+    if cls_type == "auto":
+        return cls(in_features, space, **kwargs)
+    else:
+        return cls(in_features, space, **kwargs.get(cls_type, {}))
 
 
 class ActionEncoder(nn.Module):
@@ -296,30 +390,34 @@ class ActionEncoder(nn.Module):
     - we need to be able to get the un-encoded action from this output, for use
       in the env interaction."""
 
-    def __init__(self, act_space: spaces.torch.Space):
+    def __init__(self, act_space: spaces.torch.Tensor):
         super().__init__()
-        assert isinstance(act_space, (spaces.torch.Discrete, spaces.torch.Box))
         self.act_space = act_space
 
     def forward(self, act: Tensor):
         if isinstance(self.act_space, spaces.torch.Discrete):
-            return F.one_hot(act, self.act_space.n).float()
-        else:
-            return act.flatten(1)
+            act = F.one_hot(act, self.act_space.n)
+        elif isinstance(self.act_space, spaces.torch.TokenSeq):
+            act = F.one_hot(act, self.act_space.vocab_size)
+        return act.flatten(1)
 
     def inverse(self, act: Tensor):
         if isinstance(self.act_space, spaces.torch.Discrete):
-            return act.argmax(-1)
+            act = act.argmax(-1)
+        elif isinstance(self.act_space, spaces.torch.TokenSeq):
+            act = act.reshape(-1, self.act_space.num_tokens, self.act_space.vocab_size)
+            act = act.argmax(-1)
         else:
-            return act.reshape(-1, *self.act_space.shape)
+            act = act.reshape(-1, *self.act_space.shape)
+        return act
 
 
-def ActorHead(in_features: int, act_space: spaces.torch.Space):
+def ActorHead(in_features: int, act_space: spaces.torch.Tensor, **kwargs):
     layer_ctor = partial(nn.Linear, in_features)
-    if isinstance(act_space, spaces.torch.Discrete):
-        return dh.OneHot(layer_ctor, act_space)
-    elif isinstance(act_space, spaces.torch.Box):
-        return dh.make(layer_ctor, act_space, type="auto")
+    dist_layer = dh.make(layer_ctor, act_space, **kwargs)
+    if not act_space.dtype.is_floating_point:
+        dist_layer = dh.OneHotWrapper(dist_layer)
+    return dist_layer
 
 
 class StreamNorm(nn.Module):

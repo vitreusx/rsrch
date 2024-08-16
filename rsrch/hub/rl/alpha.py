@@ -7,8 +7,6 @@ import torch
 from torch import Tensor, nn
 
 from rsrch import spaces
-from rsrch.exp.api import Experiment
-from rsrch.rl import gym
 
 from .utils import Optim
 
@@ -22,7 +20,7 @@ class Config:
     min_value: float | None = 1e-6
 
 
-def max_ent(act_space: spaces.torch.Space) -> float:
+def max_ent(act_space: spaces.torch.Tensor) -> float:
     """Compute maximum entropy for a policy over a given action space."""
     if isinstance(act_space, spaces.torch.Discrete):
         return np.log(act_space.n)
@@ -35,7 +33,7 @@ def max_ent(act_space: spaces.torch.Space) -> float:
 class Alpha(nn.Module):
     """Alpha parameter for entropy regularization."""
 
-    def __init__(self, cfg: Config, act_space: spaces.torch.Space):
+    def __init__(self, cfg: Config, act_space: spaces.torch.Tensor):
         super().__init__()
         self.cfg = cfg
         self.adaptive = cfg.adaptive

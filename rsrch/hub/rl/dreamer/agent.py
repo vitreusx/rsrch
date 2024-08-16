@@ -41,7 +41,7 @@ class Agent(rl.VecAgent):
         actor: Actor,
         wm: WorldModel,
         cfg: Config,
-        act_space: spaces.torch.Space,
+        act_space: spaces.torch.Tensor,
         mode: Literal["rand", "train", "eval"] = "rand",
         compute_dtype: torch.dtype | None = None,
     ):

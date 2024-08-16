@@ -11,7 +11,8 @@ from rsrch.rl.utils import polyak
 from rsrch.utils import sched
 
 from ..common import nets
-from ..common.utils import TrainerBase, find_class, null_ctx
+from ..common.trainer import TrainerBase
+from ..common.utils import find_class, null_ctx
 
 
 @dataclass
@@ -41,7 +42,7 @@ class Actor(nn.Sequential):
         self,
         cfg: Config,
         state_size: int,
-        act_space: spaces.torch.Space,
+        act_space: spaces.torch.Tensor,
     ):
         mlp = nets.MLP(state_size, None, **cfg.actor)
         head = nets.ActorHead(mlp.out_features, act_space)

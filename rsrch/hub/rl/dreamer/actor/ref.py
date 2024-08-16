@@ -11,12 +11,14 @@ from rsrch.rl.utils import polyak
 from rsrch.utils import sched
 
 from ..common import nets
-from ..common.utils import TrainerBase, find_class, null_ctx
+from ..common.trainer import TrainerBase
+from ..common.utils import find_class, null_ctx, tf_init
 
 
 @dataclass
 class Config:
     actor: dict
+    actor_dist: dict
     critic: dict
     opt: dict
     coef: dict
@@ -35,20 +37,24 @@ class Actor(nn.Sequential):
         self,
         cfg: Config,
         state_size: int,
-        act_space: spaces.torch.Space,
+        act_space: spaces.torch.Tensor,
     ):
         super().__init__()
         self.cfg = cfg
 
         mlp = nets.MLP(state_size, None, **cfg.actor)
-        head = nets.ActorHead(mlp.out_features, act_space)
+        head = nets.ActorHead(mlp.out_features, act_space, **cfg.actor_dist)
         super().__init__(mlp, head)
+
+        self.apply(tf_init)
 
 
 class Critic(nets.BoxDecoder):
     def __init__(self, cfg: Config, state_size: int):
         vf_space = spaces.torch.Box((), dtype=torch.float32)
         super().__init__(state_size, vf_space, **cfg.critic)
+
+        self.apply(tf_init)
 
 
 def gae_lambda(rew, val, gamma, bootstrap, lambda_):
@@ -84,6 +90,7 @@ class Trainer(TrainerBase):
         self,
         actor: Actor,
         make_critic: Callable[[], nn.Module],
+        act_space: spaces.torch.Tensor,
     ):
         self.actor = actor
 
@@ -101,7 +108,7 @@ class Trainer(TrainerBase):
             self.target_critic = self.critic
 
         if self.cfg.actor_grad == "auto":
-            discrete = isinstance(self.wm.act_space, spaces.torch.Discrete)
+            discrete = isinstance(act_space, spaces.torch.Discrete)
             self.actor_grad = "reinforce" if discrete else "dynamics"
         else:
             self.actor_grad = self.cfg.actor_grad
@@ -144,6 +151,9 @@ class Trainer(TrainerBase):
     def compute(self, states, action, reward, term):
         losses, mets = {}, {}
 
+        mets["reward_mean"] = reward.mean()
+        mets["reward_std"] = reward.std()
+
         if self.update_target is not None:
             self.update_target.step()
 
@@ -152,12 +162,19 @@ class Trainer(TrainerBase):
         no_grad = torch.no_grad if self.actor_grad == "reinforce" else null_ctx
         with no_grad():
             with self.autocast():
-                gamma = self.cfg.gamma * (1.0 - term)
+                gamma = self.cfg.gamma * (1.0 - term.float())
 
                 vt = over_seq(self.target_critic)(states).mode
                 target = gae_lambda(
-                    reward[:-1], vt[:-1], gamma[:-1], vt[-1], self.cfg.gae_lambda
+                    rew=reward[:-1],
+                    val=vt[:-1],
+                    gamma=gamma[:-1],
+                    bootstrap=vt[-1],
+                    lambda_=self.cfg.gae_lambda,
                 )
+
+                mets["target_mean"] = target.mean()
+                mets["target_std"] = target.std()
 
         with torch.no_grad():
             with self.autocast():
@@ -189,7 +206,8 @@ class Trainer(TrainerBase):
 
             value_dist = over_seq(self.critic)(states[:-1].detach())
             mets["value"] = (value_dist.mean).mean()
-            losses["critic"] = (weight[:-1] * -value_dist.log_prob(target)).mean()
+            critic_losses = -value_dist.log_prob(target.detach())
+            losses["critic"] = (weight[:-1] * critic_losses).mean()
 
             for k, v in losses.items():
                 mets[f"{k}_loss"] = v.detach()

@@ -16,11 +16,11 @@ from torch import Tensor, nn
 from tqdm import tqdm
 
 from rsrch._future import rl
-from rsrch._future.rl import buffer
-from rsrch.exp import Experiment, timestamp
+from rsrch.exp import Experiment, timestamp, timestamp2
 from rsrch.exp.board.tensorboard import Tensorboard
 from rsrch.exp.profile import Profiler
 from rsrch.nn.utils import over_seq
+from rsrch.types.tensorlike.core import Tensorlike
 from rsrch.utils import cron, repro
 from rsrch.utils.early_stop import EarlyStopping
 
@@ -35,6 +35,7 @@ class Config:
     @dataclass
     class Debug:
         deterministic: bool
+        detect_anomaly: bool
 
     @dataclass
     class Profile:
@@ -50,8 +51,8 @@ class Config:
     @dataclass
     class Actor:
         type: Literal["ref", "sac"]
-        ref: ref.Config
-        sac: sac.Config
+        ref: ref.Config | None
+        sac: sac.Config | None
 
     @dataclass
     class Train:
@@ -69,15 +70,20 @@ class Config:
         num_envs: int
         horizon: int
 
+    @dataclass
+    class Extras:
+        discrete_actions: int | None = None
+
     seed: int
     device: str
     compute_dtype: Literal["float16", "float32"]
     def_step: str
     val_envs: int
+    extras: Extras
 
     debug: Debug
     profile: Profile
-    env: rl.api.Config
+    env: rl.sdk.Config
     wm: WM
     ac: Actor
     agent: agent.Config
@@ -115,11 +121,18 @@ class Runner:
         self.device = torch.device(self.cfg.device)
         self.compute_dtype = getattr(torch, self.cfg.compute_dtype)
 
-        self.env_api = rl.api.make(self.cfg.env)
+        if self.cfg.debug.detect_anomaly:
+            torch.autograd.set_detect_anomaly(True)
+
+        self.sdk = rl.sdk.make(self.cfg.env)
+        if not self.sdk.act_space.dtype.is_floating_point:
+            n = self.cfg.extras.discrete_actions
+            if n is not None:
+                self.sdk = rl.sdk.wrappers.DiscreteActions(self.sdk, n=n)
 
         self.exp = Experiment(
             project="dreamerv2",
-            run=f"{self.env_api.id}__{timestamp()}",
+            prefix=self.sdk.id,
             config=asdict(self.cfg),
         )
 
@@ -136,10 +149,9 @@ class Runner:
             wm_trainer = wm.Trainer(wm_cfg, self.compute_dtype)
             rew_space = wm_trainer.reward_space
 
-            obs_space, act_space = self.env_api.obs_space, self.env_api.act_space
+            obs_space, act_space = self.sdk.obs_space, self.sdk.act_space
             self.wm = wm.WorldModel(wm_cfg, obs_space, act_space, rew_space)
             self.wm = self.wm.to(self.device)
-            self.wm.apply(self._tf_init)
 
         ac_type = self.cfg.ac.type
         if ac_type == "ref":
@@ -156,7 +168,6 @@ class Runner:
             )
 
         self.actor = self.actor.to(self.device)
-        self.actor.apply(self._tf_init)
 
         self.fwd_mtx = Lock()
 
@@ -171,10 +182,10 @@ class Runner:
                 f = self._prof.profiled(getattr(self, name))
                 setattr(self, name, f)
 
-        self.buf = buffer.Buffer()
+        self.buf = rl.data.Buffer()
         self.buf_mtx = Lock()
 
-        self.envs = self.env_api.make_envs(
+        self.envs = self.sdk.make_envs(
             self.cfg.train.num_envs,
             mode="train",
         )
@@ -182,12 +193,12 @@ class Runner:
             actor=self.actor,
             wm=self.wm,
             cfg=self.cfg.agent,
-            act_space=self.env_api.act_space,
+            act_space=self.sdk.act_space,
             mode="train",
             compute_dtype=self.compute_dtype,
         )
 
-        self.env_iter = iter(self.env_api.rollout(self.envs, self.agent))
+        self.env_iter = iter(self.sdk.rollout(self.envs, self.agent))
         self._ep_ids = defaultdict(lambda: None)
         self._ep_rets = defaultdict(lambda: 0.0)
         self._env_steps = defaultdict(lambda: 0)
@@ -197,12 +208,12 @@ class Runner:
         self.agent_step = 0
         self.exp.register_step("agent_step", lambda: self.agent_step)
 
-        self.val_envs = self.env_api.make_envs(self.cfg.val_envs, mode="val")
+        self.val_envs = self.sdk.make_envs(self.cfg.val_envs, mode="val")
         self.val_agent = agent.Agent(
             self.actor,
             self.wm,
             self.cfg.agent,
-            self.env_api.act_space,
+            self.sdk.act_space,
             mode="eval",
             compute_dtype=self.compute_dtype,
         )
@@ -233,24 +244,19 @@ class Runner:
         every, of, iters = self._get_every_params(cfg)
         return cron.Every(lambda of=of: getattr(self, of), every, iters)
 
-    def _tf_init(self, module: nn.Module):
-        if isinstance(module, (nn.Linear, nn.Conv2d, nn.ConvTranspose2d)):
-            nn.init.xavier_uniform_(module.weight)
-            nn.init.zeros_(module.bias)
-
     def _setup_train(self):
         cfg = self.cfg.train
 
         dataset_cfg = {**vars(cfg.dataset)}
-        self.buf = buffer.SizeLimited(self.buf, cap=dataset_cfg["capacity"])
+        self.buf = rl.data.SizeLimited(self.buf, cap=dataset_cfg["capacity"])
         del dataset_cfg["capacity"]
 
-        self.buf = self.env_api.wrap_buffer(self.buf)
+        self.buf = self.sdk.wrap_buffer(self.buf)
 
-        self.train_sampler = buffer.Sampler()
+        self.train_sampler = rl.data.Sampler()
         self.val_ids = set()
 
-        class SplitHook(buffer.Hook):
+        class SplitHook(rl.data.Hook):
             def __init__(hook):
                 hook._g = np.random.default_rng()
 
@@ -338,10 +344,9 @@ class Runner:
                     ref.Critic(ac_cfg, self.wm.state_size),
                 )
                 critic = critic.to(self.device)
-                critic.apply(self._tf_init)
                 return critic
 
-            self.ac_trainer.setup(self.actor, make_critic)
+            self.ac_trainer.setup(self.actor, make_critic, self.sdk.act_space)
 
         elif ac_type == "sac":
             ac_cfg = self.cfg.ac.sac
@@ -353,7 +358,6 @@ class Runner:
                     sac.ValueFunc(ac_cfg, self.wm.state_size),
                 )
                 vf = vf.to(self.device)
-                vf.apply(self._tf_init)
                 return vf
 
             self.ac_trainer.setup(self.actor, make_vf)
@@ -453,7 +457,7 @@ class Runner:
         with self.buf_mtx:
             self._ep_ids[env_idx] = self.buf.push(self._ep_ids[env_idx], step, final)
 
-        self._ep_rets[env_idx] += step["reward"]
+        self._ep_rets[env_idx] += step.get("reward", 0.0)
         if final:
             self.exp.add_scalar("train/ep_ret", self._ep_rets[env_idx])
             del self._ep_ids[env_idx]
@@ -461,9 +465,7 @@ class Runner:
 
         self.agent_step += 1
 
-        # Some environments (esp. Atari ones) skip frames (e.g. we do one agent
-        # action and, say, four env steps follow.) For the purposes of benchmarking
-        # we need to keep track of the "real" number of env steps.
+        # Some environments skip frames (each action is repeated, say, four times.) For the purposes of benchmarking and keeping the comparisons fair, we need to keep track of the "real" number of env steps. This is done by adding "total_steps" field for all steps produced by the SDKs.
         if "total_steps" in step:
             diff = step["total_steps"] - self._env_steps[env_idx]
             self.env_step += diff
@@ -476,7 +478,9 @@ class Runner:
         until: dict | str,
         tasks: list[dict | str],
     ):
-        self._setup_train()
+        if not hasattr(self, "_setup_train_done"):
+            self._setup_train()
+            self._setup_train_done = True
 
         task_functions = []
         should_run = []
@@ -493,7 +497,11 @@ class Runner:
                 if "every" in task:
                     del task["every"]
 
-            should_run_task = self._make_every({"n": every, "of": of})
+            if not isinstance(every, dict):
+                # If only a number is supplied, use default 'of' value.
+                every = dict(n=every, of=of)
+
+            should_run_task = self._make_every(every)
             should_run.append(should_run_task)
 
             name = next(iter(task.keys()))
@@ -510,30 +518,35 @@ class Runner:
 
         if async_mode:
             pool = concurrent.futures.ThreadPoolExecutor(len(tasks))
-            futures = {}
-            active_tasks = set()
+            fut_to_idx, idx_to_fut = {}, {}
 
             while should_loop:
                 completed, _ = concurrent.futures.wait(
-                    futures,
+                    fut_to_idx,
                     return_when="FIRST_COMPLETED",
                 )
                 for fut in completed:
                     fut.result()
-                    task_idx = futures[fut]
-                    del futures[fut]
-                    active_tasks.remove(task_idx)
+                    task_idx = fut_to_idx[fut]
+                    del fut_to_idx[fut]
+                    del idx_to_fut[task_idx]
 
                 for task_idx in range(len(tasks)):
-                    if task_idx in active_tasks:
-                        continue
-
                     if should_run[task_idx]:
+                        if task_idx in idx_to_fut:
+                            fut = idx_to_fut[task_idx]
+                            fut.result()
+                            del fut_to_idx[fut]
+                            del idx_to_fut[task_idx]
+
                         fut = pool.submit(task_functions[task_idx])
-                        futures[fut] = task_idx
-                        active_tasks.add(task_idx)
+                        fut_to_idx[fut] = task_idx
+                        idx_to_fut[task_idx] = fut
 
                 self._update_pbar(pbar, should_loop)
+
+            concurrent.futures.wait(fut_to_idx)
+
         else:
             while should_loop:
                 for task_idx in range(len(tasks)):
@@ -553,6 +566,8 @@ class Runner:
 
         with self.fwd_mtx:
             self.wm_trainer.train()
+            self.ac_trainer.train()
+
             wm_loss, wm_mets, wm_states = self.wm_trainer.compute(
                 obs=wm_batch["obs"],
                 act=wm_batch["act"],
@@ -561,7 +576,7 @@ class Runner:
                 start=wm_batch["start"],
             )
 
-            (ac_states, action, reward, term) = self._imagine(
+            (ac_states, action, reward, term) = self._get_dream_batch(
                 initial=wm_states.flatten(),
                 term=wm_batch["term"].flatten(),
             )
@@ -569,7 +584,6 @@ class Runner:
             if self.cfg.ac.type == "sac":
                 reward = reward[1:]
 
-            self.ac_trainer.train()
             ac_loss, ac_mets = self.ac_trainer.compute(
                 states=ac_states,
                 action=action,
@@ -577,8 +591,8 @@ class Runner:
                 term=term,
             )
 
-        self.wm_trainer.opt_step(wm_loss)
-        self.ac_trainer.opt_step(ac_loss)
+        self.ac_trainer.opt_step(ac_loss, self.fwd_mtx)
+        self.wm_trainer.opt_step(wm_loss, self.fwd_mtx)
 
         self.train_ds.update_states(batch=wm_batch, final=wm_states[-1])
 
@@ -590,7 +604,8 @@ class Runner:
         self.wm_opt_step += 1
         self.ac_opt_step += 1
 
-    def _imagine(self, initial, term):
+    def _get_dream_batch(self, initial, term):
+        self.wm.requires_grad_(False)
         with autocast(self.device, self.compute_dtype):
             states, actions = [initial], []
             for _ in range(self.cfg.train.horizon):
@@ -605,8 +620,9 @@ class Runner:
             reward = reward_dist.mode
 
             term_dist = over_seq(self.wm.term_dec)(states)
-            term_ = term_dist.mean
+            term_ = term_dist.mean.contiguous()
             term_[0] = term.float()
+        self.wm.requires_grad_(True)
 
         return states, actions, reward, term_
 
@@ -619,7 +635,7 @@ class Runner:
         if ac_loss is not None:
             self.exp.add_scalar("ac/val_loss", ac_loss, step="ac_opt_step")
 
-        val_iter = iter(self.env_api.rollout(self.val_envs, self.val_agent))
+        val_iter = iter(self.sdk.rollout(self.val_envs, self.val_agent))
         env_rets = defaultdict(lambda: 0.0)
         all_rets = []
 
@@ -716,7 +732,7 @@ class Runner:
                 start=wm_batch["start"],
             )
 
-        self.wm_trainer.opt_step(wm_loss)
+        self.wm_trainer.opt_step(wm_loss, self.fwd_mtx)
 
         with self.buf_mtx:
             self.train_ds.update_states(batch=wm_batch, final=wm_states[-1])
@@ -777,7 +793,7 @@ class Runner:
                     start=wm_batch["start"],
                 )[0]
 
-                (ac_states, action, reward, term) = self._imagine(
+                (ac_states, action, reward, term) = self._get_dream_batch(
                     initial=wm_states.flatten(),
                     term=wm_batch["term"].flatten(),
                 )
@@ -822,7 +838,7 @@ class Runner:
                     start=wm_batch["start"],
                 )[0]
 
-            (ac_states, action, reward, term) = self._imagine(
+            (ac_states, action, reward, term) = self._get_dream_batch(
                 initial=wm_states.flatten(),
                 term=wm_batch["term"].flatten(),
             )
@@ -837,7 +853,7 @@ class Runner:
                 term=term,
             )
 
-        self.ac_trainer.opt_step(ac_loss)
+        self.ac_trainer.opt_step(ac_loss, self.fwd_mtx)
 
         for k, v in ac_mets.items():
             self.exp.add_scalar(f"ac/{k}", v, step="ac_opt_step")
@@ -847,7 +863,7 @@ class Runner:
     def _move_to_device(self, batch: dict):
         res = {}
         for k, v in batch.items():
-            if isinstance(v, Tensor):
-                v = v.to(self.device)
+            if hasattr(v, "to"):
+                v = v.to(device=self.device)
             res[k] = v
         return res

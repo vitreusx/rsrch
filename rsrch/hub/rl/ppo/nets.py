@@ -8,7 +8,7 @@ from rsrch.rl import gym
 
 
 class Encoder(nn.Sequential):
-    def __init__(self, obs_space: spaces.torch.Space):
+    def __init__(self, obs_space: spaces.torch.Tensor):
         if isinstance(obs_space, spaces.torch.Image):
             num_channels = obs_space.shape[0]
             super().__init__(
@@ -49,7 +49,7 @@ class CriticHead(nn.Sequential):
 
 
 class ActorHead(nn.Module):
-    def __init__(self, act_space: spaces.torch.Space, enc_dim: int):
+    def __init__(self, act_space: spaces.torch.Tensor, enc_dim: int):
         super().__init__()
 
         if isinstance(act_space, spaces.torch.Discrete):
@@ -74,8 +74,8 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
 class ActorCritic(nn.Module):
     def __init__(
         self,
-        obs_space: spaces.torch.Space,
-        act_space: spaces.torch.Space,
+        obs_space: spaces.torch.Tensor,
+        act_space: spaces.torch.Tensor,
         share_enc=False,
         custom_init=False,
     ):

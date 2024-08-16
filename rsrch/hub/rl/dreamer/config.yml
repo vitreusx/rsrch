@@ -34,6 +34,7 @@ env:
     stack_num: ~
 debug:
   deterministic: false
+  detect_anomaly: false
 profile:
   enabled: false
   schedule: { wait: 5, warmup: 1, active: 3, repeat: 4 }
@@ -97,54 +98,42 @@ wm:
           dist: { type: mse }
       reward:
         type: box
-        <<: [*mlp]
-        dist: { type: mse }
+        box:
+          <<: [*mlp]
+          dist: { type: mse }
       term:
         type: discrete
-        <<: [*mlp]
+        discrete: *mlp
 
 ac:
-  _common: &ac_common
-    actor: *mlp
-    rew_norm:
-      momentum: 1.0
-      scale: 1.0
-      eps: 1e-8
-    gamma: 0.99
-    gae_lambda: 0.95
-    actor_grad: reinforce
-    actor_grad_mix: 0.1
-    actor_ent: 2e-3
-    clip_grad: 1.0e2
-    coef: {}
-
   type: ref
   ref:
-    <<: [*ac_common]
+    actor: *mlp
+    actor_dist:
+      type: auto
+      beta:
+        min_std: 0.1
     critic:
       <<: [*mlp]
       dist: { type: mse }
     target_critic: { every: 100 }
+    gamma: 0.99
+    gae_lambda: 0.95
+    actor_grad: auto
+    actor_grad_mix: 0.1
+    actor_ent: 2e-3
+    coef: {}
     opt:
       type: adam_w
       actor: { lr: 8e-5, weight_decay: "${1e-6/lr}" }
       critic: { lr: 2e-4, weight_decay: "${1e-6/lr}" }
       eps: 1e-5
-
-  sac:
-    <<: [*ac_common]
-    vf:
-      <<: [*mlp]
-      dist: { type: mse }
-    target_vf: { every: 100 }
-    opt:
-      type: adam_w
-      actor: { lr: 8e-5, weight_decay: "${1e-6/lr}" }
-      vf: { lr: 2e-4, weight_decay: "${1e-6/lr}" }
-      eps: 1e-5
-    use_log_ent: false
-    min_q: false
-    use_adv_norm: false
+    clip_grad: 1.0e2
+    rew_norm:
+      momentum: 1.0
+      scale: 1.0
+      eps: 1e-8
+  sac: ~
 
 stages:
   - env_rollout:
@@ -156,3 +145,6 @@ stages:
         - do_opt_step: ~
           every: 5
         - do_env_step
+
+extras:
+  discrete_actions: ~

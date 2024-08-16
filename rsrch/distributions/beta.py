@@ -19,6 +19,12 @@ class Beta(Distribution, Tensorlike):
         self.beta = self.register("beta", beta)
         self._log_B = None
 
+    @staticmethod
+    def from_mean_var(mean: Tensor, var: Tensor, event_dims: int = 0) -> "Beta":
+        nu = mean * (1.0 - mean) / var - 1.0
+        alpha, beta = mean * nu, (1.0 - mean) * nu
+        return Beta(alpha, beta, event_dims)
+
     def _new(self, shape: torch.Size, fields: dict):
         new = super()._new(shape, fields)
         new._log_B = None

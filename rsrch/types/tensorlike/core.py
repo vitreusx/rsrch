@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import dataclass
+from functools import cached_property
 from numbers import Number
 from typing import Sequence, Tuple, TypeVar, overload
 
@@ -20,11 +22,14 @@ class Tensorlike:
 
     User can register tensor fields via `register`. When using operations such as slicing, stacking, concatenating etc., the output is a tensor-like, with
     operations being executed over the tensor fields.
+
+    Other features:
+    - Values of cached properties are not copied over to the new instances.
     """
 
     def __init__(self, shape: torch.Size):
-        self._tensors = set()
-        self._batched = set()
+        self._tensors = {}
+        self._batched = {}
         self.shape = shape
 
     def register(self, __name, __value: T, batched=True) -> T:
@@ -35,11 +40,12 @@ class Tensorlike:
         if hasattr(self, __name):
             raise ValueError(f"Member variable with name '{__name}' already present.")
 
-        assert isinstance(__value, (torch.Tensor, Tensorlike))
         setattr(self, __name, __value)
-        self._tensors.add(__name)
-        if batched:
-            self._batched.add(__name)
+
+        if isinstance(__value, (torch.Tensor, Tensorlike)):
+            self._tensors[__name] = None
+            if batched:
+                self._batched[__name] = None
 
         return __value
 
@@ -66,6 +72,15 @@ class Tensorlike:
         new.shape = shape
         new._tensors = copy.copy(self._tensors)
         new._batched = copy.copy(self._batched)
+
+        for prop in dir(new.__class__):
+            if isinstance(getattr(new.__class__, prop), cached_property):
+                try:
+                    delattr(new, prop)
+                except:
+                    # If cached_property hasn't been accessed, delattr will
+                    # throw an error.
+                    pass
 
         for name, value in fields.items():
             setattr(new, name, value)
@@ -249,18 +264,22 @@ class Tensorlike:
                     new_idx.append(x)
             idx = tuple(new_idx)
 
-        shape = self._prototype[idx].shape
-        return self._getitem(idx, shape)
+        return self._getitem(idx)
 
-    def _getitem(self, idx, shape):
+    def _getitem(self, idx):
         fields = {}
+        shape = None
         for name in self._batched:
             tensor: Tensorlike = getattr(self, name)
             if isinstance(tensor, torch.Tensor):
                 new = tensor[idx]
+                if shape is None:
+                    event_dims = len(tensor.shape) - len(self.shape)
+                    shape = new.shape[: len(new.shape) - event_dims]
             else:
-                new_shape = tuple((*shape, *tensor.shape[len(shape) :]))
-                new = tensor._getitem(idx, new_shape)
+                new = tensor._getitem(idx)
+                if shape is None:
+                    shape = new.shape
             fields[name] = new
 
         return self._new(shape, fields)
@@ -446,11 +465,29 @@ class Tensorlike:
         new_shape = index.shape
         return self._new(new_shape, fields)
 
-    def type_as(self, other: torch.Tensor):
-        return self.to(dtype=other.dtype, device=other.device)
+    def type_as(self, other: Tensorlike):
+        fields = {}
+        for name in self._tensors:
+            tensor = getattr(self, name)
+            fields[name] = tensor.type_as(getattr(other, name))
+        return self._new(self.shape, fields)
 
     def cpu(self):
         return self.to(device="cpu")
-    
+
     def cuda(self):
         return self.to(device="cuda")
+
+    def __repr__(self):
+        fields = {"shape": self.shape}
+        for name in self._tensors:
+            tensor = getattr(self, name)
+            if isinstance(tensor, torch.Tensor):
+                tensor = f"Tensor(shape={tensor.shape})"
+
+        cls = type(self.__class__.__name__, (), fields)
+        cls = dataclass(cls)
+        return repr(cls)
+
+
+__all__ = ["Tensorlike"]

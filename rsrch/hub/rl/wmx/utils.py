@@ -72,7 +72,7 @@ def scale_gradient(value: Tensor, scale: Number | Tensor):
 
 @dataclass
 class InputSpec:
-    obs: spaces.torch.Space
-    act: spaces.torch.Space
-    rew: spaces.torch.Space
-    term: spaces.torch.Space
+    obs: spaces.torch.Tensor
+    act: spaces.torch.Tensor
+    rew: spaces.torch.Tensor
+    term: spaces.torch.Tensor

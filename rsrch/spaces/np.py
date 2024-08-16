@@ -4,7 +4,7 @@ from numbers import Number
 import numpy as np
 
 
-class Space:
+class Array:
     def __init__(
         self,
         shape: tuple[int, ...],
@@ -29,7 +29,7 @@ class Space:
         return f"Space(shape={self.shape!r}, dtype={self.dtype})"
 
 
-class Box(Space):
+class Box(Array):
     def __init__(
         self,
         shape: tuple[int, ...],
@@ -88,7 +88,7 @@ class Box(Space):
         shape = [*sample_size, *self.shape]
         if np.issubdtype(self.dtype, np.floating):
             if gen is None:
-                u = np.random.rand(shape, self.dtype)
+                u = np.random.rand(*shape).astype(self.dtype)
             else:
                 u = gen.random(shape, self.dtype)
             u = np.where(self.bounded, u * (self.high - self.low), u)
@@ -106,10 +106,6 @@ class Box(Space):
         high_x = self.high.ravel()[0]
         high_r = high_x if np.all(self.high == high_x) else self.high
         return f"Box({low_r!r}, {high_r!r}, {self.shape!r}, {self.dtype})"
-
-    def __getitem__(self, index):
-        low, high = self.low[index], self.high[index]
-        return Box(shape=low.shape, low=low, high=high, dtype=low.dtype)
 
 
 class Discrete(Box):
@@ -151,15 +147,11 @@ class Image(Box):
     def __repr__(self):
         return f"Image({self.shape!r}, {self.dtype})"
 
-    def __getitem__(self, index):
-        shape = self.low[index].shape
-        assert len(shape) >= 3
-        return Image(shape=shape, channel_last=self.channel_last, dtype=self.dtype)
 
-    def __array_function__(self, func, types, args, kwargs):
-        r = super().__array_function__(func, types, args, kwargs)
-        if len(args) == 1 and r.shape != self.shape:
-            # This check if done to prevent ops like transpose or moveaxis on
-            # images, which might be invalid ("bleed into" last three axes.)
-            raise RuntimeError(f"Cannot use '{func}' on images.")
-        return r
+class Dict(dict):
+    def sample(
+        self,
+        shape: tuple[int, ...],
+        gen: np.random.Generator | None = None,
+    ):
+        return {key: value.sample(shape, gen) for key, value in self.items()}

@@ -3,8 +3,8 @@ from torch import Tensor
 
 
 class Distribution:
-    event_shape: torch.Size
-    batch_shape: torch.Size
+    batch_shape: tuple[int, ...]
+    event_shape: tuple[int, ...]
 
     @property
     def mean(self) -> Tensor:

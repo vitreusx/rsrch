@@ -1,12 +1,15 @@
 from numbers import Number
 
+import numpy as np
 import torch
 from torch import Tensor
+
+from rsrch.types.tensorlike.dict import TensorDict
 
 from . import np as spaces_np
 
 
-class Space:
+class Tensor:
     def __init__(
         self,
         shape: tuple[int, ...],
@@ -33,13 +36,13 @@ class Space:
 
 
 def to_tensor(x, dtype=None, device=None):
-    if isinstance(x, Tensor):
+    if isinstance(x, torch.Tensor):
         return x.detach().clone().to(dtype=dtype, device=device)
     else:
         return torch.tensor(x, dtype=dtype, device=device)
 
 
-class Box(Space):
+class Box(Tensor):
     def __init__(
         self,
         shape: tuple[int, ...],
@@ -132,7 +135,7 @@ class Box(Space):
         )
 
 
-class Discrete(Space):
+class Discrete(Tensor):
     def __init__(
         self,
         n: int,
@@ -162,7 +165,7 @@ class Discrete(Space):
         return f"Discrete({self.n!r}, {self.dtype}, {self.device})"
 
 
-class TokenSeq(Space):
+class TokenSeq(Tensor):
     def __init__(
         self,
         num_tokens: int,
@@ -236,18 +239,51 @@ class Image(Box):
         )
 
 
-def as_tensor(space: spaces_np.Space, device: torch.device | None = None):
-    if type(space) == spaces_np.Box:
-        return Box(
-            shape=space.shape,
-            low=to_tensor(space.low, device=device),
-            high=to_tensor(space.high, device=device),
+class Dict(dict):
+    def sample(
+        self,
+        shape: tuple[int, ...],
+        gen: torch.Generator | None = None,
+    ):
+        return TensorDict(
+            {key: value.sample(shape, gen) for key, value in self.items()},
+            shape=shape,
         )
-    elif type(space) == spaces_np.Discrete:
-        return Discrete(space.n, device=device)
-    elif type(space) == spaces_np.Image:
+
+
+def np_to_torch_dtype(dtype):
+    return torch.as_tensor(np.empty((), dtype=dtype)).dtype
+
+
+def as_tensor(space, device: torch.device | None = None):
+    if isinstance(space, spaces_np.Dict):
+        return Dict({key: as_tensor(value) for key, value in space.items()})
+    elif isinstance(space, spaces_np.Image):
         return Image(
             shape=space.shape,
+            dtype=np_to_torch_dtype(space.dtype),
             device=device,
             channel_first=not space.channel_last,
         )
+    elif isinstance(space, spaces_np.Discrete):
+        return Discrete(
+            space.n,
+            dtype=np_to_torch_dtype(space.dtype),
+            device=device,
+        )
+    elif isinstance(space, spaces_np.Box):
+        return Box(
+            space.shape,
+            low=torch.tensor(space.low, device=device),
+            high=torch.tensor(space.high, device=device),
+            dtype=np_to_torch_dtype(space.dtype),
+            device=device,
+        )
+    elif isinstance(space, spaces_np.Array):
+        return Tensor(
+            shape=space.shape,
+            dtype=np_to_torch_dtype(space.dtype),
+            device=device,
+        )
+    else:
+        raise RuntimeError()

@@ -2,83 +2,224 @@ import math
 from functools import cached_property
 from numbers import Number
 
-import numpy as np
 import torch
-from torch import Tensor, nn
+from torch import Tensor
 
-from rsrch.types import Tensorlike
+from rsrch.nn.utils import pass_gradient
+from rsrch.types.tensorlike import Tensorlike
 
+from .affine import Affine
 from .distribution import Distribution
 from .normal import Normal
 from .utils import sum_rightmost
 
+# def _log1mexp(x: Tensor):
+#     """Compute log(1 - exp(x)) for x < 0."""
+#     return torch.where(
+#         -math.log(2) < x,
+#         (-x.expm1()).log(),
+#         (-x.exp()).log1p(),
+#     )
 
-def norm_pmf(x: Tensor):
+
+# def _logsubexp(x: Tensor, y: Tensor):
+#     """Compute log(exp(x) - exp(y)) for x >= y."""
+#     return x + _log1mexp(y - x)
+
+
+# def _subexp(x: Tensor, y: Tensor):
+#     """Compute exp(x) - exp(y)."""
+#     a, b = torch.maximum(x, y), torch.minimum(x, y)
+#     return (x - y).sign() * _logsubexp(a, b).exp()
+
+
+def _normal_log_pdf(x: Tensor):
+    return -0.5 * (math.log(2 * math.pi) + x.square())
+
+
+def _normal_pdf(x: Tensor):
     return (-0.5 * x.square()).exp() / math.sqrt(2 * math.pi)
 
 
-def norm_cdf(x: Tensor):
-    return 0.5 * (1.0 + (x / math.sqrt(2)).erf())
+# class TruncNormal(Distribution, Tensorlike):
+#     eps = 1e-6
+
+#     def __init__(self, dist: Normal, low: Tensor | Number, high: Tensor | Number):
+#         Tensorlike.__init__(self, dist.shape)
+#         self.event_shape = dist.event_shape
+#         self.loc = self.register("loc", dist.loc)
+#         self.scale = self.register("scale", dist.scale)
+
+#         low = torch.as_tensor(low).type_as(self.loc)
+#         self.low = self.register("low", low, batched=False)
+#         high = torch.as_tensor(high).type_as(self.loc)
+#         self.high = self.register("high", high, batched=False)
+
+#     @cached_property
+#     def std_low(self):
+#         return (self.low - self.loc) / self.scale
+
+#     @cached_property
+#     def std_high(self):
+#         return (self.high - self.loc) / self.scale
+
+#     @cached_property
+#     def log_Z(self):
+#         x, y = self.std_low, self.std_high
+#         is_y_pos = y >= 0
+#         old_x = x
+#         x = torch.where(is_y_pos, -y, x)
+#         x_log_cdf: Tensor = torch.special.log_ndtr(x.float())
+#         y = torch.where(is_y_pos, -old_x, y)
+#         y_log_cdf: Tensor = torch.special.log_ndtr(y.float())
+#         return y_log_cdf + _log1mexp(x_log_cdf - y_log_cdf)
+
+#     @cached_property
+#     def Z(self):
+#         return self.log_Z.exp()
+
+#     @cached_property
+#     def std_low_log_pdf(self):
+#         return _normal_log_pdf(self.std_low)
+
+#     @cached_property
+#     def std_low_pdf(self):
+#         return _normal_pdf(self.std_low)
+
+#     @cached_property
+#     def std_high_log_pdf(self):
+#         return _normal_log_pdf(self.std_high)
+
+#     @cached_property
+#     def std_high_pdf(self):
+#         return _normal_pdf(self.std_high)
+
+#     @cached_property
+#     def mean_term(self):
+#         phi_diff = _subexp(self.std_low_log_pdf, self.std_high_log_pdf)
+#         return phi_diff / self.Z
+
+#     @cached_property
+#     def var_term(self):
+#         return (
+#             self.std_low * self.std_low_pdf - self.std_high * self.std_high_pdf
+#         ) / self.Z
+
+#     def log_prob(self, value: Tensor):
+#         std_value = (value - self.loc) / self.scale
+#         logp = -(
+#             0.5 * std_value.square()
+#             + 0.5 * math.log(2 * math.pi)
+#             + self.scale.log()
+#             + self.log_Z
+#         )
+#         logp = torch.where((value > self.high) | (value < self.low), -math.inf, logp)
+#         return sum_rightmost(logp, len(self.event_shape))
+
+#     def entropy(self):
+#         ent = (
+#             0.5 * (1.0 + math.log(2.0 * math.pi))
+#             + self.scale.log()
+#             + self.log_Z
+#             + 0.5 * self.var_term
+#         )
+#         return sum_rightmost(ent, len(self.event_shape))
+
+#     @property
+#     def mean(self):
+#         return self.loc + self.scale * self.mean_term
+
+#     @property
+#     def mode(self):
+#         return self.loc.max(self.low).min(self.high)
+
+#     @property
+#     def var(self):
+#         return self.scale.square() * (1.0 + self.var_term - self.mean_term.square())
+
+#     def rsample(self, sample_shape=()):
+#         std_low_cdf: Tensor = torch.special.ndtr(self.std_low)
+#         std_high_cdf: Tensor = torch.special.ndtr(self.std_high)
+
+#         shape = [*sample_shape, *self.batch_shape, *self.event_shape]
+#         sample = torch.rand(shape, device=self.device)
+#         sample = std_low_cdf + (std_high_cdf - std_low_cdf) * sample
+
+#         sample: Tensor = torch.special.ndtri(sample.clamp(self.eps, 1.0 - self.eps))
+#         sample = torch.nan_to_num(sample, neginf=0.0, posinf=0.0)
+
+#         sample = self.loc + self.scale * sample
+#         sample = pass_gradient(sample.clamp(self.low, self.high), sample)
+#         return sample
 
 
-def norm_qf(x: Tensor, eps=1e-7):
-    z = (2.0 * x - 1.0).clamp(-1.0 + eps, 1.0 - eps)
-    return np.sqrt(2.0) * torch.erfinv(z)
+class TruncStdNormal(Distribution, Tensorlike):
+    def __init__(self, low: Tensor, high: Tensor, event_dims: int = 0):
+        batch_shape = low.shape[: len(low.shape) - event_dims]
+        Tensorlike.__init__(self, batch_shape)
+        self.event_dims = event_dims
+        self.event_shape = low.shape[len(low.shape) - event_dims :]
 
+        self.low = self.register("low", low)
+        self.high = self.register("high", high)
 
-class TruncNormal(Distribution, Tensorlike):
-    def __init__(self, norm: Normal, low: Tensor, high: Tensor):
-        Tensorlike.__init__(self, norm.batch_shape)
-        self.event_shape = norm.event_shape
+        self.eps = torch.finfo(self.low.dtype).eps
 
-        self.norm = self.register("norm", norm)
+    @cached_property
+    def low_pdf(self):
+        return _normal_pdf(self.low)
 
-        shape = [*self.batch_shape, *self.event_shape]
-        self.low = self.register("low", low.expand(shape))
-        self.high = self.register("high", high.expand(shape))
+    @cached_property
+    def high_pdf(self):
+        return _normal_pdf(self.high)
 
-        self.low_std = self.register(
-            "low_std",
-            (self.low - self.norm.loc) / self.norm.scale,
-        )
-        self.low_pmf = self.register("low_pmf", norm_pmf(self.low_std))
-        self.low_cdf = self.register("low_cdf", norm_cdf(self.low_std))
+    @cached_property
+    def low_cdf(self) -> Tensor:
+        return torch.special.ndtr(self.low)
 
-        self.high_std = self.register(
-            "high_std",
-            (self.high - self.norm.loc) / self.norm.scale,
-        )
-        self.high_pmf = self.register("high_pmf", norm_pmf(self.high_std))
-        self.high_cdf = self.register("high_cdf", norm_cdf(self.high_std))
+    @cached_property
+    def high_cdf(self) -> Tensor:
+        return torch.special.ndtr(self.high)
 
-        self.pmf_z = self.register("pmf_z", self.high_cdf - self.low_cdf)
+    @cached_property
+    def Z(self):
+        return (self.high_cdf - self.low_cdf).clamp_min(self.eps)
+
+    @cached_property
+    def log_Z(self):
+        return self.Z.log()
+
+    @cached_property
+    def var_term(self):
+        return (self.high * self.high_pdf - self.low * self.low_pdf) / self.Z
+
+    @property
+    def mean(self):
+        return (self.low_pdf - self.high_pdf) / self.Z
+
+    @property
+    def variance(self):
+        return 1.0 - self.var_term - self.mean**2
 
     def entropy(self):
-        norm_ent = 0.5 + 0.5 * math.log(2.0 * math.pi) + self.norm.scale.log()
-        trunc_ent = self.pmf_z.log() + (
-            0.5
-            * (self.low_std * self.low_pmf - self.high_std * self.high_pmf)
-            / self.pmf_z
-        )
-        ent = norm_ent + trunc_ent
-        return sum_rightmost(ent, len(self.event_shape))
+        ent = 0.5 * math.log(2.0 * math.pi * math.e) + self.log_Z - 0.5 * self.var_term
+        return sum_rightmost(ent, self.event_dims)
 
     def log_prob(self, value: Tensor):
-        norm_logp = (
-            -((value - self.norm.loc) ** 2) / (2 * self.norm.var)
-            - self.norm.scale.log()
-            - 0.5 * math.log(2 * math.pi)
-        )
-        trunc_logp = -self.pmf_z.log()
-        logp = norm_logp + trunc_logp
-        return sum_rightmost(logp, len(self.event_shape))
-
-    def sample(self, sample_shape=()):
-        with torch.no_grad():
-            return self.rsample(sample_shape)
+        logp = _normal_log_pdf(value) - self.log_Z
+        return sum_rightmost(logp, self.event_dims)
 
     def rsample(self, sample_shape=()):
-        shape = torch.Size([*sample_shape, *self.batch_shape, *self.event_shape])
-        u = torch.rand(shape, device=self.device)
-        v = self.low_cdf + self.pmf_z * u
-        return norm_qf(v) * self.norm.scale + self.norm.loc
+        shape = [*sample_shape, *self.batch_shape, *self.event_shape]
+        p = torch.empty(shape, device=self.low.device)
+        p.uniform_(self.eps, 1.0 - self.eps)
+        p = self.low_cdf + p * self.Z
+        return torch.special.ndtri(p.float())
+
+
+class TruncNormal(Affine):
+    def __init__(self, norm: Normal, low: Tensor | Number, high: Tensor | Number):
+        std_low = (low - norm.loc) / norm.scale
+        std_high = (high - norm.loc) / norm.scale
+        std_dist = TruncStdNormal(std_low, std_high, len(norm.event_shape))
+        super().__init__(std_dist, norm.loc, norm.scale, batched=True)

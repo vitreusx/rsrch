@@ -28,8 +28,8 @@ class BufferData:
     def __init__(
         self,
         capacity: int | None = None,
-        obs_space: spaces.np.Space | None = None,
-        act_space: spaces.np.Space | None = None,
+        obs_space: spaces.np.Array | None = None,
+        act_space: spaces.np.Array | None = None,
     ):
         self.capacity = capacity
         self.obs_space = obs_space

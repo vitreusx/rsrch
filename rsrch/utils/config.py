@@ -46,7 +46,7 @@ _items_as_attrs = False
 
 
 @contextmanager
-def enable_items_as_attrs():
+def node_item_mode():
     """Enable accessing mapping items via attr access."""
     global _items_as_attrs
     prev = _items_as_attrs
@@ -58,7 +58,7 @@ def enable_items_as_attrs():
 
 
 @contextmanager
-def disable_items_as_attrs():
+def node_attr_mode():
     """Disable accessing mapping items via attr access."""
     global _items_as_attrs
     prev = _items_as_attrs
@@ -75,7 +75,7 @@ class Template:
     A template is a string with expressions, denoted by opening `${` and closing `}`. These expressions can be replaced by their values using `render` function.
     """
 
-    EXPR = locatedExpr(pp.nested_expr("${", "}"))
+    EXPR = locatedExpr(pp.nestedExpr("${", "}"))
     EVAL_RE = r"((?P<resolver>[\w]+):)?(?P<expr>.*)"
 
     def __init__(self, text: str):
@@ -85,7 +85,7 @@ class Template:
         """Render a template, given a locals mapping."""
 
         exprs = []
-        for m in self.EXPR.search_string(self.text).as_list():
+        for m in self.EXPR.searchString(self.text).asList():
             beg, _, end = m[0]
             exprs.append((beg, end))
 
@@ -111,7 +111,7 @@ class Template:
         resolver = m["resolver"] or "eval"
         if resolver == "eval":
             locals_ = {"math": math, "np": np, **locals}
-            with enable_items_as_attrs():
+            with node_item_mode():
                 return eval(m["expr"], None, locals_)
         elif resolver == "env":
             return os.environ[m["expr"]]
@@ -126,7 +126,7 @@ class Node(MutableMapping):
     """A YAML node.
 
     A node behaves much like a list or a dict, except:
-    - One can access the subnodes via attribute access.
+    - One can access the subnodes via attribute access, if within `node_attr_mode` context.
     - All the templates are automatically rendered.
     """
 
@@ -169,7 +169,7 @@ class Node(MutableMapping):
             super().__delattr__(name)
 
     def __getitem__(self, key):
-        with disable_items_as_attrs():
+        with node_attr_mode():
             if isinstance(self.unwrapped, dict):
                 if key not in self:
                     self[key] = {}
@@ -188,7 +188,7 @@ class Node(MutableMapping):
         return key in self.unwrapped
 
     def __setitem__(self, key, value):
-        with disable_items_as_attrs():
+        with node_attr_mode():
             if isinstance(value, Node):
                 value = value.unwrapped
             self.unwrapped[key] = value
@@ -226,31 +226,63 @@ def render_all(cfg):
     return cfg
 
 
-def _use_preset(node_b: Node, preset, node_p: Node):
-    if not isinstance(preset, dict):
-        return preset
+def _use_preset(node_b, preset, node_p):
+    with node_attr_mode():
+        if not (
+            isinstance(node_b, Node)
+            and isinstance(node_b.unwrapped, dict)
+            and isinstance(node_p, Node)
+            and isinstance(node_p.unwrapped, dict)
+            and isinstance(preset, dict)
+        ):
+            return preset
 
-    for k, v in preset.items():
-        with disable_items_as_attrs():
+        if preset.get("$replace"):
+            # Usually, we recursively merge dicts. Sometimes, however, it's necessary to replace the target node entirely. We can indicate this via `$replace` key.
+            preset = {**preset}
+            del preset["$replace"]
+            return preset
+
+        for k, v in preset.items():
             k2 = Template(k).render({**node_b.scope, **node_p.scope})
-        with enable_items_as_attrs():
-            exec(f"node_b.{k2} = _use_preset(node_b.{k2}, v, node_p[k])")
+            with node_item_mode():
+                exec(f"node_b.{k2} = _use_preset(node_b.{k2}, v, node_p[k])")
 
     return node_b
 
 
-def use_preset(base: dict, preset: dict):
+def use_preset(base: dict, preset):
     node_b, node_p = Node(base), Node(preset)
     _use_preset(node_b, preset, node_p)
 
 
-def compose(base: dict, *presets: dict):
+def compose(base: dict, presets: list[dict]):
     base = {**base}
     for preset in presets:
         use_preset(base, preset)
     base = render_all(base)
     base = _hide_private(base)
     return base
+
+
+def find_by_path(d, key):
+    node = Node(d)
+    with node_item_mode():
+        r = eval(f"node.{key}")
+    if isinstance(r, Node):
+        r = r.unwrapped
+    return r
+
+
+def get_presets(all_presets: dict, names: list[str]):
+    r = []
+    for name in names:
+        preset = find_by_path(all_presets, name)
+        if "$extends" in preset:
+            r.extend(get_presets(all_presets, preset["$extends"]))
+            del preset["$extends"]
+        r.append(preset)
+    return r
 
 
 def _cast(x: Any, t: Type):
@@ -339,6 +371,7 @@ def cast(cfg: dict, typ: Type[T]) -> T:
 def cli(
     config_yml: str | Path,
     presets_yml: str | Path | None = None,
+    def_presets: list[str] | None = [],
 ):
     p = argparse.ArgumentParser()
     p.add_argument(
@@ -361,6 +394,7 @@ def cli(
             "--presets",
             type=str,
             nargs="+",
+            default=def_presets,
             help="List of presets to be used.",
         )
 
@@ -371,9 +405,7 @@ def cli(
     presets = []
     if presets_yml is not None:
         all_presets = open(args.presets_file)
-        for name in args.presets:
-            preset = eval(f"Node(all_presets).{name}")
-            presets.append(preset)
+        presets.extend(get_presets(all_presets, args.presets))
 
     idx = 0
     while idx < len(unk):
@@ -391,7 +423,7 @@ def cli(
         else:
             idx += 1
 
-    return compose(base, *presets)
+    return compose(base, presets)
 
 
 __all__ = ["compose", "cast", "cli"]

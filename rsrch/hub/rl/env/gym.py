@@ -56,7 +56,7 @@ class Factory(base.Factory):
         else:
             raise ValueError(type(space))
 
-    def _infer_space(self, orig: spaces.np.Space, x: Tensor):
+    def _infer_space(self, orig: spaces.np.Array, x: Tensor):
         if type(orig) == spaces.np.Image:
             return spaces.torch.Image(x.shape, x.dtype, x.device)
         elif type(orig) == spaces.np.Discrete:

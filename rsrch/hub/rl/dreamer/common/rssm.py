@@ -12,6 +12,7 @@ from rsrch import spaces
 from rsrch.nn.utils import over_seq, pass_gradient, safe_mode
 from rsrch.types import Tensorlike
 
+from ..common.utils import tf_init
 from . import dh, nets
 
 
@@ -135,6 +136,8 @@ class GenericRSSM(nn.Module):
         self.register_buffer("deter0", torch.zeros(self.deter_size))
         self.register_buffer("stoch0", torch.zeros(self.stoch_size))
 
+        self.apply(tf_init)
+
     def _stoch_ctor(self, cfg: dict):
         cfg = {**cfg}
         typ = cfg["type"]
@@ -146,7 +149,7 @@ class GenericRSSM(nn.Module):
                 space = spaces.torch.TokenSeq(**cfg)
                 return dh.Discrete(layer_ctor, space)
             elif typ == "normal":
-                space = spaces.torch.Space((cfg["size"],))
+                space = spaces.torch.Tensor((cfg["size"],))
                 del cfg["size"]
                 return dh.Normal(layer_ctor, space, **cfg)
 
@@ -257,6 +260,8 @@ class OptRSSM(nn.Module):
 
         self.register_buffer("deter0", torch.zeros(self.deter_size))
         self.register_buffer("stoch0", torch.zeros(self.stoch_size))
+
+        self.apply(tf_init)
 
     @torch.jit.ignore
     def initial(self):
