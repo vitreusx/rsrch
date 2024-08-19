@@ -2,7 +2,7 @@ atari:
   base:
     env:
       type: atari
-      atari.env_id: Pong-v5
+      atari.env_id: Alien-v5
     wm.dreamer:
       rssm:
         deter_size: 600
@@ -16,6 +16,7 @@ atari:
       actor_grad: reinforce
       opt.actor.lr: 4e-5
       opt.critic.lr: 1e-4
+
   small:
     _vars:
       conv.depth: 32
@@ -25,24 +26,24 @@ atari:
         deter_size: 448
         hidden_size: 448
         stoch: { num_tokens: 24, vocab_size: 32 }
+
   train:
-    _opt_freq: 64
+    _opt_period: 64
     train:
       val_frac: 0.1
     stages:
       - env_rollout:
-          until: 200e3
+          until: ${2e3 * _opt_period}
           mode: rand
       - train_loop:
-          until: 200e6
+          until: ${1e5 * _opt_period}
           tasks:
             - do_opt_step: ~
-              every: ${_opt_freq}
-            - save_ckpt: ~
-              every: 1e6
+              every: ${_opt_period}
             - do_env_step
             - val_epoch: ~
-              every: 100e3
+              every: { n: 2e3, of: wm_opt_step }
+
   sample:
     _ckpt_dir: runs/dreamerv2/Pong-v5__2024-07-29_12-17-06/ckpts
     stages:
@@ -52,6 +53,7 @@ atari:
           until: 400e3
           mode: train
       - save_data: ~
+
   sample_layered:
     _ckpt_dir: runs/dreamerv2/Pong-v5__2024-07-29_12-17-06/ckpts
     stages:
@@ -87,6 +89,7 @@ atari:
       - env_rollout:
           until: 800e3
       - save_data: ~
+
   offline:
     def_step: wm_opt_step
     stages:
@@ -127,19 +130,6 @@ dmc:
       opt.critic.lr: 8e-5
       actor_ent: 1e-4
     train.dataset.prioritize_ends: false
-    stages:
-      - env_rollout:
-          until: 10e3 # 2e3
-          mode: rand
-      - train_loop:
-          until: { n: 100, of: wm_opt_step }
-          tasks: [do_opt_step]
-      - train_loop:
-          until: 100e6
-          tasks:
-            - do_opt_step: ~
-              every: { n: 5, of: agent_step }
-            - do_env_step
 
   proprio:
     env:
@@ -160,10 +150,42 @@ dmc:
         frame_skip: 2
         render_size: [64, 64]
 
+  train:
+    stages:
+      - env_rollout:
+          until: 10e3 # 2e3
+          mode: rand
+      - train_loop:
+          until: { n: 100, of: wm_opt_step }
+          tasks: [do_opt_step]
+      - train_loop:
+          until: 100e6
+          tasks:
+            - do_opt_step: ~
+              every: { n: 5, of: agent_step }
+            - do_env_step
+
+  train_reset:
+    stages:
+      - env_rollout:
+          until: 10e3
+          mode: rand
+      - train_loop:
+          until: 100e6
+          tasks:
+            - do_opt_step: { n: 2 }
+              every: { n: 1, of: agent_step }
+            - do_periodic_reset: ~
+              every: { n: 2.56e6, of: wm_opt_step }
+            - do_env_step
+
 default:
-  # $extends: [atari.base, atari.train]
+  $extends: [atari.base, atari.train]
   # $extends: [dmc.base, dmc.vision]
-  $extends: [dmc.base, dmc.proprio]
+  # $extends: [dmc.base, dmc.proprio, dmc.train]
+  # $extends: [dmc.base, dmc.proprio, dmc.train]
+
   # debug.detect_anomaly: true
   # wm.dreamer.rssm.jit: false
   # extras.discrete_actions: 8
+  # profile.enabled: true

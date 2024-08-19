@@ -1,5 +1,7 @@
+from contextlib import contextmanager
 from copy import copy
 from dataclasses import dataclass
+from functools import cached_property
 from typing import Literal
 
 import numpy as np
@@ -8,24 +10,32 @@ from torch import Tensor, nn
 
 import rsrch.distributions as D
 from rsrch import spaces
+from rsrch._future.rl import gym
 from rsrch.nn.utils import over_seq, safe_mode
 
 from ..common import nets, rssm
 from ..common.trainer import TrainerBase
-from ..common.utils import find_class, tf_init
+from ..common.utils import autocast, find_class, tf_init
 
 
 @dataclass
 class Config:
+    @dataclass
+    class KL:
+        forward: bool
+        balance: float
+        free: float
+        free_avg: bool
+
     encoder: dict
     decoders: dict
     rssm: rssm.Config
     opt: dict
-    coef: dict
+    coef: dict[str, float]
     clip_grad: float | None
     reward_fn: Literal["id", "clip", "tanh", "sign"]
     clip_rew: tuple[float, float] | None
-    kl: dict
+    kl: KL
 
 
 class WorldModel(nn.Module):
@@ -65,20 +75,9 @@ class WorldModel(nn.Module):
             **self.cfg.decoders["reward"],
         )
         self.term_dec = self._make_decoder(
-            space=spaces.torch.Discrete(2),
+            space=spaces.torch.Discrete(2, dtype=torch.bool),
             **self.cfg.decoders["term"],
         )
-
-        spaces_ = {
-            "obs": obs_space,
-            "reward": rew_space,
-            "term": spaces.torch.Discrete(2),
-        }
-
-        self.decoders = nn.ModuleDict()
-        for key in spaces_:
-            dec = self._make_decoder(spaces_[key], **self.cfg.decoders[key])
-            self.decoders[key] = dec
 
         self.apply(tf_init)
 
@@ -161,7 +160,7 @@ class Trainer(TrainerBase):
             mets["prior_ent"] = prior.detach().entropy().mean()
             mets["post_ent"] = post.detach().entropy().mean()
 
-            kl_loss, kl_value = self._kl_loss(post, prior, **self.cfg.kl)
+            kl_loss, kl_value = self._kl_loss(post, prior, **vars(self.cfg.kl))
             losses["kl"] = kl_loss
             mets["kl_value"] = kl_value.detach().mean()
 
@@ -224,3 +223,52 @@ class Trainer(TrainerBase):
 
 
 AsTensor = rssm.AsTensor
+
+
+class Agent(gym.VecAgentWrapper):
+    def __init__(
+        self,
+        agent: gym.VecAgent,
+        wm: WorldModel,
+        compute_dtype: torch.dtype | None = None,
+    ):
+        super().__init__(agent)
+        self.wm = wm
+        self.compute_dtype = compute_dtype
+        self._state = None
+
+    @cached_property
+    def device(self):
+        return next(self.wm.parameters()).device
+
+    @contextmanager
+    def compute_ctx(self):
+        if self.wm.training:
+            self.wm.eval()
+
+        with torch.no_grad():
+            with autocast(self.device, self.compute_dtype):
+                yield
+
+    def reset(self, idxes, obs):
+        obs = obs.to(self.device)
+        with self.compute_ctx():
+            state = self.wm.reset(obs)
+        super().reset(idxes, state)
+        if self._state is None:
+            self._state = state.clone()
+        else:
+            self._state[idxes] = state.type_as(self._state)
+
+    def policy(self, idxes):
+        enc_act = super().policy(idxes)
+        act = self.wm.act_enc.inverse(enc_act)
+        return act
+
+    def step(self, idxes, act: Tensor, next_obs: Tensor):
+        act, next_obs = act.to(self.device), next_obs.to(self.device)
+        with self.compute_ctx():
+            state = self.wm.step(self._state[idxes], act, next_obs)
+        state = state.type_as(self._state)
+        super().step(idxes, act, state)
+        self._state[idxes] = state

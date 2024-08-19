@@ -70,15 +70,17 @@ class TrainerBase:
                 dtype=self.compute_dtype,
             )
 
-    def opt_step(self, loss: torch.Tensor, mtx: Lock | None = None):
+    def opt_step(self, loss: torch.Tensor, lock: Lock | None = None):
         self.opt.zero_grad(set_to_none=True)
         self.scaler.scale(loss).backward()
         self.scaler.unscale_(self.opt)
         if self.clip_grad is not None:
             nn.utils.clip_grad_norm_(self.parameters, max_norm=self.clip_grad)
-        if mtx is not None:
-            with mtx:
+
+        if lock is not None:
+            with lock:
                 self.scaler.step(self.opt)
         else:
             self.scaler.step(self.opt)
+
         self.scaler.update()

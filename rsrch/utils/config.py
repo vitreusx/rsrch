@@ -3,18 +3,17 @@ import io
 import math
 import os
 import re
-import types
-import typing
 from collections.abc import MutableMapping
 from contextlib import contextmanager
-from dataclasses import fields, is_dataclass
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable, ParamSpec, Type, TypeVar, get_args, get_origin
+from typing import TypeVar
 
 import numpy as np
 import pyparsing as pp
 from ruamel.yaml import YAML
+
+from .cast import cast
 
 yaml = YAML(typ="safe", pure=True)
 
@@ -285,68 +284,7 @@ def get_presets(all_presets: dict, names: list[str]):
     return r
 
 
-def _cast(x: Any, t: Type):
-    t_args = get_args(t)
-    t = get_origin(t) or t
-
-    if t == Any:
-        return x
-    elif t in (None, type(None)):
-        if x is not None:
-            raise ValueError(f"Cannot cast {x} to None.")
-        return None
-    elif is_dataclass(t):
-        args = {}
-        field_map = {field.name: field for field in fields(t)}
-
-        for name in x:
-            field = field_map[name]
-            field_t = field.type
-            if isinstance(field_t, str):
-                field_t = eval(field_t)
-            args[field.name] = _cast(x[field.name], field_t)
-
-        return t(**args)
-    elif t in (typing.Union, typing.Optional, types.UnionType):
-        for ti in t_args:
-            ti_ = get_origin(ti) or ti
-            if isinstance(ti_, type) and isinstance(x, ti_):
-                return x
-        for ti in t_args:
-            try:
-                return _cast(x, ti)
-            except:
-                pass
-        raise ValueError(f"None of the variant types {t_args} match value {x}")
-    elif t in (typing.Tuple, tuple):
-        return tuple([_cast(xi, ti) for xi, ti in zip(x, t_args)])
-    elif t in (typing.List, typing.Set, list, set):
-        elem_t = t_args[0]
-        return t([_cast(xi, elem_t) for xi in x])
-    elif t in (typing.Dict, dict):
-        if len(t_args) > 0:
-            kt, vt = t_args
-        else:
-            kt, vt = Any, Any
-        return {_cast(k, kt): _cast(xi, vt) for k, xi in x.items()}
-    elif t in (typing.Literal,):
-        # For Literals, check if the value is one of the allowed values.
-        if x not in t_args:
-            raise ValueError(x)
-        return x
-    elif t == bool and isinstance(x, str):
-        x = x.lower()
-        if x in ("0", "f", "false", "n", "no"):
-            return False
-        elif x in ("1", "t", "true", "y", "yes"):
-            return True
-        else:
-            raise ValueError(f"Cannot interpret {x} as bool")
-    else:
-        return x if isinstance(t, type) and isinstance(x, t) else t(x)
-
-
-def _hide_private(x: Any):
+def _hide_private(x):
     if isinstance(x, dict):
         r = {}
         for k, v in x.items():
@@ -363,11 +301,6 @@ def _hide_private(x: Any):
 T = TypeVar("T")
 
 
-def cast(cfg: dict, typ: Type[T]) -> T:
-    cfg = _hide_private(cfg)
-    return _cast(cfg, typ)
-
-
 def cli(
     config_yml: str | Path,
     presets_yml: str | Path | None = None,
@@ -380,6 +313,11 @@ def cli(
         type=Path,
         default=Path(config_yml),
         help="Path to config.yml file with default config values.",
+    )
+    p.add_argument(
+        "-o",
+        "--overrides",
+        help="Manual overrides, in the form of a preset.",
     )
     if presets_yml is not None:
         p.add_argument(
@@ -398,7 +336,7 @@ def cli(
             help="List of presets to be used.",
         )
 
-    args, unk = p.parse_known_args()
+    args = p.parse_args()
 
     base = open(args.config_file)
 
@@ -407,21 +345,9 @@ def cli(
         all_presets = open(args.presets_file)
         presets.extend(get_presets(all_presets, args.presets))
 
-    idx = 0
-    while idx < len(unk):
-        val = unk[idx]
-        if val.startswith("--"):
-            key = val.removeprefix("--")
-            stop = idx + 1
-            while stop < len(unk) and not unk[stop].startswith("--"):
-                stop += 1
-            vals = val[idx + 1 : stop]
-            if len(vals) == 1:
-                vals = vals[0]
-            presets.append({key: vals})
-            idx = stop
-        else:
-            idx += 1
+    if args.overrides is not None:
+        overrides = load(args.overrides)
+        presets.append(overrides)
 
     return compose(base, presets)
 

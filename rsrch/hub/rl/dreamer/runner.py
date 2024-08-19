@@ -2,6 +2,7 @@ import concurrent.futures
 import logging
 import lzma
 import pickle
+import tempfile
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from itertools import islice
@@ -16,16 +17,17 @@ from torch import Tensor, nn
 from tqdm import tqdm
 
 from rsrch._future import rl
-from rsrch.exp import Experiment, timestamp, timestamp2
+from rsrch.exp import Experiment
 from rsrch.exp.board.tensorboard import Tensorboard
 from rsrch.exp.profile import Profiler
 from rsrch.nn.utils import over_seq
-from rsrch.types.tensorlike.core import Tensorlike
 from rsrch.utils import cron, repro
 from rsrch.utils.early_stop import EarlyStopping
 
-from . import agent, data
+from . import data
 from .actor import ref, sac
+from .agent import Agent
+from .agent import Config as AgentConfig
 from .common.utils import autocast
 from .wm import dreamer
 
@@ -86,7 +88,7 @@ class Config:
     env: rl.sdk.Config
     wm: WM
     ac: Actor
-    agent: agent.Config
+    agent: AgentConfig
     train: Train
 
     stages: list[dict | str]
@@ -125,13 +127,14 @@ class Runner:
             torch.autograd.set_detect_anomaly(True)
 
         self.sdk = rl.sdk.make(self.cfg.env)
+
         if not self.sdk.act_space.dtype.is_floating_point:
             n = self.cfg.extras.discrete_actions
             if n is not None:
                 self.sdk = rl.sdk.wrappers.DiscreteActions(self.sdk, n=n)
 
         self.exp = Experiment(
-            project="dreamerv2",
+            project="dreamer",
             prefix=self.sdk.id,
             config=asdict(self.cfg),
         )
@@ -140,6 +143,64 @@ class Runner:
         self.exp.boards.append(board)
         self.exp.set_as_default(self.cfg.def_step)
 
+        self._setup_nets()
+
+        self.fwd_mtx = Lock()
+
+        if self.cfg.profile.enabled:
+            cfg = self.cfg.profile
+            self._prof = Profiler(
+                device=self.device,
+                traces_dir=self.exp.dir / "traces",
+                schedule=cfg.schedule,
+            )
+            for name in cfg.functions:
+                f = self._prof.profiled(getattr(self, name))
+                setattr(self, name, f)
+
+        self.buf = rl.data.Buffer()
+        self.buf_mtx = Lock()
+
+        self.envs = self.sdk.make_envs(
+            self.cfg.train.num_envs,
+            mode="train",
+        )
+
+        self.agent = self._make_agent("train")
+
+        self.env_iter = iter(self.sdk.rollout(self.envs, self.agent))
+        self._ep_ids = defaultdict(lambda: None)
+        self._ep_rets = defaultdict(lambda: 0.0)
+        self._env_steps = defaultdict(lambda: 0)
+
+        self.env_step = 0
+        self.exp.register_step("env_step", lambda: self.env_step)
+        self.agent_step = 0
+        self.exp.register_step("agent_step", lambda: self.agent_step)
+
+        self.val_envs = self.sdk.make_envs(self.cfg.val_envs, mode="val")
+        self.val_agent = self._make_agent("val")
+
+    def _make_agent(self, mode: Literal["train", "val"]):
+        agent = ref.Agent(
+            self.actor,
+            sample=(mode == "train"),
+            compute_dtype=self.compute_dtype,
+        )
+        agent = dreamer.Agent(
+            agent,
+            self.wm,
+            compute_dtype=self.compute_dtype,
+        )
+        agent = Agent(
+            agent,
+            self.sdk.act_space,
+            self.cfg.agent,
+            mode=mode,
+        )
+        return agent
+
+    def _setup_nets(self):
         if self.cfg.wm.type == "dreamer":
             wm = dreamer
             wm_cfg = self.cfg.wm.dreamer
@@ -168,55 +229,6 @@ class Runner:
             )
 
         self.actor = self.actor.to(self.device)
-
-        self.fwd_mtx = Lock()
-
-        if self.cfg.profile.enabled:
-            cfg = self.cfg.profile
-            self._prof = Profiler(
-                device=self.device,
-                traces_dir=self.exp.dir / "traces",
-                schedule=cfg.schedule,
-            )
-            for name in cfg.functions:
-                f = self._prof.profiled(getattr(self, name))
-                setattr(self, name, f)
-
-        self.buf = rl.data.Buffer()
-        self.buf_mtx = Lock()
-
-        self.envs = self.sdk.make_envs(
-            self.cfg.train.num_envs,
-            mode="train",
-        )
-        self.agent = agent.Agent(
-            actor=self.actor,
-            wm=self.wm,
-            cfg=self.cfg.agent,
-            act_space=self.sdk.act_space,
-            mode="train",
-            compute_dtype=self.compute_dtype,
-        )
-
-        self.env_iter = iter(self.sdk.rollout(self.envs, self.agent))
-        self._ep_ids = defaultdict(lambda: None)
-        self._ep_rets = defaultdict(lambda: 0.0)
-        self._env_steps = defaultdict(lambda: 0)
-
-        self.env_step = 0
-        self.exp.register_step("env_step", lambda: self.env_step)
-        self.agent_step = 0
-        self.exp.register_step("agent_step", lambda: self.agent_step)
-
-        self.val_envs = self.sdk.make_envs(self.cfg.val_envs, mode="val")
-        self.val_agent = agent.Agent(
-            self.actor,
-            self.wm,
-            self.cfg.agent,
-            self.sdk.act_space,
-            mode="eval",
-            compute_dtype=self.compute_dtype,
-        )
 
     def _get_until_params(self, cfg: dict | str):
         if isinstance(cfg, dict):
@@ -323,6 +335,12 @@ class Runner:
             drop_last=False,
         )
 
+        self._setup_trainers()
+
+        self.ac_opt_step = 0
+        self.exp.register_step("ac_opt_step", lambda: self.ac_opt_step)
+
+    def _setup_trainers(self):
         wm_type = self.cfg.wm.type
         if wm_type == "dreamer":
             wm = dreamer
@@ -361,9 +379,6 @@ class Runner:
                 return vf
 
             self.ac_trainer.setup(self.actor, make_vf)
-
-        self.ac_opt_step = 0
-        self.exp.register_step("ac_opt_step", lambda: self.ac_opt_step)
 
     def save_data(self, tag: str | None = None):
         if tag is None:
@@ -428,7 +443,7 @@ class Runner:
 
         self.exp.log(logging.INFO, f"Loaded checkpoint from: {str(path)}")
 
-    def env_rollout(self, until, mode="train"):
+    def env_rollout(self, until, mode: str = "train"):
         should_do = self._make_until(until)
 
         pbar = self._make_pbar("Env rollout", until)
@@ -626,12 +641,12 @@ class Runner:
 
         return states, actions, reward, term_
 
-    def val_epoch(self, limit=None):
-        wm_loss = self.do_wm_val_epoch(limit)
+    def val_epoch(self, max_batches=None):
+        wm_loss = self.do_wm_val_epoch(max_batches)
         if wm_loss is not None:
             self.exp.add_scalar("wm/val_loss", wm_loss, step="wm_opt_step")
 
-        ac_loss = self.do_ac_val_epoch(limit)
+        ac_loss = self.do_ac_val_epoch(max_batches)
         if ac_loss is not None:
             self.exp.add_scalar("ac/val_loss", ac_loss, step="ac_opt_step")
 
@@ -650,38 +665,46 @@ class Runner:
 
         self.exp.add_scalar("val/mean_ep_ret", np.mean(all_rets))
 
-    def train_wm(self, early_stop, val_every, val_limit=None):
-        should_stop = EarlyStopping(**early_stop)
+    def train_wm(self, stop_criteria, val_every, max_val_batches=None):
+        should_stop = EarlyStopping(**stop_criteria)
         should_val = cron.Every(lambda: self.wm_opt_step, val_every)
 
-        best_loss, best_state = np.inf, None
+        best_loss = np.inf
+        best_ckpt = tempfile.mktemp(suffix=".pth")
 
         while True:
             if should_val:
-                val_loss = self.do_wm_val_epoch(val_limit)
+                val_loss = self.do_wm_val_epoch(max_val_batches)
                 self.exp.add_scalar("wm/val_loss", val_loss, step="wm_opt_step")
 
                 if val_loss < best_loss:
                     best_loss = val_loss
-                    best_state = {
-                        "wm": self.wm.state_dict(),
-                        "wm_trainer": self.wm_trainer.save(),
-                    }
+                    torch.save(
+                        {
+                            "wm": self.wm.state_dict(),
+                            "wm_trainer": self.wm_trainer.save(),
+                        },
+                        best_ckpt,
+                    )
 
                 if should_stop(val_loss, self.wm_opt_step):
                     break
 
             self.do_wm_opt_step()
 
-        self.wm.load_state_dict(best_state["wm"])
-        self.wm_trainer.load(best_state["wm_trainer"])
+        with open(best_ckpt, "rb") as f:
+            best_state = torch.load(f, map_location="cpu")
+            self.wm.load_state_dict(best_state["wm"])
+            self.wm_trainer.load(best_state["wm_trainer"])
+
+        Path(best_ckpt).unlink()
 
     @torch.no_grad()
-    def do_wm_val_epoch(self, limit=None):
+    def do_wm_val_epoch(self, max_batches=None):
         val_loss, val_n = 0.0, 0
 
         self.val_ds.states.clear()
-        val_iter = iter(islice(self.val_loader, 0, limit))
+        val_iter = iter(islice(self.val_loader, 0, max_batches))
 
         while True:
             with self.buf_mtx:

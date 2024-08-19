@@ -71,8 +71,7 @@ class MSEProxy(nn.Module):
     def forward(self, input: Tensor):
         value: Tensor = self.layer(input)
         value = value.reshape(-1, *self.space.shape)
-        return D.Normal(value, 1.0, self._event_dims)
-        # return D.MSEProxy(value, self._event_dims)
+        return D.MSEProxy(value, self._event_dims)
 
 
 class Bernoulli(nn.Module):
@@ -99,13 +98,13 @@ class Categorical(nn.Module):
     ):
         super().__init__()
         self.space = space
-
-        self.layer = layer_ctor(space.n)
+        self.vocab_size = int(space.n)
+        self.layer = layer_ctor(self.vocab_size)
         self._event_dims = len(space.shape)
 
     def forward(self, input: Tensor):
         logits: Tensor = self.layer(input)
-        logits = logits.reshape(-1, self.space.n)
+        logits = logits.reshape(-1, self.vocab_size)
         return D.Categorical(logits=logits, event_dims=self._event_dims)
 
 
@@ -117,11 +116,12 @@ class OneHot(nn.Module):
     ):
         super().__init__()
         self.space = space
-        self.layer = layer_ctor(space.n)
+        self.vocab_size = int(space.n)
+        self.layer = layer_ctor(self.vocab_size)
 
     def forward(self, input: Tensor):
         logits: Tensor = self.layer(input)
-        logits = logits.reshape(-1, self.space.n)
+        logits = logits.reshape(-1, self.vocab_size)
         return D.OneHot(logits=logits)
 
 

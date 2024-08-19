@@ -1,6 +1,6 @@
 import math
 from functools import partial
-from typing import Callable, Iterable, Literal
+from typing import Literal
 
 import torch
 import torch.nn.functional as F
@@ -399,7 +399,7 @@ class ActionEncoder(nn.Module):
             act = F.one_hot(act, self.act_space.n)
         elif isinstance(self.act_space, spaces.torch.TokenSeq):
             act = F.one_hot(act, self.act_space.vocab_size)
-        return act.flatten(1)
+        return act.flatten(1).float()
 
     def inverse(self, act: Tensor):
         if isinstance(self.act_space, spaces.torch.Discrete):

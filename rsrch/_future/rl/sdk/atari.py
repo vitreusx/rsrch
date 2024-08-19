@@ -189,7 +189,7 @@ class VecAgentWrapper(gym.VecAgent):
 
     def policy(self, idxes):
         act: torch.Tensor = self.agent.policy(idxes)
-        return act.numpy()
+        return act.cpu().numpy()
 
     def step(self, idxes, act, next_obs):
         act = torch.as_tensor(np.stack(act), dtype=torch.long)

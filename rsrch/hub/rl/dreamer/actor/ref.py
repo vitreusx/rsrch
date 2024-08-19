@@ -1,4 +1,6 @@
+from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import cached_property
 from typing import Any, Callable, Literal
 
 import torch
@@ -6,13 +8,14 @@ from torch import Tensor, nn
 
 import rsrch.distributions as D
 from rsrch import spaces
+from rsrch._future.rl import gym
 from rsrch.nn.utils import over_seq
 from rsrch.rl.utils import polyak
 from rsrch.utils import sched
 
 from ..common import nets
 from ..common.trainer import TrainerBase
-from ..common.utils import find_class, null_ctx, tf_init
+from ..common.utils import autocast, find_class, null_ctx, tf_init
 
 
 @dataclass
@@ -216,3 +219,48 @@ class Trainer(TrainerBase):
             loss = sum(coef.get(k, 1.0) * v for k, v in losses.items())
 
         return loss, mets
+
+
+class Agent(gym.VecAgent):
+    def __init__(
+        self,
+        actor: Actor,
+        sample: bool = True,
+        compute_dtype: torch.dtype | None = None,
+    ):
+        super().__init__()
+        self.actor = actor
+        self.sample = sample
+        self.compute_dtype = compute_dtype
+        self._obs = None
+
+    @cached_property
+    def device(self):
+        return next(self.actor.parameters()).device
+
+    @contextmanager
+    def compute_ctx(self):
+        if self.actor.training:
+            self.actor.eval()
+
+        with torch.no_grad():
+            with autocast(self.device, self.compute_dtype):
+                yield
+
+    def reset(self, idxes, obs: Tensor):
+        obs = obs.to(self.device)
+        if self._obs is None:
+            self._obs = obs
+        else:
+            self._obs[idxes] = obs.type_as(self._obs)
+
+    def policy(self, idxes):
+        policy: D.Distribution = self.actor(self._obs[idxes])
+        if self.sample:
+            return policy.sample()
+        else:
+            return policy.mode
+
+    def step(self, idxes, act: Tensor, next_obs: Tensor):
+        next_obs = next_obs.to(self.device)
+        self._obs[idxes] = next_obs
