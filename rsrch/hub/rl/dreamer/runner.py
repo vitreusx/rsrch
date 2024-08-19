@@ -35,6 +35,11 @@ from .wm import dreamer
 @dataclass
 class Config:
     @dataclass
+    class Run:
+        prefix: str | None = None
+        no_ansi: bool = False
+
+    @dataclass
     class Debug:
         deterministic: bool
         detect_anomaly: bool
@@ -76,6 +81,7 @@ class Config:
     class Extras:
         discrete_actions: int | None = None
 
+    run: Run
     seed: int
     device: str
     compute_dtype: Literal["float16", "float32"]
@@ -133,10 +139,15 @@ class Runner:
             if n is not None:
                 self.sdk = rl.sdk.wrappers.DiscreteActions(self.sdk, n=n)
 
+        prefix = self.sdk.id
+        if self.cfg.run.prefix is not None:
+            prefix = self.cfg.run.prefix
+
         self.exp = Experiment(
             project="dreamer",
-            prefix=self.sdk.id,
+            prefix=prefix,
             config=asdict(self.cfg),
+            no_ansi=self.cfg.run.no_ansi,
         )
 
         board = Tensorboard(dir=self.exp.dir / "board", min_delay=1e-1)

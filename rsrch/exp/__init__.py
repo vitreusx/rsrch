@@ -56,8 +56,10 @@ class Experiment:
         prefix: str | None = None,
         config: dict | None = None,
         create_commit: bool = True,
+        no_ansi: bool = False,
     ):
         self.project = project
+        self.no_ansi = no_ansi
 
         day, time = timestamp2()
         if prefix is None:
@@ -73,6 +75,7 @@ class Experiment:
             extra_handlers=[
                 (logging.FileHandler(self.dir / "log.txt"), logging.DEBUG),
             ],
+            no_ansi=self.no_ansi,
         )
         self.logger = logging.getLogger(project)
         self.boards: list[Board] = []
@@ -98,7 +101,20 @@ class Experiment:
             yaml.dump(info, f)
             self.log("INFO", f"Saved extra info to: {self.dir / 'info.yml'}")
 
-        self.pbar = partial_typed(tqdm, dynamic_ncols=True)
+        self.pbar = self._make_pbar()
+
+    def _make_pbar(self):
+        # If non-interactive, we still keep the progress bar, but update it only every 30 seconds to prevent unnecessarily polluting logs with progress updates.
+        interactive = not self.no_ansi and (sys.stderr.isatty())
+        mininterval = 0.1 if interactive else 30.0
+        maxinterval = 30.0
+
+        return partial(
+            tqdm,
+            dynamic_ncols=True,
+            mininterval=mininterval,
+            maxinterval=maxinterval,
+        )
 
     def register_step(self, name: str, value_fn, default=False):
         for board in self.boards:

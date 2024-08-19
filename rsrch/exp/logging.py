@@ -30,6 +30,7 @@ class ColorFormatter(Formatter):
 def setup(
     level: int = INFO,
     extra_handlers: list[tuple[Handler, int]] = [],
+    no_ansi: bool = False,
 ):
     logger = getLogger()
     logger.setLevel(DEBUG)
@@ -43,7 +44,8 @@ def setup(
         logger.addHandler(handler)
 
     for handler in logger.handlers:
-        if hasattr(handler, "stream") and handler.stream.isatty():
+        interactive = hasattr(handler, "stream") and handler.stream.isatty()
+        if interactive and not no_ansi:
             fmt = "%(name)-13s: %(color_on)s%(levelname)-8s%(color_off)s %(message)s"
             formatter = ColorFormatter(fmt)
         else:

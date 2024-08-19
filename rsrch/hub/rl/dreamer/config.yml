@@ -16,6 +16,11 @@ _:
     layers: 4
     act: ${_.act}
     norm: ${_.norm}
+
+run:
+  prefix: ~
+  no_ansi: false
+
 seed: 42
 device: cuda
 compute_dtype: float16
