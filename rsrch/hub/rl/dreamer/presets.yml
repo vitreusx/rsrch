@@ -34,6 +34,20 @@ atari:
               every: ${_freq}
             - do_env_step
 
+  test_sr:
+    stages:
+      - env_rollout:
+          until: 25e3
+          mode: rand
+      - train_loop:
+          until: 250e3
+          tasks:
+            - do_periodic_reset: ~
+              every: 25e3
+            - do_opt_step: ~
+              every: 64
+            - do_env_step
+
   train_sr:
     _freq: 64
     train:
@@ -51,18 +65,6 @@ atari:
               every: { n: 5e3, of: wm_opt_step }
             - do_opt_step: ~
               every: ${_freq}
-            - do_env_step
-
-  repro_test:
-    stages:
-      - env_rollout:
-          until: 25e3
-          mode: rand
-      - train_loop:
-          until: 100e3
-          tasks:
-            - do_opt_step: ~
-              every: 64
             - do_env_step
 
 dmc:
@@ -125,7 +127,7 @@ dmc:
             - do_env_step
 
 default:
-  $extends: [atari.base, atari.repro_test]
+  $extends: [atari.base, atari.test_sr]
 
   # debug.detect_anomaly: true
   # wm.dreamer.rssm.jit: false

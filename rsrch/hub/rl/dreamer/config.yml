@@ -29,7 +29,6 @@ device: cuda
 compute_dtype: float16
 def_step: env_step
 debug:
-  deterministic: false
   detect_anomaly: false
 profile:
   enabled: false

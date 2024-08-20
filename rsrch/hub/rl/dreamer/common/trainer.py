@@ -15,7 +15,7 @@ class TrainerBase:
     ):
         self.clip_grad = clip_grad
         self.compute_dtype = compute_dtype
-        self.modules: set[nn.Module] = set()
+        self.modules: list[nn.Module] = []
 
         self.parameters: list[nn.Parameter]
         self.opt: torch.optim.Optimizer
@@ -23,13 +23,10 @@ class TrainerBase:
     def __setattr__(self, name, value):
         super().__setattr__(name, value)
         if isinstance(value, nn.Module):
-            self.modules.add(value)
+            self.modules.append(value)
 
     def __delattr__(self, name):
-        value = getattr(self, name)
-        if isinstance(value, nn.Module):
-            self.modules.remove(value)
-        super().__delattr__(name)
+        raise RuntimeError("Deleting attributes of a Trainer is not allowed.")
 
     @cached_property
     def device(self):

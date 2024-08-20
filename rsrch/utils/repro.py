@@ -12,7 +12,7 @@ def seed_all(seed: int):
     np.random.seed(seed)
 
 
-def set_fully_deterministic(mode=True):
+def set_fully_deterministic(mode: bool):
     torch.backends.cudnn.benchmark = not mode
     torch.use_deterministic_algorithms(mode)
     if mode:

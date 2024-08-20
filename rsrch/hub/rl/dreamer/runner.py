@@ -22,6 +22,7 @@ from rsrch.exp import Experiment
 from rsrch.exp.board.tensorboard import Tensorboard
 from rsrch.exp.profile import Profiler
 from rsrch.nn.utils import over_seq
+from rsrch.rl.utils import polyak
 from rsrch.utils import cron, repro
 from rsrch.utils.early_stop import EarlyStopping
 
@@ -145,7 +146,7 @@ class Runner:
     def _setup_common(self):
         repro.seed_all(self.cfg.repro.seed)
         if self.cfg.repro.determinism == "full":
-            repro.set_fully_deterministic()
+            repro.set_fully_deterministic(True)
 
         self.device = torch.device(self.cfg.device)
         self.compute_dtype = getattr(torch, self.cfg.compute_dtype)
@@ -178,8 +179,6 @@ class Runner:
 
         self.wm, self.actor = self._make_nets()
 
-        self.fwd_mtx = Lock()
-
         if self.cfg.profile.enabled:
             cfg = self.cfg.profile
             self._prof = Profiler(
@@ -192,6 +191,7 @@ class Runner:
                 setattr(self, name, f)
 
         self.buf = rl.data.Buffer()
+
         self.buf_mtx = Lock()
 
         self.envs = self.sdk.make_envs(
@@ -199,7 +199,7 @@ class Runner:
             mode="train",
         )
 
-        self.agent = self._make_agent("train")
+        self.agent = self._make_agent(mode="train")
 
         self.env_iter = iter(self.sdk.rollout(self.envs, self.agent))
         self._ep_ids = defaultdict(lambda: None)
@@ -212,7 +212,45 @@ class Runner:
         self.exp.register_step("agent_step", lambda: self.agent_step)
 
         self.val_envs = self.sdk.make_envs(self.cfg.val_envs, mode="val")
-        self.val_agent = self._make_agent("val")
+        self.val_agent = self._make_agent(mode="val")
+
+    def _make_nets(self):
+        wm_type = self.cfg.wm.type
+        if wm_type == "dreamer":
+            wm_cfg = self.cfg.wm.dreamer
+            Encoder = dreamer.AsTensor
+
+            # We need the trainer to deduce the reward space, even if we don't
+            # run the training.
+            wm_trainer = dreamer.Trainer(wm_cfg, self.compute_dtype)
+            rew_space = wm_trainer.reward_space
+
+            obs_space, act_space = self.sdk.obs_space, self.sdk.act_space
+            wm = dreamer.WorldModel(wm_cfg, obs_space, act_space, rew_space)
+        else:
+            raise ValueError(wm_type)
+
+        wm = wm.to(self.device)
+
+        ac_type = self.cfg.ac.type
+        if ac_type == "ref":
+            ac_cfg = self.cfg.ac.ref
+            actor = nn.Sequential(
+                Encoder(),
+                ref.Actor(ac_cfg, wm.state_size, wm.act_space),
+            )
+        elif ac_type == "sac":
+            ac_cfg = self.cfg.ac.sac
+            actor = nn.Sequential(
+                Encoder(),
+                sac.Actor(ac_cfg, wm.state_size, wm.act_space),
+            )
+        else:
+            raise ValueError(ac_type)
+
+        actor = actor.to(self.device)
+
+        return wm, actor
 
     def _make_agent(self, mode: Literal["train", "val"]):
         agent = ref.Agent(
@@ -232,38 +270,6 @@ class Runner:
             mode=mode,
         )
         return agent
-
-    def _make_nets(self):
-        if self.cfg.wm.type == "dreamer":
-            wm_cfg = self.cfg.wm.dreamer
-            Encoder = dreamer.AsTensor
-
-            # We need the trainer to deduce the reward space, even if we don't
-            # run the training.
-            wm_trainer = dreamer.Trainer(wm_cfg, self.compute_dtype)
-            rew_space = wm_trainer.reward_space
-
-            obs_space, act_space = self.sdk.obs_space, self.sdk.act_space
-            wm = dreamer.WorldModel(wm_cfg, obs_space, act_space, rew_space)
-            wm = wm.to(self.device)
-
-        ac_type = self.cfg.ac.type
-        if ac_type == "ref":
-            ac_cfg = self.cfg.ac.ref
-            actor = nn.Sequential(
-                Encoder(),
-                ref.Actor(ac_cfg, wm.state_size, wm.act_space),
-            )
-        elif ac_type == "sac":
-            ac_cfg = self.cfg.ac.sac
-            actor = nn.Sequential(
-                Encoder(),
-                sac.Actor(ac_cfg, wm.state_size, wm.act_space),
-            )
-
-        actor = actor.to(self.device)
-
-        return wm, actor
 
     def _get_until_params(self, cfg: dict | str):
         if isinstance(cfg, dict):
@@ -292,6 +298,16 @@ class Runner:
         return cron.Every(lambda of=of: getattr(self, of), every, iters)
 
     def _setup_train(self):
+        self._setup_train_data()
+        self.wm_trainer, self.ac_trainer = self._make_trainers(self.wm, self.actor)
+
+        self.wm_opt_step = 0
+        self.exp.register_step("wm_opt_step", lambda: self.wm_opt_step)
+
+        self.ac_opt_step = 0
+        self.exp.register_step("ac_opt_step", lambda: self.ac_opt_step)
+
+    def _setup_train_data(self):
         cfg = self.cfg.train
 
         dataset_cfg = {**vars(cfg.dataset)}
@@ -337,8 +353,13 @@ class Runner:
             **dataset_cfg,
         )
 
-        self.train_loader = iter(
-            ThreadDataLoader(
+        if self.cfg.repro.determinism == "full":
+            DataLoader = data.DataLoader
+        else:
+            DataLoader = ThreadDataLoader
+
+        self.train_iter = iter(
+            DataLoader(
                 dataset=self.train_ds,
                 batch_size=cfg.dataset.batch_size,
                 collate_fn=self.train_ds.collate_fn,
@@ -359,21 +380,15 @@ class Runner:
             drop_last=False,
         )
 
-        self.wm_trainer, self.ac_trainer = self._setup_trainers(self.wm, self.actor)
-
-        self.ac_opt_step = 0
-        self.exp.register_step("ac_opt_step", lambda: self.ac_opt_step)
-
-    def _setup_trainers(self, wm_, actor_):
+    def _make_trainers(self, wm, actor):
         wm_type = self.cfg.wm.type
         if wm_type == "dreamer":
-            wm = dreamer
+            Encoder = dreamer.AsTensor
             wm_cfg = self.cfg.wm.dreamer
             wm_trainer = dreamer.Trainer(wm_cfg, self.compute_dtype)
-            wm_trainer.setup(wm_)
-
-        self.wm_opt_step = 0
-        self.exp.register_step("wm_opt_step", lambda: self.wm_opt_step)
+            wm_trainer.setup(wm)
+        else:
+            raise ValueError(wm_type)
 
         ac_type = self.cfg.ac.type
         if ac_type == "ref":
@@ -382,13 +397,13 @@ class Runner:
 
             def make_critic():
                 critic = nn.Sequential(
-                    wm.AsTensor(),
+                    Encoder(),
                     ref.Critic(ac_cfg, self.wm.state_size),
                 )
                 critic = critic.to(self.device)
                 return critic
 
-            ac_trainer.setup(actor_, make_critic, self.sdk.act_space)
+            ac_trainer.setup(actor, make_critic, self.sdk.act_space)
 
         elif ac_type == "sac":
             ac_cfg = self.cfg.ac.sac
@@ -396,13 +411,16 @@ class Runner:
 
             def make_vf():
                 vf = nn.Sequential(
-                    wm.AsTensor(),
+                    Encoder(),
                     sac.ValueFunc(ac_cfg, self.wm.state_size),
                 )
                 vf = vf.to(self.device)
                 return vf
 
-            ac_trainer.setup(actor_, make_vf)
+            ac_trainer.setup(actor, make_vf)
+
+        else:
+            raise ValueError(ac_type)
 
         return wm_trainer, ac_trainer
 
@@ -491,9 +509,8 @@ class Runner:
         pbar.update(until.step_fn() - pbar.n)
 
     def do_env_step(self, mode="train"):
-        with self.fwd_mtx:
-            self.agent.mode = mode
-            env_idx, (step, final) = next(self.env_iter)
+        self.agent.mode = mode
+        env_idx, (step, final) = next(self.env_iter)
 
         with self.buf_mtx:
             self._ep_ids[env_idx] = self.buf.push(self._ep_ids[env_idx], step, final)
@@ -518,7 +535,6 @@ class Runner:
         self,
         until: dict | str,
         tasks: list[dict | str],
-        async_mode: bool = False,
     ):
         if not hasattr(self, "_setup_train_done"):
             self._setup_train()
@@ -556,46 +572,11 @@ class Runner:
         should_loop = self._make_until(until)
         pbar = self._make_pbar("Train loop", until)
 
-        if self.cfg.repro.determinism != "none":
-            async_mode = False
-
-        if async_mode:
-            pool = concurrent.futures.ThreadPoolExecutor(len(tasks))
-            fut_to_idx, idx_to_fut = {}, {}
-
-            while should_loop:
-                completed, _ = concurrent.futures.wait(
-                    fut_to_idx,
-                    return_when="FIRST_COMPLETED",
-                )
-                for fut in completed:
-                    fut.result()
-                    task_idx = fut_to_idx[fut]
-                    del fut_to_idx[fut]
-                    del idx_to_fut[task_idx]
-
-                for task_idx in range(len(tasks)):
-                    if should_run[task_idx]:
-                        if task_idx in idx_to_fut:
-                            fut = idx_to_fut[task_idx]
-                            fut.result()
-                            del fut_to_idx[fut]
-                            del idx_to_fut[task_idx]
-
-                        fut = pool.submit(task_functions[task_idx])
-                        fut_to_idx[fut] = task_idx
-                        idx_to_fut[task_idx] = fut
-
+        while should_loop:
+            for task_idx in range(len(tasks)):
+                if should_run[task_idx]:
+                    task_functions[task_idx]()
                 self._update_pbar(pbar, should_loop)
-
-            concurrent.futures.wait(fut_to_idx)
-
-        else:
-            while should_loop:
-                for task_idx in range(len(tasks)):
-                    if should_run[task_idx]:
-                        task_functions[task_idx]()
-                    self._update_pbar(pbar, should_loop)
 
     def do_opt_step(self, n=1):
         if n > 1:
@@ -603,39 +584,38 @@ class Runner:
                 self.do_opt_step()
 
         with self.buf_mtx:
-            wm_batch = next(self.train_loader)
+            wm_batch = next(self.train_iter)
 
         wm_batch = self._move_to_device(wm_batch)
 
-        with self.fwd_mtx:
-            self.wm_trainer.train()
-            self.ac_trainer.train()
+        self.wm_trainer.train()
+        self.ac_trainer.train()
 
-            wm_loss, wm_mets, wm_states = self.wm_trainer.compute(
-                obs=wm_batch["obs"],
-                act=wm_batch["act"],
-                reward=wm_batch["reward"],
-                term=wm_batch["term"],
-                start=wm_batch["start"],
-            )
+        wm_loss, wm_mets, wm_states = self.wm_trainer.compute(
+            obs=wm_batch["obs"],
+            act=wm_batch["act"],
+            reward=wm_batch["reward"],
+            term=wm_batch["term"],
+            start=wm_batch["start"],
+        )
 
-            (ac_states, action, reward, term) = self._get_dream_batch(
-                initial=wm_states.flatten(),
-                term=wm_batch["term"].flatten(),
-            )
+        (ac_states, action, reward, term) = self._get_dream_batch(
+            initial=wm_states.flatten(),
+            term=wm_batch["term"].flatten(),
+        )
 
-            if self.cfg.ac.type == "sac":
-                reward = reward[1:]
+        if self.cfg.ac.type == "sac":
+            reward = reward[1:]
 
-            ac_loss, ac_mets = self.ac_trainer.compute(
-                states=ac_states,
-                action=action,
-                reward=reward,
-                term=term,
-            )
+        ac_loss, ac_mets = self.ac_trainer.compute(
+            states=ac_states,
+            action=action,
+            reward=reward,
+            term=term,
+        )
 
-        self.ac_trainer.opt_step(ac_loss, self.fwd_mtx)
-        self.wm_trainer.opt_step(wm_loss, self.fwd_mtx)
+        self.ac_trainer.opt_step(ac_loss)
+        self.wm_trainer.opt_step(wm_loss)
 
         self.train_ds.update_states(batch=wm_batch, final=wm_states[-1])
 
@@ -682,14 +662,13 @@ class Runner:
         env_rets = defaultdict(lambda: 0.0)
         all_rets = []
 
-        with self.fwd_mtx:
-            for env_idx, (step, final) in val_iter:
-                env_rets[env_idx] += step["reward"]
-                if final:
-                    all_rets.append(env_rets[env_idx])
-                    del env_rets[env_idx]
-                    if len(all_rets) >= 32:
-                        break
+        for env_idx, (step, final) in val_iter:
+            env_rets[env_idx] += step["reward"]
+            if final:
+                all_rets.append(env_rets[env_idx])
+                del env_rets[env_idx]
+                if len(all_rets) >= 32:
+                    break
 
         self.exp.add_scalar("val/mean_ep_ret", np.mean(all_rets))
 
@@ -742,15 +721,14 @@ class Runner:
 
             wm_batch = self._move_to_device(wm_batch)
 
-            with self.fwd_mtx:
-                self.wm_trainer.eval()
-                wm_loss, wm_mets, wm_states = self.wm_trainer.compute(
-                    obs=wm_batch["obs"],
-                    act=wm_batch["act"],
-                    reward=wm_batch["reward"],
-                    term=wm_batch["term"],
-                    start=wm_batch["start"],
-                )
+            self.wm_trainer.eval()
+            wm_loss, wm_mets, wm_states = self.wm_trainer.compute(
+                obs=wm_batch["obs"],
+                act=wm_batch["act"],
+                reward=wm_batch["reward"],
+                term=wm_batch["term"],
+                start=wm_batch["start"],
+            )
 
             with self.buf_mtx:
                 self.val_ds.update_states(wm_batch, wm_states[-1])
@@ -770,20 +748,20 @@ class Runner:
                 self.do_wm_opt_step()
 
         with self.buf_mtx:
-            wm_batch = next(self.train_loader)
+            wm_batch = next(self.train_iter)
 
         wm_batch = self._move_to_device(wm_batch)
-        with self.fwd_mtx:
-            self.wm_trainer.train()
-            wm_loss, wm_mets, wm_states = self.wm_trainer.compute(
-                obs=wm_batch["obs"],
-                act=wm_batch["act"],
-                reward=wm_batch["reward"],
-                term=wm_batch["term"],
-                start=wm_batch["start"],
-            )
 
-        self.wm_trainer.opt_step(wm_loss, self.fwd_mtx)
+        self.wm_trainer.train()
+        wm_loss, wm_mets, wm_states = self.wm_trainer.compute(
+            obs=wm_batch["obs"],
+            act=wm_batch["act"],
+            reward=wm_batch["reward"],
+            term=wm_batch["term"],
+            start=wm_batch["start"],
+        )
+
+        self.wm_trainer.opt_step(wm_loss)
 
         with self.buf_mtx:
             self.train_ds.update_states(batch=wm_batch, final=wm_states[-1])
@@ -834,30 +812,29 @@ class Runner:
 
             wm_batch = self._move_to_device(wm_batch)
 
-            with self.fwd_mtx:
-                self.wm.eval()
-                self.ac_trainer.eval()
+            self.wm.eval()
+            self.ac_trainer.eval()
 
-                wm_states = self.wm.observe(
-                    obs=wm_batch["obs"],
-                    act=wm_batch["act"],
-                    start=wm_batch["start"],
-                )[0]
+            wm_states = self.wm.observe(
+                obs=wm_batch["obs"],
+                act=wm_batch["act"],
+                start=wm_batch["start"],
+            )[0]
 
-                (ac_states, action, reward, term) = self._get_dream_batch(
-                    initial=wm_states.flatten(),
-                    term=wm_batch["term"].flatten(),
-                )
+            (ac_states, action, reward, term) = self._get_dream_batch(
+                initial=wm_states.flatten(),
+                term=wm_batch["term"].flatten(),
+            )
 
-                if self.cfg.ac.type == "sac":
-                    reward = reward[1:]
+            if self.cfg.ac.type == "sac":
+                reward = reward[1:]
 
-                loss, _ = self.ac_trainer.compute(
-                    states=ac_states,
-                    action=action,
-                    reward=reward,
-                    term=term,
-                )
+            loss, _ = self.ac_trainer.compute(
+                states=ac_states,
+                action=action,
+                reward=reward,
+                term=term,
+            )
 
             val_loss += loss
             val_n += 1
@@ -874,37 +851,36 @@ class Runner:
                 self.do_ac_opt_step()
 
         with self.buf_mtx:
-            wm_batch = next(self.train_loader)
+            wm_batch = next(self.train_iter)
 
         wm_batch = self._move_to_device(wm_batch)
 
-        with self.fwd_mtx:
-            self.wm.eval()
-            self.ac_trainer.train()
+        self.wm.eval()
+        self.ac_trainer.train()
 
-            with torch.no_grad():
-                wm_states = self.wm.observe(
-                    obs=wm_batch["obs"],
-                    act=wm_batch["act"],
-                    start=wm_batch["start"],
-                )[0]
+        with torch.no_grad():
+            wm_states = self.wm.observe(
+                obs=wm_batch["obs"],
+                act=wm_batch["act"],
+                start=wm_batch["start"],
+            )[0]
 
-            (ac_states, action, reward, term) = self._get_dream_batch(
-                initial=wm_states.flatten(),
-                term=wm_batch["term"].flatten(),
-            )
+        (ac_states, action, reward, term) = self._get_dream_batch(
+            initial=wm_states.flatten(),
+            term=wm_batch["term"].flatten(),
+        )
 
-            if self.cfg.ac.type == "sac":
-                reward = reward[1:]
+        if self.cfg.ac.type == "sac":
+            reward = reward[1:]
 
-            ac_loss, ac_mets = self.ac_trainer.compute(
-                states=ac_states,
-                action=action,
-                reward=reward,
-                term=term,
-            )
+        ac_loss, ac_mets = self.ac_trainer.compute(
+            states=ac_states,
+            action=action,
+            reward=reward,
+            term=term,
+        )
 
-        self.ac_trainer.opt_step(ac_loss, self.fwd_mtx)
+        self.ac_trainer.opt_step(ac_loss)
 
         for k, v in ac_mets.items():
             self.exp.add_scalar(f"ac/{k}", v, step="ac_opt_step")
@@ -918,3 +894,13 @@ class Runner:
                 v = v.to(device=self.device)
             res[k] = v
         return res
+
+    def do_periodic_reset(self):
+        wm, actor = self._make_nets()
+        wm_trainer, ac_trainer = self._make_trainers(wm, actor)
+
+        for src, dest in zip(wm_trainer.modules, self.wm_trainer.modules):
+            polyak.sync(src, dest)
+
+        for src, dest in zip(ac_trainer.modules, self.ac_trainer.modules):
+            polyak.sync(src, dest)
