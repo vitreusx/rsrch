@@ -316,8 +316,8 @@ def cli(
     )
     p.add_argument(
         "-o",
-        "--overrides",
-        help="Manual overrides, in the form of a preset.",
+        "--options",
+        help="Manual options, in the form of a preset.",
     )
     if presets_yml is not None:
         p.add_argument(
@@ -345,9 +345,9 @@ def cli(
         all_presets = open(args.presets_file)
         presets.extend(get_presets(all_presets, args.presets))
 
-    if args.overrides is not None:
-        overrides = load(args.overrides)
-        presets.append(overrides)
+    if args.options is not None:
+        options = load(args.options)
+        presets.append(options)
 
     return compose(base, presets)
 

@@ -24,7 +24,7 @@ def main():
 
     device = torch.device(cfg.device)
 
-    repro.fix_seeds(seed=cfg.seed)
+    repro.seed_all(seed=cfg.seed)
 
     env_f = env.make_factory(cfg.env, device, seed=cfg.seed)
 

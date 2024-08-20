@@ -5,21 +5,24 @@ import numpy as np
 import torch
 
 
-def fix_seeds(seed: int, deterministic=False):
-    torch.backends.cudnn.benchmark = not deterministic
-    torch.use_deterministic_algorithms(deterministic)
-    if deterministic:
-        os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":16:8"
+def seed_all(seed: int):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     random.seed(seed)
     np.random.seed(seed)
 
 
+def set_fully_deterministic(mode=True):
+    torch.backends.cudnn.benchmark = not mode
+    torch.use_deterministic_algorithms(mode)
+    if mode:
+        os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":16:8"
+
+
 def worker_init_fn(worker_id):
     worker_seed: int = (torch.initial_seed() + worker_id) % 2**32
-    deterministic = not torch.backends.cudnn.benchmark
-    fix_seeds(worker_seed, deterministic)
+    seed_all(worker_seed)
+    set_fully_deterministic(not torch.backends.cudnn.benchmark)
 
 
 class RandomState:

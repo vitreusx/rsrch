@@ -138,7 +138,7 @@ def main():
     cfg = config.load(Path(__file__).parent / "config.yml")
     cfg = config.parse(cfg, Config)
 
-    repro.fix_seeds(seed=cfg.seed, deterministic=False)
+    repro.seed_all(seed=cfg.seed, deterministic=False)
 
     exp = Experiment(project="vq")
     exp.boards.append(Tensorboard(exp.dir / "board"))

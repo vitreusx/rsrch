@@ -143,7 +143,7 @@ class Runner:
         cfg = config.load(Path(__file__).parent / "config.yml")
         cfg = config.parse(cfg, Config)
 
-        repro.fix_seeds(seed=cfg.seed, deterministic=False)
+        repro.seed_all(seed=cfg.seed, deterministic=False)
 
         self.exp = Experiment(project="ae")
         self.exp.boards.append(Tensorboard(self.exp.dir / "board"))

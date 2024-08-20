@@ -5,6 +5,7 @@ import pickle
 import tempfile
 from collections import defaultdict
 from dataclasses import asdict, dataclass
+from functools import wraps
 from itertools import islice
 from pathlib import Path
 from queue import Queue
@@ -38,11 +39,16 @@ class Config:
     class Run:
         prefix: str | None = None
         no_ansi: bool = False
+        create_commit: bool = True
 
     @dataclass
     class Debug:
-        deterministic: bool
         detect_anomaly: bool
+
+    @dataclass
+    class Repro:
+        seed: int
+        determinism: Literal["none", "sufficient", "full"]
 
     @dataclass
     class Profile:
@@ -82,7 +88,7 @@ class Config:
         discrete_actions: int | None = None
 
     run: Run
-    seed: int
+    repro: Repro
     device: str
     compute_dtype: Literal["float16", "float32"]
     def_step: str
@@ -98,6 +104,22 @@ class Config:
     train: Train
 
     stages: list[dict | str]
+
+
+class ThreadDataLoader(data.DataLoader):
+    def __iter__(self):
+        batches = Queue(maxsize=1)
+
+        def loader_fn():
+            seq_iter = super(__class__, self).__iter__()
+            while True:
+                batches.put(next(seq_iter))
+
+        thr = Thread(target=loader_fn, daemon=True)
+        thr.start()
+
+        while True:
+            yield batches.get()
 
 
 class Runner:
@@ -121,10 +143,9 @@ class Runner:
             func()
 
     def _setup_common(self):
-        repro.fix_seeds(
-            seed=self.cfg.seed,
-            deterministic=self.cfg.debug.deterministic,
-        )
+        repro.seed_all(self.cfg.repro.seed)
+        if self.cfg.repro.determinism == "full":
+            repro.set_fully_deterministic()
 
         self.device = torch.device(self.cfg.device)
         self.compute_dtype = getattr(torch, self.cfg.compute_dtype)
@@ -148,13 +169,14 @@ class Runner:
             prefix=prefix,
             config=asdict(self.cfg),
             no_ansi=self.cfg.run.no_ansi,
+            create_commit=self.cfg.run.create_commit,
         )
 
         board = Tensorboard(dir=self.exp.dir / "board", min_delay=1e-1)
         self.exp.boards.append(board)
         self.exp.set_as_default(self.cfg.def_step)
 
-        self._setup_nets()
+        self.wm, self.actor = self._make_nets()
 
         self.fwd_mtx = Lock()
 
@@ -211,35 +233,37 @@ class Runner:
         )
         return agent
 
-    def _setup_nets(self):
+    def _make_nets(self):
         if self.cfg.wm.type == "dreamer":
-            wm = dreamer
             wm_cfg = self.cfg.wm.dreamer
+            Encoder = dreamer.AsTensor
 
             # We need the trainer to deduce the reward space, even if we don't
             # run the training.
-            wm_trainer = wm.Trainer(wm_cfg, self.compute_dtype)
+            wm_trainer = dreamer.Trainer(wm_cfg, self.compute_dtype)
             rew_space = wm_trainer.reward_space
 
             obs_space, act_space = self.sdk.obs_space, self.sdk.act_space
-            self.wm = wm.WorldModel(wm_cfg, obs_space, act_space, rew_space)
-            self.wm = self.wm.to(self.device)
+            wm = dreamer.WorldModel(wm_cfg, obs_space, act_space, rew_space)
+            wm = wm.to(self.device)
 
         ac_type = self.cfg.ac.type
         if ac_type == "ref":
             ac_cfg = self.cfg.ac.ref
-            self.actor = nn.Sequential(
-                wm.AsTensor(),
-                ref.Actor(ac_cfg, self.wm.state_size, self.wm.act_space),
+            actor = nn.Sequential(
+                Encoder(),
+                ref.Actor(ac_cfg, wm.state_size, wm.act_space),
             )
         elif ac_type == "sac":
             ac_cfg = self.cfg.ac.sac
-            self.actor = nn.Sequential(
-                wm.AsTensor(),
-                sac.Actor(ac_cfg, self.wm.state_size, self.wm.act_space),
+            actor = nn.Sequential(
+                Encoder(),
+                sac.Actor(ac_cfg, wm.state_size, wm.act_space),
             )
 
-        self.actor = self.actor.to(self.device)
+        actor = actor.to(self.device)
+
+        return wm, actor
 
     def _get_until_params(self, cfg: dict | str):
         if isinstance(cfg, dict):
@@ -279,27 +303,33 @@ class Runner:
         self.train_sampler = rl.data.Sampler()
         self.val_ids = set()
 
-        class SplitHook(rl.data.Hook):
-            def __init__(hook):
-                hook._g = np.random.default_rng()
+        class AutoSplit(rl.data.Wrapper):
+            def __init__(self_w, buf: rl.data.Buffer):
+                super().__init__(buf)
 
-            def on_create(hook, seq_id: int, seq: dict):
-                is_val = hook._g.random() < cfg.val_frac
+            def reset(self_w, obs):
+                seq_id = super().reset(obs)
+                is_val = np.random.rand() < cfg.val_frac
                 if is_val:
                     self.val_ids.add(seq_id)
                 else:
                     self.train_sampler.add(seq_id)
+                return seq_id
 
-            def on_delete(hook, seq_id: int, seq: dict):
+            def __delitem__(self_w, seq_id: int):
                 if seq_id in self.val_ids:
                     self.val_ids.remove(seq_id)
                 else:
                     del self.train_sampler[seq_id]
+                super().__delitem__(seq_id)
 
-        hook = SplitHook()
-        for seq_id, seq in self.buf.items():
-            hook.on_create(seq_id, seq)
-        self.buf.hooks.append(hook)
+        self.buf = AutoSplit(self.buf)
+        for seq_id in self.buf:
+            is_val = np.random.rand() < cfg.val_frac
+            if is_val:
+                self.val_ids.add(seq_id)
+            else:
+                self.train_sampler.add(seq_id)
 
         self.train_ds = data.Slices(
             buf=self.buf,
@@ -307,30 +337,13 @@ class Runner:
             **dataset_cfg,
         )
 
-        self._train_batches = Queue(maxsize=1)
-
-        def loader_fn():
-            cfg = self.cfg.train
-            batch_iter = iter(
-                data.DataLoader(
-                    dataset=self.train_ds,
-                    batch_size=cfg.dataset.batch_size,
-                    collate_fn=self.train_ds.collate_fn,
-                )
+        self.train_loader = iter(
+            ThreadDataLoader(
+                dataset=self.train_ds,
+                batch_size=cfg.dataset.batch_size,
+                collate_fn=self.train_ds.collate_fn,
             )
-
-            while True:
-                batch = next(batch_iter)
-                self._train_batches.put(batch)
-
-        self.loader_thread = Thread(target=loader_fn, daemon=True)
-        self.loader_thread.start()
-
-        def train_batches():
-            while True:
-                yield self._train_batches.get()
-
-        self.train_loader = iter(train_batches())
+        )
 
         self.val_ds = data.Slices(
             buf=self.buf,
@@ -346,18 +359,18 @@ class Runner:
             drop_last=False,
         )
 
-        self._setup_trainers()
+        self.wm_trainer, self.ac_trainer = self._setup_trainers(self.wm, self.actor)
 
         self.ac_opt_step = 0
         self.exp.register_step("ac_opt_step", lambda: self.ac_opt_step)
 
-    def _setup_trainers(self):
+    def _setup_trainers(self, wm_, actor_):
         wm_type = self.cfg.wm.type
         if wm_type == "dreamer":
             wm = dreamer
             wm_cfg = self.cfg.wm.dreamer
-            self.wm_trainer = dreamer.Trainer(wm_cfg, self.compute_dtype)
-            self.wm_trainer.setup(self.wm)
+            wm_trainer = dreamer.Trainer(wm_cfg, self.compute_dtype)
+            wm_trainer.setup(wm_)
 
         self.wm_opt_step = 0
         self.exp.register_step("wm_opt_step", lambda: self.wm_opt_step)
@@ -365,7 +378,7 @@ class Runner:
         ac_type = self.cfg.ac.type
         if ac_type == "ref":
             ac_cfg = self.cfg.ac.ref
-            self.ac_trainer = ref.Trainer(ac_cfg, self.compute_dtype)
+            ac_trainer = ref.Trainer(ac_cfg, self.compute_dtype)
 
             def make_critic():
                 critic = nn.Sequential(
@@ -375,11 +388,11 @@ class Runner:
                 critic = critic.to(self.device)
                 return critic
 
-            self.ac_trainer.setup(self.actor, make_critic, self.sdk.act_space)
+            ac_trainer.setup(actor_, make_critic, self.sdk.act_space)
 
         elif ac_type == "sac":
             ac_cfg = self.cfg.ac.sac
-            self.ac_trainer = sac.Trainer(ac_cfg, self.compute_dtype)
+            ac_trainer = sac.Trainer(ac_cfg, self.compute_dtype)
 
             def make_vf():
                 vf = nn.Sequential(
@@ -389,7 +402,9 @@ class Runner:
                 vf = vf.to(self.device)
                 return vf
 
-            self.ac_trainer.setup(self.actor, make_vf)
+            ac_trainer.setup(actor_, make_vf)
+
+        return wm_trainer, ac_trainer
 
     def save_data(self, tag: str | None = None):
         if tag is None:
@@ -503,6 +518,7 @@ class Runner:
         self,
         until: dict | str,
         tasks: list[dict | str],
+        async_mode: bool = False,
     ):
         if not hasattr(self, "_setup_train_done"):
             self._setup_train()
@@ -540,7 +556,8 @@ class Runner:
         should_loop = self._make_until(until)
         pbar = self._make_pbar("Train loop", until)
 
-        async_mode = not self.cfg.profile.enabled
+        if self.cfg.repro.determinism != "none":
+            async_mode = False
 
         if async_mode:
             pool = concurrent.futures.ThreadPoolExecutor(len(tasks))

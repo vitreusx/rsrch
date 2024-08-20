@@ -5,7 +5,11 @@
       "type": "debugpy",
       "request": "launch",
       "module": "rsrch.hub.rl.dreamer",
-      "justMyCode": false
+      "justMyCode": false,
+      "args": [
+        "-o",
+        "{repro.determinism: none}"
+      ]
     }
   ],
   "inputs": []

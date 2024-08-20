@@ -79,7 +79,7 @@ class Runner:
     def prepare(self):
         cfg = self.cfg
 
-        repro.fix_seeds(
+        repro.seed_all(
             seed=cfg.random.seed,
             deterministic=cfg.random.deterministic,
         )

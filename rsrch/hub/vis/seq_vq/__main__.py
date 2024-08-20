@@ -168,7 +168,7 @@ class SeqVQ(nn.Module):
         cfg = config.load(Path(__file__).parent / "config.yml")
         self.cfg = config.parse(cfg, config.Config)
 
-        repro.fix_seeds(seed=self.cfg.seed, deterministic=False)
+        repro.seed_all(seed=self.cfg.seed, deterministic=False)
 
         self.device = torch.device(self.cfg.device)
         self.dtype = getattr(torch, self.cfg.dtype)

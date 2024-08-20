@@ -20,11 +20,22 @@ _:
 run:
   prefix: ~
   no_ansi: false
+  create_commit: true
 
-seed: 42
+repro:
+  seed: 42
+  determinism: sufficient
 device: cuda
 compute_dtype: float16
 def_step: env_step
+debug:
+  deterministic: false
+  detect_anomaly: false
+profile:
+  enabled: false
+  schedule: { wait: 5, warmup: 1, active: 3, repeat: 4 }
+  functions: [do_opt_step, do_env_step]
+
 env:
   type: atari
   atari:
@@ -37,13 +48,7 @@ env:
     term_on_life_loss: false
     time_limit: 108e3
     stack_num: ~
-debug:
-  deterministic: false
-  detect_anomaly: false
-profile:
-  enabled: false
-  schedule: { wait: 5, warmup: 1, active: 3, repeat: 4 }
-  functions: [do_opt_step, do_env_step]
+
 agent:
   train_noise: 0.0
   eval_noise: 0.0
