@@ -157,12 +157,9 @@ class Trainer(TrainerBase):
             reward = self._reward_fn(reward)
 
             states, post, prior = self.wm.observe(obs, act, start)
-            mets["prior_ent"] = prior.detach().entropy().mean()
-            mets["post_ent"] = post.detach().entropy().mean()
 
             kl_loss, kl_value = self._kl_loss(post, prior, **vars(self.cfg.kl))
             losses["kl"] = kl_loss
-            mets["kl_value"] = kl_value.detach().mean()
 
             obs_dist = over_seq(self.wm.obs_dec)(states)
             if isinstance(obs_dist, dict):
@@ -178,20 +175,27 @@ class Trainer(TrainerBase):
             rew_loss[0, is_first].zero_()
             losses["reward"] = rew_loss.mean()
 
-            mets["reward_mean"] = reward.mean()
-            mets["reward_std"] = reward.std()
-            mets["reward_pred_mean"] = rew_dist.mean.mean()
-            mets["reward_pred_std"] = rew_dist.mean.std()
-
             term_dist = over_seq(self.wm.term_dec)(states)
             losses["term"] = -term_dist.log_prob(term).mean()
 
             coef = self.cfg.coef
             loss = sum(coef.get(k, 1.0) * v for k, v in losses.items())
 
-            mets["loss"] = loss.detach()
-            for k, v in losses.items():
-                mets[f"{k}_loss"] = v.detach()
+        with torch.no_grad():
+            with self.autocast():
+                mets = {}
+
+                mets["kl_value"] = kl_value.mean()
+                mets["prior_ent"] = prior.entropy().mean()
+                mets["post_ent"] = post.entropy().mean()
+                mets["reward_mean"] = reward.mean()
+                mets["reward_std"] = reward.std()
+                mets["reward_pred_mean"] = rew_dist.mean.mean()
+                mets["reward_pred_std"] = rew_dist.mean.std()
+
+                mets["loss"] = loss.detach()
+                for k, v in losses.items():
+                    mets[f"{k}_loss"] = v.detach()
 
         return loss, mets, states.detach()
 

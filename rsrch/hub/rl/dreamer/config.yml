@@ -38,13 +38,14 @@ profile:
 env:
   type: atari
   atari:
-    env_id: Alien-v5
+    env_id: Alien
     screen_size: 64
     frame_skip: 4
     obs_type: grayscale
     noop_max: 30
     fire_reset: true
     term_on_life_loss: false
+    sticky: true
     time_limit: 108e3
     stack_num: ~
 

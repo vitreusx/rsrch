@@ -28,6 +28,7 @@ class Config:
     time_limit: int | None = int(108e3)
     stack_num: int | None = 4
     use_envpool: bool = True
+    sticky: bool = True
 
 
 class NoopResetEnv(gymnasium.Wrapper):
@@ -349,11 +350,6 @@ class SDK:
         if self.cfg.obs_type == "ram":
             return
 
-        task_id = self.cfg.env_id
-        task_name, task_version = task_id.split("-")
-        if task_version not in ("v4", "v5"):
-            return
-
         max_steps = self.cfg.time_limit or int(1e6)
         max_steps = max_steps // self.cfg.frame_skip
 
@@ -362,13 +358,11 @@ class SDK:
         else:
             img_w = img_h = self.cfg.screen_size
 
-        repeat_prob = {"v5": 0.25, "v4": 0.0}[task_version]
-
         if seed is None:
             seed = np.random.randint(int(2**31))
 
         envs = gym.envs.Envpool(
-            task_id=f"{task_name}-v5",
+            task_id=f"{self.cfg.env_id}-v5",
             num_envs=num_envs,
             max_episode_steps=max_steps,
             img_height=img_h,
@@ -380,7 +374,7 @@ class SDK:
             episodic_life=self.cfg.term_on_life_loss and mode == "train",
             zero_discount_on_life_loss=False,
             reward_clip=False,
-            repeat_action_probability=repeat_prob,
+            repeat_action_probability=(0.25 if self.cfg.sticky else 0.0),
             use_inter_area_resize=True,
             use_fire_reset=self.cfg.fire_reset,
             full_action_space=False,
@@ -398,9 +392,12 @@ class SDK:
     ) -> gym.Env:
         episodic = self.cfg.term_on_life_loss and mode == "train"
 
+        version = "v5" if self.cfg.sticky else "v4"
+        task_id = f"ALE/{self.cfg.env_id}-{version}"
+
         if self.cfg.obs_type in ("rgb", "grayscale"):
             env = gymnasium.make(
-                f"ALE/{self.cfg.env_id}",
+                task_id,
                 frameskip=1,
                 render_mode="rgb_array" if render else None,
                 obs_type=self.cfg.obs_type,
@@ -422,7 +419,7 @@ class SDK:
             env = ToChannelLast(env)
         else:
             env = gymnasium.make(
-                self.cfg.env_id,
+                task_id,
                 frameskip=self.cfg.frame_skip,
                 render_mode="rgb_array" if render else None,
                 obs_type=self.cfg.obs_type,

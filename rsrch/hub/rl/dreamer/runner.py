@@ -599,13 +599,12 @@ class Runner:
             start=wm_batch["start"],
         )
 
+        self.wm_trainer.opt_step(wm_loss)
+
         (ac_states, action, reward, term) = self._get_dream_batch(
             initial=wm_states.flatten(),
             term=wm_batch["term"].flatten(),
         )
-
-        if self.cfg.ac.type == "sac":
-            reward = reward[1:]
 
         ac_loss, ac_mets = self.ac_trainer.compute(
             states=ac_states,
@@ -615,7 +614,6 @@ class Runner:
         )
 
         self.ac_trainer.opt_step(ac_loss)
-        self.wm_trainer.opt_step(wm_loss)
 
         self.train_ds.update_states(batch=wm_batch, final=wm_states[-1])
 

@@ -1,6 +1,7 @@
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import cached_property
+from multiprocessing.synchronize import Lock
 from typing import Any, Callable, Literal
 
 import torch
@@ -64,7 +65,7 @@ def gae_lambda(rew, val, gamma, bootstrap, lambda_):
     next_values = torch.cat((val[1:], bootstrap[None]), 0)
     inputs = rew + (1.0 - lambda_) * gamma * next_values
 
-    returns, cur = [], bootstrap
+    returns, cur = [], val[-1]
     for t in reversed(range(len(inputs))):
         cur = inputs[t] + lambda_ * gamma[t] * cur
         returns.append(cur)
@@ -154,12 +155,6 @@ class Trainer(TrainerBase):
     def compute(self, states, action, reward, term):
         losses, mets = {}, {}
 
-        mets["reward_mean"] = reward.mean()
-        mets["reward_std"] = reward.std()
-
-        if self.update_target is not None:
-            self.update_target.step()
-
         # For reinforce, we detach `target` variable, so requiring gradients on
         # any computation leading up to it will cause autograd to leak memory
         no_grad = torch.no_grad if self.actor_grad == "reinforce" else null_ctx
@@ -197,13 +192,10 @@ class Trainer(TrainerBase):
                 adv = (target[1:] - baseline).detach()
                 objective = adv * policies.log_prob(action[:-1].detach())
                 mix = self.actor_grad_mix(self.opt_iter)
-                mets["actor_grad_mix"] = mix
                 objective = mix * target[1:] + (1.0 - mix) * objective
 
             ent_scale = self.actor_ent(self.opt_iter)
-            mets["policy_ent_scale"] = ent_scale
             policy_ent = policies.entropy()
-            mets["policy_ent"] = policy_ent.mean()
             objective = objective + ent_scale * policy_ent
             losses["actor"] = -(weight[:-2] * objective).mean()
 
@@ -218,7 +210,31 @@ class Trainer(TrainerBase):
             coef = self.cfg.coef
             loss = sum(coef.get(k, 1.0) * v for k, v in losses.items())
 
+        with torch.no_grad():
+            with self.autocast():
+                mets = {}
+
+                mets["reward_mean"] = reward.mean()
+                mets["reward_std"] = reward.std()
+                mets["target_mean"] = target.mean()
+                mets["target_std"] = target.std()
+                mets["ent_scale"] = ent_scale
+                mets["entropy"] = policy_ent.mean()
+                mets["value_mean"] = (value_dist.mean).mean()
+                if "mix" in locals():
+                    mets["mix"] = mix
+
+                mets["loss"] = loss
+                for k, v in losses.items():
+                    mets[f"{k}_loss"] = v.detach()
+
         return loss, mets
+
+    def opt_step(self, loss: Tensor, lock: Lock | None = None):
+        super().opt_step(loss, lock)
+        self.opt_iter += 1
+        if self.update_target is not None:
+            self.update_target.step()
 
 
 class Agent(gym.VecAgent):

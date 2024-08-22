@@ -2,7 +2,7 @@ atari:
   base:
     env:
       type: atari
-      atari.env_id: Alien-v5
+      atari.env_id: Pong
     wm.dreamer:
       rssm:
         deter_size: 600
@@ -16,6 +16,16 @@ atari:
       actor_grad: reinforce
       opt.actor.lr: 4e-5
       opt.critic.lr: 1e-4
+    stages:
+      - env_rollout:
+          until: 200e3
+          mode: rand
+      - train_loop:
+          until: 200e6
+          tasks:
+            - do_opt_step: ~
+              every: 64
+            - do_env_step
 
   train:
     _freq: 64
@@ -23,7 +33,7 @@ atari:
       val_frac: 0.1
     stages:
       - env_rollout:
-          until: ${2e3 * _freq}
+          until: ${3e3 * _freq}
           mode: rand
       - train_loop:
           until: ${1e5 * _freq}
@@ -54,7 +64,7 @@ atari:
       val_frac: 0.1
     stages:
       - env_rollout:
-          until: ${2e3 * _freq}
+          until: ${3e3 * _freq}
           mode: rand
       - train_loop:
           until: ${1e5 * _freq}
@@ -66,6 +76,11 @@ atari:
             - do_opt_step: ~
               every: ${_freq}
             - do_env_step
+
+  ms_pacman_test:
+    $extends: [atari.base]
+    env.atari.env_id: MsPacman
+    stages[0].env_rollout.until: 10e3
 
 dmc:
   base:
@@ -127,9 +142,10 @@ dmc:
             - do_env_step
 
 default:
-  $extends: [atari.base, atari.test_sr]
+  $extends: [atari.base]
+  # $extends: [atari.ms_pacman_test]
 
-  # debug.detect_anomaly: true
   # wm.dreamer.rssm.jit: false
+  # debug.detect_anomaly: true
   # extras.discrete_actions: 8
   # profile.enabled: true

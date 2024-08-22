@@ -64,15 +64,17 @@ def gen_adv_est(
 ):
     """Generalized advantage estimation.
 
+    Given a sequence `s[0] -(a[0])-> s[1], r[0] -> ... -> s[T], r[T-1]`, with states `s[0:T+1]` having values `v[0:T+1]` and non-terminality indicators `c[0:T+1]`, computes GAE advantage and returns estimates adv[0:T], ret[0:T]. Returns estimate ret[t] corresponds to an improved value estimate for s[t]. Advantage estimate adv[t] corresponds to an advantage for performing action a[t] in state s[t].
+
     Args:
-        reward: Tensor of shape (L, B), indicating rewards (r_1, ..., r_T).
-        value: Tensor of shape (L+1, B), indicating value predictions (V(s_1), ..., V(s_{T+1})).
-        cont: Tensor of shape (L+1, B), indicating whether states (s_1, ..., s_{T+1}) are non-terminal.
+        reward: Reward sequence.
+        value: Value sequence.
+        cont: Non-terminality indicator sequence.
         gamma: Reward discount coefficient.
         gae_lambda: K-step discount coefficient.
 
     Returns:
-        Tuple (adv, ret) of advantage and returns tensors, of shape (L, B), indicating values for states (s_1, ..., s_T) (i.e. excepting the final one, for which we cannot provide advantage or return estimates.)
+        Tuple (adv, ret) of advantage and returns sequences.
     """
 
     # Compute advantage estimates using (16)
