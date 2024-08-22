@@ -29,7 +29,7 @@ atari:
           until: ${1e5 * _freq}
           tasks:
             - val_epoch: ~
-              every: { n: 5e3, of: _freq }
+              every: ${5e3 * _freq}
             - do_opt_step: ~
               every: ${_freq}
             - do_env_step
