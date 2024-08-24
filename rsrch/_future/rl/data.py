@@ -6,10 +6,22 @@ import numpy as np
 from rsrch.types.rq_tree import rq_tree
 
 
+class Hook:
+    def on_create(self, seq_id: int, seq: dict):
+        pass
+
+    def on_update(self, seq_id: int, seq: dict):
+        pass
+
+    def on_delete(self, seq_id: int, seq: dict):
+        pass
+
+
 class Buffer(MutableMapping):
     def __init__(self):
         self.data = {}
         self._next_id = 0
+        self.hooks: list[Hook] = []
 
     def save(self):
         return (self.data, self._next_id)
@@ -38,6 +50,9 @@ class Buffer(MutableMapping):
         raise RuntimeError("Cannot set buffer sequence directly.")
 
     def __delitem__(self, seq_id: int):
+        seq = self.data[seq_id]
+        for hook in self.hooks:
+            hook.on_delete(seq_id, seq)
         del self.data[seq_id]
 
     def reset(self, obs) -> int:
@@ -45,12 +60,16 @@ class Buffer(MutableMapping):
         self._next_id += 1
         seq = [obs]
         self.data[seq_id] = seq
+        for hook in self.hooks:
+            hook.on_create(seq_id, seq)
         return seq_id
 
     def step(self, seq_id: int, act, step):
         seq = self.data[seq_id]
         next_obs, final = step
         seq.append({**next_obs, "act": act})
+        for hook in self.hooks:
+            hook.on_update(seq_id, seq)
 
     def push(self, seq_id: int | None, step: dict, final: bool):
         if seq_id is None:
@@ -64,14 +83,15 @@ class Buffer(MutableMapping):
                 seq_id = None
             return seq_id
 
-    def clear(self):
-        self.data.clear()
-
 
 class Wrapper(MutableMapping):
     def __init__(self, buf: Buffer):
         self.buf = buf
         self._unwrapped: Buffer = getattr(buf, "_unwrapped", buf)
+
+    @property
+    def hooks(self):
+        return self._unwrapped.hooks
 
     def save(self):
         return self._unwrapped.save()
@@ -168,41 +188,8 @@ class Sampler:
             yield self.sample()
 
 
-class Hook:
-    def on_create(self, seq_id: int, seq: dict):
-        pass
-
-    def on_update(self, seq_id: int, seq: dict):
-        pass
-
-    def on_delete(self, seq_id: int, seq: dict):
-        pass
-
-
-class Observable(Wrapper):
-    def __init__(self, buf: Buffer):
-        super().__init__(buf)
-        self.hooks: list[Hook] = []
-
-    def reset(self, obs):
-        seq_id = super().reset(obs)
-        for hook in self.hooks:
-            hook.on_create(seq_id, self[seq_id])
-        return seq_id
-
-    def step(self, seq_id, act, next_obs):
-        super().step(seq_id, act, next_obs)
-        for hook in self.hooks:
-            hook.on_update(seq_id, self[seq_id])
-
-    def __delitem__(self, seq_id):
-        for hook in self.hooks:
-            hook.on_delete(seq_id, self[seq_id])
-        super().__delitem__(seq_id)
-
-
 class Steps(Hook):
-    def __init__(self, buf: Observable):
+    def __init__(self, buf: Buffer):
         super().__init__()
         self.buf = buf
         self.buf.hooks.append(self)
@@ -235,7 +222,7 @@ class Steps(Hook):
 
 
 class Slices(Hook):
-    def __init__(self, buf: Observable, slice_len: int):
+    def __init__(self, buf: Buffer, slice_len: int):
         super().__init__()
         self.buf = buf
         self.slice_len = slice_len

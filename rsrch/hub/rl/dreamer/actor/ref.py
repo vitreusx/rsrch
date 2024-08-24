@@ -102,7 +102,7 @@ class Trainer(TrainerBase):
 
         if self.cfg.target_critic is not None:
             self.target_critic = make_critic()
-            polyak.sync(self.critic, self.target_critic)
+            # polyak.sync(self.critic, self.target_critic)
             self.update_target = polyak.Polyak(
                 source=self.critic,
                 target=self.target_critic,

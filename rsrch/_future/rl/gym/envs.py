@@ -173,7 +173,7 @@ class Envpool(VecEnv):
             all_obs = unbind(
                 {
                     "obs": obs,
-                    "act": [self._actions[env_id].copy() for env_id in env_ids],
+                    "act": self._actions[env_ids].copy(),
                     "reward": reward,
                     "term": term,
                     "trunc": trunc,

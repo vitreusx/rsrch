@@ -12,7 +12,7 @@ class Every:
         """Create the flag variable.
         :param step_fn: Step function, i.e. a function which returns current step value/loop counter.
         :param every: How often (in terms of steps) to signal True.
-        :param iters: How many times, once the period of `every` has passed, to signal True. If None, the flag is on
+        :param iters: How many times, once the period of `every` has passed, to signal True. If None, the flag is on for as long as the trigger step value is the same.
         """
 
         self.step_fn = step_fn

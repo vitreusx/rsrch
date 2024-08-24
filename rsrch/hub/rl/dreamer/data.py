@@ -144,9 +144,8 @@ class Slices(data.IterableDataset):
 
         return res
 
-    def update_states(self, batch: dict, final):
-        pos = batch["pos"]
-        for (seq_id, offset), state in zip(pos, final):
+    def update_states(self, pos, states):
+        for (seq_id, offset), state in zip(pos, states):
             end = offset + self.slice_len
             self.states[seq_id, end] = state
 

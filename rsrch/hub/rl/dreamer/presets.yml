@@ -16,6 +16,11 @@ atari:
       actor_grad: reinforce
       opt.actor.lr: 4e-5
       opt.critic.lr: 1e-4
+
+  train:
+    _opt_freq: 64
+    train:
+      val_frac: 0.1
     stages:
       - env_rollout:
           until: 200e3
@@ -24,64 +29,12 @@ atari:
           until: 200e6
           tasks:
             - do_opt_step: ~
-              every: 64
+              every: ${_opt_freq}
+            - save_ckpt: ~
+              every: 1e6
             - do_env_step
-
-  train:
-    _freq: 64
-    train:
-      val_frac: 0.1
-    stages:
-      - env_rollout:
-          until: ${3e3 * _freq}
-          mode: rand
-      - train_loop:
-          until: ${1e5 * _freq}
-          tasks:
             - val_epoch: ~
-              every: ${5e3 * _freq}
-            - do_opt_step: ~
-              every: ${_freq}
-            - do_env_step
-
-  test_sr:
-    stages:
-      - env_rollout:
-          until: 25e3
-          mode: rand
-      - train_loop:
-          until: 250e3
-          tasks:
-            - do_periodic_reset: ~
-              every: 25e3
-            - do_opt_step: ~
-              every: 64
-            - do_env_step
-
-  train_sr:
-    _freq: 64
-    train:
-      val_frac: 0.1
-    stages:
-      - env_rollout:
-          until: ${3e3 * _freq}
-          mode: rand
-      - train_loop:
-          until: ${1e5 * _freq}
-          tasks:
-            - do_periodic_reset: ~
-              every: { n: 2.56e6, of: wm_opt_step }
-            - val_epoch: ~
-              every: { n: 5e3, of: wm_opt_step }
-            - do_opt_step: ~
-              every: ${_freq}
-            - do_env_step
-
-  ms_pacman_test:
-    $extends: [atari.base]
-    env.atari.env_id: MsPacman
-    stages[0].env_rollout.until: 10e3
-
+              every: 100e3
 dmc:
   base:
     wm.dreamer:
@@ -142,10 +95,9 @@ dmc:
             - do_env_step
 
 default:
-  $extends: [atari.base]
-  # $extends: [atari.ms_pacman_test]
-
-  # wm.dreamer.rssm.jit: false
+  # $extends: [atari.base, atari.train]
+  # $extends: [dmc.base, dmc.vision]
+  $extends: [dmc.base, dmc.proprio, dmc.train]
   # debug.detect_anomaly: true
+  # wm.dreamer.rssm.jit: true
   # extras.discrete_actions: 8
-  # profile.enabled: true

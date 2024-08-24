@@ -6,10 +6,6 @@
       "request": "launch",
       "module": "rsrch.hub.rl.dreamer",
       "justMyCode": false,
-      "args": [
-        "-o",
-        "{repro.determinism: none}"
-      ]
     }
   ],
   "inputs": []

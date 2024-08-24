@@ -110,7 +110,7 @@ class PassGradient(torch.autograd.Function):
 
 
 def pass_gradient(value: Tensor, to: Tensor) -> Tensor:
-    if torch.jit.is_tracing():
+    if torch.jit.is_scripting():
         return value.detach() + (to - to.detach())
     else:
         return PassGradient.apply(value, to)

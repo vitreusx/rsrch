@@ -255,13 +255,36 @@ class OptRSSM(nn.Module):
         self._img_out = nn.Linear(self.deter_size, hidden_size)
         self._img_proj = nn.Linear(hidden_size, self.stoch_size)
         self._obs_out_d = nn.Linear(self.deter_size, hidden_size)
-        self._obs_out_o = nn.Linear(obs_size, hidden_size)
+        self._obs_out_o = nn.Linear(self.obs_size, hidden_size)
         self._obs_proj = nn.Linear(hidden_size, self.stoch_size)
 
         self.register_buffer("deter0", torch.zeros(self.deter_size))
         self.register_buffer("stoch0", torch.zeros(self.stoch_size))
 
         self.apply(tf_init)
+
+        # Explanation for the stuff below:
+        # The original implementation does img_in(concat(stoch, act)). We wish to split it into img_in_s(stoch) + img_in_a(act), so that we (1) avoid concat, (2) can run img_in_a(act) only once, since it doesn't depend on the sequence position. However, naive replacement (with default initialization of weights and biases) doesn't yield the same result. The remedy is to create temporary img_in layer and copy the respective parameters from it to img_in_s and img_in_a.
+
+        img_in = nn.Linear(self.stoch_size + self.act_size, hidden_size)
+        img_in.apply(tf_init)
+        W_s, W_a = img_in.weight.split_with_sizes(
+            [self.stoch_size, self.act_size],
+            dim=1,
+        )
+        self._img_in_s.weight.data.copy_(W_s)
+        self._img_in_a.weight.data.copy_(W_a)
+
+        # Here it's the same as above, but with obs_out.
+
+        obs_out = nn.Linear(self.deter_size + self.obs_size, hidden_size)
+        obs_out.apply(tf_init)
+        W_d, W_o = obs_out.weight.split_with_sizes(
+            [self.deter_size, self.obs_size],
+            dim=1,
+        )
+        self._obs_out_d.weight.data.copy_(W_d)
+        self._obs_out_o.weight.data.copy_(W_o)
 
     @torch.jit.ignore
     def initial(self):
@@ -366,7 +389,7 @@ class OptRSSM(nn.Module):
         return sample
 
 
-def RSSM(cfg: Config, obs_size: int, act_size: int) -> OptRSSM | GenericRSSM:
+def RSSM(cfg: Config, obs_size: int, act_size: int) -> OptRSSM | GenericRSSM:  #
     if cfg.jit:
         module = OptRSSM(cfg, obs_size, act_size)
         module: OptRSSM = torch.jit.script(module)

@@ -27,39 +27,24 @@ def _flatten(x, prefix=[]):
 
 
 class Tensorboard(StepMixin, Board):
-    def __init__(self, dir: str | Path, min_delay: float = 0.0):
+    def __init__(self, dir: str | Path):
         super().__init__()
         self.dir = Path(dir)
-        self.min_delay = min_delay
         self._writer = tensorboard.SummaryWriter(log_dir=str(self.dir))
         self._last = defaultdict(lambda: time.perf_counter())
 
     def add_config(self, config: dict):
         self._writer.add_hparams(hparam_dict=_flatten(config))
 
-    @staticmethod
-    def freq_limited(func):
-        @wraps(func)
-        def wrapped(self: "Tensorboard", tag: str, *args, **kwargs):
-            cur = time.perf_counter()
-            if cur - self._last[tag] > self.min_delay:
-                self._last[tag] = cur
-                return func(self, tag, *args, **kwargs)
-
-        return wrapped
-
-    @freq_limited
     def add_scalar(self, tag: str, value: Number, *, step: Step = None):
         step = self._get_step(step)
         self._writer.add_scalar(tag, float(value), global_step=step)
 
-    @freq_limited
     def add_image(self, tag: str, image: Image, *, step: Step = None):
         step = self._get_step(step)
         pic_arr = tv_F.to_tensor(image)
         self._writer.add_image(tag, pic_arr, global_step=step)
 
-    @freq_limited
     def add_video(self, tag: str, vid: VideoClip, *, step: Step = None):
         step = self._get_step(step)
         vid_arr = np.stack([*vid.iter_frames()])
