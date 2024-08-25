@@ -143,7 +143,7 @@ class VecAgentWrapper(gym.VecAgent):
 
     def policy(self, idxes):
         act: torch.Tensor = self.agent.policy(idxes)
-        return act.numpy(force=True).astype(self.act_dtype)
+        return act.numpy().astype(self.act_dtype)
 
     def step(self, idxes: np.ndarray, act, next_obs):
         act = stack([act_f(a) for a in act])

@@ -266,16 +266,15 @@ class Agent(gym.VecAgent):
     def reset(self, idxes, obs: Tensor):
         obs = obs.to(self.device)
         if self._obs is None:
-            self._obs = obs
+            self._obs = obs.clone()
         else:
             self._obs[idxes] = obs.type_as(self._obs)
 
     def policy(self, idxes):
-        policy: D.Distribution = self.actor(self._obs[idxes])
-        if self.sample:
-            return policy.sample()
-        else:
-            return policy.mode
+        with self.compute_ctx():
+            policy: D.Distribution = self.actor(self._obs[idxes])
+            act = policy.sample() if self.sample else policy.mode
+        return act
 
     def step(self, idxes, act: Tensor, next_obs: Tensor):
         next_obs = next_obs.to(self.device)
