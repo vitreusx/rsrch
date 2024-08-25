@@ -18,16 +18,18 @@ atari:
       opt.critic.lr: 1e-4
 
   train:
-    _opt_freq: 64
+    _freq: 64
     stages:
       - env_rollout:
-          until: 200e3
+          until: ${3e3 * _freq}
           mode: rand
       - train_loop:
-          until: 200e6
+          until: ${1e5 * _freq}
           tasks:
+            - val_epoch: ~
+              every: ${5e3 * _freq}
             - do_opt_step: ~
-              every: ${_opt_freq}
+              every: ${_freq}
             - do_env_step
 dmc:
   base:
