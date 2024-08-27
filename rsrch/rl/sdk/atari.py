@@ -271,7 +271,7 @@ class BufferWrapper(data.Wrapper):
             obs = np.concatenate(obs, 0)
         obs = torch.as_tensor(obs)
         if self.obs_type != "ram":
-            obs = obs / 255.0 - 0.5
+            obs = obs / 255.0
         else:
             obs = obs.long()
         return obs
