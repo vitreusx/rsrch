@@ -99,7 +99,7 @@ class Categorical(Distribution, Tensorlike):
         #     samples_2d = torch.multinomial(probs_2d, sample_shape.numel(), True).T
         # return samples_2d.reshape([*sample_shape, *self.batch_shape, *self.event_shape])
         logits = self.logits.expand(*sample_shape, *self.logits.shape)
-        eps = torch.finfo(logits.dtype).min
+        eps = torch.finfo(logits.dtype).eps
         unif = torch.rand_like(logits).clamp(eps, 1.0 - eps)
         return (logits - (-unif.log()).log()).argmax(-1)
 
@@ -123,7 +123,8 @@ class Categorical(Distribution, Tensorlike):
 
     def entropy(self):
         log_p = self.log_probs
-        log_neg_p_log_p = log_p + (-log_p).log()
+        eps = torch.finfo(log_p.dtype).eps
+        log_neg_p_log_p = log_p + (-log_p).clamp(min=eps).log()
         log_ent = torch.logsumexp(log_neg_p_log_p, dim=-1)
         return sum_rightmost(log_ent.exp(), len(self.event_shape))
 
