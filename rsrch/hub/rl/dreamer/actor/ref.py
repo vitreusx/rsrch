@@ -9,8 +9,8 @@ from torch import Tensor, nn
 
 import rsrch.distributions as D
 from rsrch import spaces
-from rsrch._future.rl import gym
 from rsrch.nn.utils import over_seq
+from rsrch.rl import gym
 from rsrch.rl.utils import polyak
 from rsrch.utils import sched
 

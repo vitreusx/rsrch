@@ -63,10 +63,8 @@ class Experiment:
 
         day, time = timestamp2()
         if prefix is None:
-            self.run = f"{day}_{time}"
             self.dir = Path("runs") / sanitize(project) / day / time
         else:
-            self.run = f"{prefix}__{day}_{time}"
             self.dir = Path("runs") / sanitize(project) / day / f"{prefix}__{time}"
 
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -85,7 +83,6 @@ class Experiment:
         info = {
             "project": self.project,
             "argv": sys.argv,
-            "run": self.run,
         }
 
         if config is not None:
@@ -94,7 +91,7 @@ class Experiment:
             self.log("INFO", f"Saved config to: {self.dir / 'config.yml'}")
 
         if create_commit:
-            commit = create_exp_commit(self.run)
+            commit = create_exp_commit(str(self.dir))
             info["commit_sha"] = commit
 
         with open(self.dir / "info.yml", "w") as f:

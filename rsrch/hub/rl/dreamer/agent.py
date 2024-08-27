@@ -7,8 +7,7 @@ import torch
 from torch import Tensor, nn
 
 import rsrch.distributions as D
-from rsrch import spaces
-from rsrch._future import rl
+from rsrch import rl, spaces
 
 
 @dataclass

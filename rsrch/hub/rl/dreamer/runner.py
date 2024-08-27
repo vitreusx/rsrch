@@ -16,7 +16,7 @@ import torch
 from torch import Tensor, nn
 from tqdm import tqdm
 
-from rsrch._future import rl
+from rsrch import rl
 from rsrch.exp import Experiment, timestamp, timestamp2
 from rsrch.exp.board.tensorboard import Tensorboard
 from rsrch.exp.profile import Profiler

@@ -10,8 +10,8 @@ from torch import Tensor, nn
 
 import rsrch.distributions as D
 from rsrch import spaces
-from rsrch._future.rl import gym
 from rsrch.nn.utils import over_seq, safe_mode
+from rsrch.rl import gym
 
 from ..common import nets, rssm
 from ..common.trainer import TrainerBase

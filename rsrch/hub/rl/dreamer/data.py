@@ -6,8 +6,7 @@ import torch
 from torch.utils import data
 from torch.utils.data import DataLoader
 
-from rsrch import spaces
-from rsrch._future import rl
+from rsrch import rl, spaces
 
 
 class StateCache:
