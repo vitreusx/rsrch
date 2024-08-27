@@ -7,12 +7,25 @@ from .common import *
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--dry-run", action="store_true")
+    p.add_argument(
+        "-s",
+        "--slice",
+        type=str,
+        help="Slice specifier, in the form of <slice 1-index>/<num of slices> (e.g. 1/4, 2/4, .., 4/4)",
+    )
     args = p.parse_args()
 
-    seeds = [0]
+    seeds = [*range(3)]
     envs = ATARI_100k_5
-    freqs = [64]
+    freqs = [64, 24, 4]
+
+    grid = [*product(seeds, envs, freqs)]
+    if args.slice is not None:
+        index, total = args.slice.split("/")
+        index, total = int(index, 10), int(total, 10)
+        start = int((index - 1) * len(grid) / total)
+        end = int(index * len(grid) / total)
+        grid = grid[start:end]
 
     common_args = [
         "python",
@@ -28,7 +41,7 @@ def main():
         "run.create_commit": False,
     }
 
-    for seed, env, freq in product(seeds, envs, freqs):
+    for seed, env, freq in grid:
         options = {
             "env": {"type": "atari", "atari.env_id": env},
             "repro.seed": seed,
