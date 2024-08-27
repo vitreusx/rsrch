@@ -5,7 +5,7 @@ from itertools import product
 
 from ruamel.yaml import YAML
 
-from .common import ATARI_100k_3
+from .common import *
 
 yaml = YAML(typ="safe", pure=True)
 yaml.default_flow_style = True
@@ -23,9 +23,9 @@ def main():
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
 
-    seeds = [*range(3)]
-    envs = ATARI_100k_3
-    freqs = [64, 24, 4]
+    seeds = [0] # [*range(3)]
+    envs = ATARI_100k_5
+    freqs = [64] # [64, 24, 4]
 
     common_args = [
         "python",
