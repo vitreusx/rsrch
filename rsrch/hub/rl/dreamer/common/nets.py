@@ -95,7 +95,7 @@ class GRUCellLN(nn.Module):
         )
 
         if self.norm:
-            self._norm = nn.LayerNorm(3 * hidden_size)
+            self._norm = nn.LayerNorm(3 * hidden_size, eps=1e-3)
         self._act = ActLayer(act)
 
     def forward(self, input: Tensor, hidden: Tensor) -> Tensor:

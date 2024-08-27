@@ -77,6 +77,7 @@ class TrainerBase:
         self.opt.zero_grad(set_to_none=True)
         self.scaler.scale(loss).backward()
         self.scaler.unscale_(self.opt)
+
         if self.clip_grad is not None:
             nn.utils.clip_grad_norm_(self.parameters, max_norm=self.clip_grad)
 

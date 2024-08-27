@@ -91,9 +91,11 @@ dmc:
             - do_env_step
 
 default:
-  # $extends: [atari.base, atari.train]
+  $extends: [atari.base, atari.train]
+  env.atari.env_id: Boxing
+  repro.seed: 0
   # $extends: [dmc.base, dmc.vision]
-  $extends: [dmc.base, dmc.proprio, dmc.train]
+  # $extends: [dmc.base, dmc.proprio, dmc.train]
   # debug.detect_anomaly: true
   # wm.dreamer.rssm.jit: true
   # extras.discrete_actions: 8

@@ -171,9 +171,6 @@ class Trainer(TrainerBase):
                     lambda_=self.cfg.gae_lambda,
                 )
 
-                mets["target_mean"] = target.mean()
-                mets["target_std"] = target.std()
-
         with torch.no_grad():
             with self.autocast():
                 weight = torch.cat([torch.ones_like(gamma[:1]), gamma[:-1]])
@@ -200,12 +197,8 @@ class Trainer(TrainerBase):
             losses["actor"] = -(weight[:-2] * objective).mean()
 
             value_dist = over_seq(self.critic)(states[:-1].detach())
-            mets["value"] = (value_dist.mean).mean()
             critic_losses = -value_dist.log_prob(target.detach())
             losses["critic"] = (weight[:-1] * critic_losses).mean()
-
-            for k, v in losses.items():
-                mets[f"{k}_loss"] = v.detach()
 
             coef = self.cfg.coef
             loss = sum(coef.get(k, 1.0) * v for k, v in losses.items())

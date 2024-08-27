@@ -18,13 +18,14 @@ T = TypeVar("T")
 class Tensorlike:
     """A class for representing complex tensor-like objects.
 
-    The class exposes an interface much like torch.Tensor. Moreover, one can use torch functions such as torch.cat, torch.stack etc. on tensor-likes, and the output shall be a tensor-like of the same type.
+    Features:
 
-    User can register tensor fields via `register`. When using operations such as slicing, stacking, concatenating etc., the output is a tensor-like, with
+    - Exposes an interface much like torch.Tensor. One can use torch functions such as `torch.cat`, `torch.stack` etc. on tensor-likes, and the output shall be a tensor-like of the same type.
+
+    - User can register tensor fields via `register`. When using operations such as slicing, stacking, concatenating etc., the output is a tensor-like, with
     operations being executed over the tensor fields.
 
-    Other features:
-    - Values of cached properties are not copied over to the new instances.
+    - When a "child" tensorlike is created, non-Tensor fields are simply copied, *except* for cached properties (see `functools.cached_property`.)
     """
 
     def __init__(self, shape: torch.Size):

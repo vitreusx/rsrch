@@ -250,12 +250,12 @@ class OptRSSM(nn.Module):
         hidden_size = self.cfg.hidden_size
 
         self._img_in_s = nn.Linear(self.stoch_size, hidden_size)
-        self._img_in_a = nn.Linear(self.act_size, hidden_size)
+        self._img_in_a = nn.Linear(self.act_size, hidden_size, bias=False)
         self._cell = nets.GRUCellLN(hidden_size, self.deter_size, norm=True)
         self._img_out = nn.Linear(self.deter_size, hidden_size)
         self._img_proj = nn.Linear(hidden_size, self.stoch_size)
         self._obs_out_d = nn.Linear(self.deter_size, hidden_size)
-        self._obs_out_o = nn.Linear(self.obs_size, hidden_size)
+        self._obs_out_o = nn.Linear(self.obs_size, hidden_size, bias=False)
         self._obs_proj = nn.Linear(hidden_size, self.stoch_size)
 
         self.register_buffer("deter0", torch.zeros(self.deter_size))
@@ -389,7 +389,7 @@ class OptRSSM(nn.Module):
         return sample
 
 
-def RSSM(cfg: Config, obs_size: int, act_size: int) -> OptRSSM | GenericRSSM:  #
+def RSSM(cfg: Config, obs_size: int, act_size: int) -> OptRSSM | GenericRSSM:
     if cfg.jit:
         module = OptRSSM(cfg, obs_size, act_size)
         module: OptRSSM = torch.jit.script(module)

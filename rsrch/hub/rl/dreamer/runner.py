@@ -620,7 +620,10 @@ class Runner:
                 start=wm_batch["start"],
             )
 
-            (ac_states, action, reward, term) = self._get_dream_batch(
+        self.wm_trainer.opt_step(wm_loss, self.fwd_mtx)
+
+        with self.fwd_mtx:
+            (ac_states, action, reward, term) = self.dream(
                 initial=wm_states.flatten(),
                 term=wm_batch["term"].flatten(),
             )
@@ -636,7 +639,6 @@ class Runner:
             )
 
         self.ac_trainer.opt_step(ac_loss, self.fwd_mtx)
-        self.wm_trainer.opt_step(wm_loss, self.fwd_mtx)
 
         self.train_ds.update_states(wm_batch["pos"], wm_states[-1])
 
@@ -651,8 +653,9 @@ class Runner:
         self.wm_opt_step += 1
         self.ac_opt_step += 1
 
-    def _get_dream_batch(self, initial, term):
+    def dream(self, initial, term):
         self.wm.requires_grad_(False)
+
         with autocast(self.device, self.compute_dtype):
             states, actions = [initial], []
             for _ in range(self.cfg.train.horizon):
@@ -669,6 +672,7 @@ class Runner:
             term_dist = over_seq(self.wm.term_dec)(states)
             term_ = term_dist.mean.contiguous()
             term_[0] = term.float()
+
         self.wm.requires_grad_(True)
 
         return states, actions, reward, term_
@@ -849,7 +853,7 @@ class Runner:
                     start=wm_batch["start"],
                 )[0]
 
-                (ac_states, action, reward, term) = self._get_dream_batch(
+                (ac_states, action, reward, term) = self.dream(
                     initial=wm_states.flatten(),
                     term=wm_batch["term"].flatten(),
                 )
@@ -894,7 +898,7 @@ class Runner:
                     start=wm_batch["start"],
                 )[0]
 
-            (ac_states, action, reward, term) = self._get_dream_batch(
+            (ac_states, action, reward, term) = self.dream(
                 initial=wm_states.flatten(),
                 term=wm_batch["term"].flatten(),
             )
