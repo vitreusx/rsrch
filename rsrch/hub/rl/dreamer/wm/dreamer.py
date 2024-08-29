@@ -165,7 +165,7 @@ class Trainer(TrainerBase):
             if isinstance(obs_dist, dict):
                 for name, dist in obs_dist.items():
                     losses[name] = -dist.log_prob(obs[name]).mean()
-                mets["obs_loss"] = sum(losses[name].detach() for name in obs_dist)
+                obs_loss = sum(losses[name].detach() for name in obs_dist)
             else:
                 losses["obs"] = -obs_dist.log_prob(obs).mean()
 
@@ -196,6 +196,8 @@ class Trainer(TrainerBase):
                 mets["loss"] = loss.detach()
                 for k, v in losses.items():
                     mets[f"{k}_loss"] = v.detach()
+                if "obs_loss" in locals():
+                    mets["obs_loss"] = obs_loss
 
         return loss, mets, states.detach()
 

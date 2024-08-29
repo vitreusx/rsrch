@@ -26,11 +26,30 @@ atari:
       - train_loop:
           until: ${1e5 * _freq}
           tasks:
-            - val_epoch: ~
+            - do_val_epoch: ~
               every: ${5e3 * _freq}
             - do_opt_step: ~
               every: ${_freq}
             - do_env_step
+
+  train_val:
+    _freq: 64
+    train.val_frac: 0.15
+    stages:
+      - env_rollout:
+          until: ${3e3 * _freq}
+          mode: rand
+      - train_loop:
+          until: ${1e5 * _freq}
+          tasks:
+            - do_val_epoch: ~
+              every: ${5e3 * _freq}
+            - do_val_step: ~
+              every: { n: 32, of: wm_opt_step }
+            - do_opt_step: ~
+              every: ${_freq}
+            - do_env_step
+
 dmc:
   base:
     wm.dreamer:
@@ -91,11 +110,4 @@ dmc:
             - do_env_step
 
 default:
-  $extends: [atari.base, atari.train]
-  env.atari.env_id: Boxing
-  repro.seed: 0
-  # $extends: [dmc.base, dmc.vision]
-  # $extends: [dmc.base, dmc.proprio, dmc.train]
-  # debug.detect_anomaly: true
-  # wm.dreamer.rssm.jit: true
-  # extras.discrete_actions: 8
+  $extends: [atari.base, atari.train_val]

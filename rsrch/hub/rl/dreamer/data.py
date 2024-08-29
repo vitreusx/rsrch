@@ -1,5 +1,7 @@
+import threading
 from collections import deque
-from typing import Literal
+from queue import Queue
+from typing import Iterator, Literal
 
 import numpy as np
 import torch
@@ -31,7 +33,7 @@ class StateCache:
         self._order.clear()
 
 
-class Slices(data.IterableDataset):
+class SliceLoader(data.IterableDataset):
     def __init__(
         self,
         buf: rl.data.Buffer,
@@ -125,7 +127,7 @@ class Slices(data.IterableDataset):
             if len(batch) == 0:
                 break
 
-            yield from batch
+            yield self.collate_fn(batch)
 
     def _subseq(self, seq: list[dict], start, end):
         seq = seq[start:end]
@@ -148,8 +150,7 @@ class Slices(data.IterableDataset):
             end = offset + self.slice_len
             self.states[seq_id, end] = state
 
-    @staticmethod
-    def collate_fn(batch):
+    def collate_fn(self, batch):
         return {
             "obs": torch.stack([seq["obs"] for seq in batch], 1),
             "act": torch.stack([seq["act"] for seq in batch], 1),
@@ -159,3 +160,24 @@ class Slices(data.IterableDataset):
             "pos": [seq["pos"] for seq in batch],
             "start": [seq["start"] for seq in batch],
         }
+
+
+def make_async(iterator: Iterator):
+    """Make an iterator "asynchronous."
+
+    To be precise, the fetching from the iterator is done by a separate thread."""
+
+    batches = Queue(maxsize=1)
+
+    def loader_fn():
+        while True:
+            batches.put(next(iterator))
+
+    thr = threading.Thread(target=loader_fn, daemon=True)
+    thr.start()
+
+    def fetch_fn():
+        while True:
+            yield batches.get()
+
+    return iter(fetch_fn())

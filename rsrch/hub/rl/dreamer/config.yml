@@ -143,7 +143,6 @@ ac:
       momentum: 1.0
       scale: 1.0
       eps: 1e-8
-  sac: ~
 
 stages:
   - env_rollout:

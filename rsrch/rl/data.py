@@ -6,22 +6,10 @@ import numpy as np
 from rsrch.types.rq_tree import rq_tree
 
 
-class Hook:
-    def on_create(self, seq_id: int, seq: dict):
-        pass
-
-    def on_update(self, seq_id: int, seq: dict):
-        pass
-
-    def on_delete(self, seq_id: int, seq: dict):
-        pass
-
-
 class Buffer(MutableMapping):
     def __init__(self):
-        self.data = {}
+        self.data: dict[int, list] = {}
         self._next_id = 0
-        self.hooks: list[Hook] = []
 
     def save(self):
         return (self.data, self._next_id)
@@ -51,8 +39,6 @@ class Buffer(MutableMapping):
 
     def __delitem__(self, seq_id: int):
         seq = self.data[seq_id]
-        for hook in self.hooks:
-            hook.on_delete(seq_id, seq)
         del self.data[seq_id]
 
     def reset(self, obs) -> int:
@@ -60,16 +46,12 @@ class Buffer(MutableMapping):
         self._next_id += 1
         seq = [obs]
         self.data[seq_id] = seq
-        for hook in self.hooks:
-            hook.on_create(seq_id, seq)
         return seq_id
 
     def step(self, seq_id: int, act, step):
         seq = self.data[seq_id]
         next_obs, final = step
         seq.append({**next_obs, "act": act})
-        for hook in self.hooks:
-            hook.on_update(seq_id, seq)
 
     def push(self, seq_id: int | None, step: dict, final: bool):
         if seq_id is None:
@@ -87,23 +69,18 @@ class Buffer(MutableMapping):
 class Wrapper(MutableMapping):
     def __init__(self, buf: Buffer):
         self.buf = buf
-        self._unwrapped: Buffer = getattr(buf, "_unwrapped", buf)
-
-    @property
-    def hooks(self):
-        return self._unwrapped.hooks
 
     def save(self):
-        return self._unwrapped.save()
+        return self.buf.save()
 
     def load(self, state):
-        self._unwrapped.load(state)
+        self.buf.load(state)
 
     def __iter__(self):
-        return iter(self._unwrapped)
+        return iter(self.buf)
 
     def __len__(self):
-        return len(self._unwrapped)
+        return len(self.buf)
 
     def __getitem__(self, seq_id: int):
         return self.buf[seq_id]
@@ -121,7 +98,7 @@ class Wrapper(MutableMapping):
         return self.buf.step(seq_id, act, next_obs)
 
     def push(self, seq_id, step, final):
-        return self._unwrapped.push(seq_id, step, final)
+        return self.buf.push(seq_id, step, final)
 
 
 class SizeLimited(Wrapper):
@@ -149,7 +126,7 @@ class SizeLimited(Wrapper):
 
 
 class Sampler:
-    def __init__(self, init_size=1024):
+    def __init__(self, init_size: int = 1024):
         self.prio_tree = rq_tree(init_size)
         self._key_to_idx, self._next_idx = {}, 0
         self._idx_to_key = []
@@ -188,61 +165,96 @@ class Sampler:
             yield self.sample()
 
 
-class Steps(Hook):
-    def __init__(self, buf: Buffer):
-        super().__init__()
-        self.buf = buf
-        self.buf.hooks.append(self)
-        self._sampler = Sampler()
-        self._update()
+class Hook:
+    buf: Buffer | None = None
 
-    def _update(self):
-        for seq_id, seq in self.buf.items():
-            num_steps = len(seq["act"])
-            for offset in range(num_steps):
-                self._sampler[(seq_id, offset)] = 1.0
+    def on_create(self, seq_id: int, seq: list):
+        pass
+
+    def on_update(self, seq_id: int, seq: list):
+        pass
+
+    def on_delete(self, seq_id: int, seq: list):
+        pass
+
+
+class Observable(Wrapper):
+    """An 'observable' version of the buffer. One can attach hooks to execute actions when sequences are added, updated or deleted."""
+
+    def __init__(self, buf: Buffer):
+        super().__init__(buf)
+        self._hooks: list[Hook] = []
+
+    def attach(self, hook: Hook, replay: bool = False):
+        """Attach a hook. If `replay`, execute actions for each of the sequences in the buffer."""
+
+        if hook.buf is not None:
+            raise ValueError("Cannot re-attach a hook.")
+
+        self._hooks.append(hook)
+        hook.buf = self
+        if replay:
+            for seq_id, seq in self.items():
+                hook.on_create(seq_id, seq[:1])
+                for t in range(2, len(seq)):
+                    hook.on_update(seq_id, seq[:t])
+
+    def reset(self, obs):
+        seq_id = super().reset(obs)
+        seq = self[seq_id]
+        for hook in self._hooks:
+            hook.on_create(seq_id, seq)
+        return seq_id
+
+    def step(self, seq_id, act, next_obs):
+        super().step(seq_id, act, next_obs)
+        seq = self[seq_id]
+        for hook in self._hooks:
+            hook.on_update(seq_id, seq)
+
+    def __delitem__(self, seq_id):
+        seq = self[seq_id]
+        for hook in self._hooks:
+            hook.on_delete(seq_id, seq)
+        super().__delitem__(seq_id)
+
+
+class StepView(Hook):
+    def __init__(self):
+        super().__init__()
+        self._sampler = Sampler()
 
     def on_update(self, seq_id, seq):
-        offset = len(seq["act"]) - 1
+        offset = len(seq) - 1
         self._sampler[(seq_id, offset)] = 1.0
 
     def on_delete(self, seq_id, seq):
-        num_steps = len(seq["act"])
-        for offset in range(num_steps):
+        for offset in range(len(seq) - 1):
             del self._sampler[(seq_id, offset)]
 
     def sample(self):
         seq_id, offset = self._sampler.sample()
-        res = self.buf[seq_id][offset + 1]
-        next_obs = res["obs"]
-        del res["obs"]
-        res["obs"] = self.buf[seq_id][offset]["obs"]
-        res["next_obs"] = next_obs
+        seq = self.buf[seq_id]
+        res = {**seq[offset + 1]}
+        obs = res["obs"]
+        res["obs"] = seq[offset]["obs"]
+        res["next_obs"] = obs
         return res
 
 
-class Slices(Hook):
-    def __init__(self, buf: Buffer, slice_len: int):
+class SliceView(Hook):
+    def __init__(self, slice_len: int):
         super().__init__()
-        self.buf = buf
         self.slice_len = slice_len
-        self.buf.hooks.append(self)
         self._sampler = Sampler()
-        self._update()
-
-    def _update(self):
-        for seq_id, seq in self.buf.items():
-            num_slices = max(len(seq["act"]) - self.slice_len + 1, 0)
-            for offset in range(num_slices):
-                self._sampler[(seq_id, offset)] = 1.0
 
     def on_update(self, seq_id, seq):
-        offset = len(seq["act"]) - self.slice_len
+        offset = len(seq) - self.slice_len
         if offset >= 0:
             self._sampler[(seq_id, offset)] = 1.0
 
     def on_delete(self, seq_id, seq):
-        num_slices = max(len(seq["act"]) - self.slice_len + 1, 0)
+        num_slices = max(len(seq) - self.slice_len + 1, 0)
         for offset in range(num_slices):
             del self._sampler[(seq_id, offset)]
 

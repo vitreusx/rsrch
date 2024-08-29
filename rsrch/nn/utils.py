@@ -22,9 +22,11 @@ def safe_mode(*nets: nn.Module, enabled: bool = True):
             for net in nets:
                 net.eval()
             with torch.no_grad():
-                yield
-            for net, val in zip(nets, prev):
-                net.train(mode=val)
+                try:
+                    yield
+                finally:
+                    for net, val in zip(nets, prev):
+                        net.train(mode=val)
         else:
             yield
 
@@ -114,3 +116,17 @@ def pass_gradient(value: Tensor, to: Tensor) -> Tensor:
         return value.detach() + (to - to.detach())
     else:
         return PassGradient.apply(value, to)
+
+
+@contextmanager
+def frozen(*nets: nn.Module):
+    """Freeze networks, setting requires_grad to False for all the parameters."""
+
+    for net in nets:
+        net.requires_grad_(False)
+
+    try:
+        yield
+    finally:
+        for net in nets:
+            net.requires_grad_(True)
