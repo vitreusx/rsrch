@@ -9,8 +9,8 @@ def main():
     p = argparse.ArgumentParser()
     args = p.parse_args()
 
-    seeds = [0, 1, 2]
-    envs = ["MsPacman"]
+    seeds = [0]
+    envs = ATARI_100k_3
     freqs = [64, 32, 16, 8, 4]
 
     common_args = [
