@@ -1,4 +1,5 @@
 import argparse
+import io
 import logging
 import os
 import shlex
@@ -6,12 +7,35 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 from pathlib import Path
-from subprocess import DEVNULL
+from subprocess import DEVNULL, PIPE
 
 import git
 import jinja2
-import paramiko
+
+
+def remote_dump(host: str, text: str, prefix: str):
+    """Given an SSH host, text and a prefix, dump contents of the stream to a temp file on the host, and return the path."""
+
+    host_file = tempfile.mktemp()
+    with open(host_file, "w") as f:
+        f.write(text)
+
+    msg = "File contents:\n" + textwrap.indent(text, " " * 4)
+    logging.info(msg)
+
+    CMD = ["ssh", host, "mktemp", f"{prefix}.XXXXXXXX", "-p", "/tmp"]
+    logging.info(shlex.join(CMD))
+    remote_file = subprocess.check_output(CMD).decode().rstrip()
+
+    CMD = ["scp", host_file, f"{host}:{remote_file}"]
+    logging.info(shlex.join(CMD))
+    subprocess.run(CMD, stdout=DEVNULL).check_returncode()
+
+    Path(host_file).unlink()
+
+    return remote_file
 
 
 def main():
@@ -22,6 +46,13 @@ def main():
 
     p = argparse.ArgumentParser()
     sp = p.add_subparsers(dest="mode")
+
+    p.add_argument(
+        "--repo-dir",
+        type=str,
+        default="$HOME/self/rsrch",
+        help="Repo dir to use. NOTE: Do not use ~ for $HOME.",
+    )
 
     sync_p = sp.add_parser(
         "sync",
@@ -77,6 +108,24 @@ def main():
         help="A file with commands. If '-' or not provided, read the commands from stdin.",
     )
 
+    kill_p = sp.add_parser(
+        "kill",
+        help="Kill running grid launch.",
+    )
+    kill_p.add_argument(
+        "--hosts",
+        nargs="+",
+        type=str,
+        help="A list of ssh hosts to deploy the commands to",
+    )
+    kill_p.add_argument(
+        "-s",
+        "--session",
+        type=str,
+        required=True,
+        help="tmux session name",
+    )
+
     args = p.parse_args()
 
     # For some reason, trying to read args.commands after sync_hosts call
@@ -86,9 +135,9 @@ def main():
 
     hosts = args.hosts
     for host in hosts:
-        CMD = ["ssh", "-o", "ConnectTimeout=10", host]
+        CMD = ["ssh", host]
         logging.info(shlex.join(CMD))
-        subprocess.run(CMD, stdout=DEVNULL).check_returncode()
+        subprocess.run(CMD, stdout=DEVNULL, timeout=10.0).check_returncode()
 
     def sync_hosts():
         repo = git.Repo(
@@ -110,26 +159,13 @@ def main():
             git_user_name=git_user_name,
             git_user_email=git_user_email,
             git_ref=git_ref,
+            repo_dir=args.repo_dir,
         )
 
-        sync_host_path = tempfile.mktemp(prefix="sync_host.")
-        with open(sync_host_path, "w") as f:
-            f.write(sync_host)
-
         for host in hosts:
-            CMD = ["ssh", host, "mktemp", "sync_host.XXXXXXXX", "-p", "/tmp"]
-            logging.info(shlex.join(CMD))
-            remote_sync = subprocess.check_output(CMD).decode().rstrip()
+            script_path = remote_dump(host, sync_host, "sync_host")
 
-            CMD = ["scp", sync_host_path, f"{host}:{remote_sync}"]
-            logging.info(shlex.join(CMD))
-            subprocess.run(CMD, stdout=DEVNULL).check_returncode()
-
-            CMD = ["ssh", host, "bash", "-i", remote_sync]
-            logging.info(shlex.join(CMD))
-            subprocess.run(CMD).check_returncode()
-
-            CMD = ["ssh", host, "rm", remote_sync]
+            CMD = ["ssh", host, "bash", "-i", script_path]
             logging.info(shlex.join(CMD))
             subprocess.run(CMD).check_returncode()
 
@@ -148,28 +184,27 @@ def main():
         all_cmds = [all_cmds[start:end] for start, end in zip(pivots, pivots[1:])]
 
         for host, cmds in zip(hosts, all_cmds):
-            CMD = ["ssh", host, "mktemp", "cmd.XXXXXXXX", "-p", "/tmp"]
+            cmd_path = remote_dump(host, "\n".join(cmds), "cmd")
+
+            tmux_script = f"""
+cd "{args.repo_dir}"
+source $(poetry env info --path)/bin/activate
+parallel -j{args.tasks_per_host} -a "{cmd_path}"
+""".strip()
+            tmux_path = remote_dump(host, tmux_script, "tmux")
+
+            exec_script = (
+                f'tmux new-session -s "{args.session}" -d "source {tmux_path}"'
+            )
+            exec_path = remote_dump(host, exec_script, "exec")
+
+            CMD = ["ssh", host, "bash", "-i", exec_path]
             logging.info(shlex.join(CMD))
-            remote_cmd = subprocess.check_output(CMD).decode().rstrip()
+            subprocess.run(CMD).check_returncode()
 
-            host_cmd = tempfile.mktemp(prefix="cmd.")
-            with open(host_cmd, "w") as f:
-                f.writelines(cmd + "\n" for cmd in cmds)
-
-            CMD = ["scp", host_cmd, f"{host}:{remote_cmd}"]
-            logging.info(shlex.join(CMD))
-            subprocess.run(CMD, stdout=DEVNULL).check_returncode()
-
-            CMD = [
-                "ssh",
-                host,
-                "tmux",
-                "new-session",
-                "-s",
-                args.session,
-                "-d",
-                f"parallel -j{args.tasks_per_host} -a {remote_cmd}",
-            ]
+    def kill():
+        for host in hosts:
+            CMD = ["ssh", host, "tmux", "send-key", "-t", args.session, "C-c"]
             logging.info(shlex.join(CMD))
             subprocess.run(CMD).check_returncode()
 
@@ -180,6 +215,8 @@ def main():
             fail_if_dirty()
         sync_hosts()
         grid_launch()
+    elif args.mode == "kill":
+        kill()
 
 
 if __name__ == "__main__":
