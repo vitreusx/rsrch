@@ -10,12 +10,15 @@ if [ ! -d "${HOME}/miniforge3" ]; then
     rm -f /tmp/Miniforge3.sh
 
     ~/miniforge3/bin/conda init --all
+
+    # We cannot use exec $SHELL over ssh, so we need to source the rc files
+    # manually.
     if [ "${SHELL}" = "/usr/bin/bash" ]; then
         source ~/.bashrc
     elif [ "${SHELL}" = "/usr/bin/zsh" ]; then
-        source $HOME/.zshenv && source ${ZDOTDIR:-$HOME}/.zshrc
+        source ${ZDOTDIR:-$HOME}/.zshrc
     else
-        echo "Cannot reload shell!"
+        echo "Shell ${SHELL} is not supported!"
         exit 1
     fi
 
@@ -26,17 +29,20 @@ python3 -m pip install pipx keyring
 python3 -m pipx ensurepath
 python3 -m pipx install poetry
 
-if [ ! -d "${HOME}/self/rsrch" ]; then
-    mkdir -p ~/self
-    git clone "https://github.com/vitreusx/rsrch" ~/self/rsrch
-    cd ~/self/rsrch
-    git config user.name "vitreusx"
-    git config user.email "jakub_bednarz@protonmail.com"
+REPO_DIR="${HOME}/self/rsrch"
+
+if [ ! -d "${REPO_DIR}" ]; then
+    mkdir -p "$(dirname "${REPO_DIR}")"
+    git clone "{{ git_repo_url }}" "${REPO_DIR}"
+    cd "${REPO_DIR}"
+    git config user.name "{{ git_user_name }}"
+    git config user.email "{{ git_user_email }}"
 fi
 
-cd ~/self/rsrch
-git checkout devel
+cd "${REPO_DIR}"
+git fetch -a
+git checkout "{{ git_ref }}"
 git pull
 
-python -m keyring --disable || true
+python -m keyring --disable 2>/dev/null || true
 POETRY_NO_INTERACTION=1 ~/.local/bin/poetry install --sync

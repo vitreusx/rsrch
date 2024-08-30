@@ -477,3 +477,5 @@ TSWLatexianTemp*
 /wandb
 /MUJOCO_LOG.TXT
 /torch_compile_debug
+/results
+/*.zip
