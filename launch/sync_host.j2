@@ -43,6 +43,7 @@ cd "${REPO_DIR}"
 git fetch -a
 git checkout "{{ git_ref }}"
 git pull
+git clean -xdf
 
 python -m keyring --disable 2>/dev/null || true
 POETRY_NO_INTERACTION=1 ~/.local/bin/poetry install --sync
