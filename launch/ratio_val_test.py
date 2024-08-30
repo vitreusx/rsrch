@@ -9,9 +9,9 @@ def main():
     p = argparse.ArgumentParser()
     args = p.parse_args()
 
-    seeds = [*range(3)]
-    envs = ATARI_100k_5
-    freqs = [64, 24, 4]
+    seeds = [0, 1, 2]
+    envs = ["MsPacman"]
+    freqs = [64, 32, 16, 8, 4]
 
     common_args = [
         "python",
@@ -19,7 +19,7 @@ def main():
         "rsrch.hub.rl.dreamer",
         "-p",
         "atari.base",
-        "atari.train",
+        "atari.train_val",
     ]
 
     common_opts = {

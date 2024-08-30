@@ -2,6 +2,8 @@ import io
 
 from ruamel.yaml import YAML
 
+ATARI_100k_1 = "BattleZone"
+
 ATARI_100k_3 = [
     "BattleZone",
     "DemonAttack",

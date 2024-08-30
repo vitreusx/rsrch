@@ -1,0 +1,42 @@
+#!/usr/bin/bash -i
+set -exo pipefail
+
+if [ ! -d "${HOME}/miniforge3" ]; then
+    NAME="Miniforge3-$(uname)-$(uname -m).sh"
+    URL="https://github.com/conda-forge/miniforge/releases/latest/download/${NAME}"
+    curl "${URL}" -L -o /tmp/Miniforge3.sh
+    chmod a+x /tmp/Miniforge3.sh
+    /tmp/Miniforge3.sh -b
+    rm -f /tmp/Miniforge3.sh
+
+    ~/miniforge3/bin/conda init --all
+    if [ "${SHELL}" = "/usr/bin/bash" ]; then
+        source ~/.bashrc
+    elif [ "${SHELL}" = "/usr/bin/zsh" ]; then
+        source $HOME/.zshenv && source ${ZDOTDIR:-$HOME}/.zshrc
+    else
+        echo "Cannot reload shell!"
+        exit 1
+    fi
+
+    conda install -y python=3.10 tmux parallel git
+fi
+
+python3 -m pip install pipx keyring
+python3 -m pipx ensurepath
+python3 -m pipx install poetry
+
+if [ ! -d "${HOME}/self/rsrch" ]; then
+    mkdir -p ~/self
+    git clone "https://github.com/vitreusx/rsrch" ~/self/rsrch
+    cd ~/self/rsrch
+    git config user.name "vitreusx"
+    git config user.email "jakub_bednarz@protonmail.com"
+fi
+
+cd ~/self/rsrch
+git checkout devel
+git pull
+
+python -m keyring --disable || true
+POETRY_NO_INTERACTION=1 ~/.local/bin/poetry install --sync

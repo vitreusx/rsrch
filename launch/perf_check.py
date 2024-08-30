@@ -7,7 +7,6 @@ from .common import *
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
 
     seeds = [0]
