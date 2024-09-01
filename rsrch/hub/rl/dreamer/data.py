@@ -176,8 +176,5 @@ def make_async(iterator: Iterator):
     thr = threading.Thread(target=loader_fn, daemon=True)
     thr.start()
 
-    def fetch_fn():
-        while True:
-            yield batches.get()
-
-    return iter(fetch_fn())
+    while True:
+        yield batches.get()

@@ -120,6 +120,8 @@ class Trainer(TrainerBase):
         self.opt = self._make_opt()
         self.parameters = [*self.actor.parameters(), *self.critic.parameters()]
         self.opt_iter = 0
+        self._device = next(self.actor.parameters()).device
+        self.scaler = getattr(torch, self._device.type).amp.GradScaler()
 
     def _make_opt(self):
         cfg = {**self.cfg.opt}
