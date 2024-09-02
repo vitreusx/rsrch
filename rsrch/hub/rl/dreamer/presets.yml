@@ -34,7 +34,7 @@ atari:
 
   train_val:
     _freq: 64
-    train.val_frac: 0.15
+    train.val_frac: 0.1
     stages:
       - env_rollout:
           until: ${3e3 * _freq}
@@ -45,7 +45,7 @@ atari:
             - do_val_epoch: ~
               every: ${5e3 * _freq}
             - do_val_step: ~
-              every: { n: 32, of: wm_opt_step }
+              every: { n: 16, of: wm_opt_step }
             - do_opt_step: ~
               every: ${_freq}
             - do_env_step

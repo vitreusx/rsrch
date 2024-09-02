@@ -152,7 +152,7 @@ def main():
 
         env = jinja2.Environment()
         loader = jinja2.FileSystemLoader(Path(__file__).parent)
-        sync_host_tmpl = loader.load(env, "sync_host.j2")
+        sync_host_tmpl = loader.load(env, "sync_host.sh.j2")
 
         sync_host = sync_host_tmpl.render(
             git_repo_url=git_repo_url,

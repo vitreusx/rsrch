@@ -217,18 +217,21 @@ class Runner:
         cfg = self.cfg.train
 
         self.train_sampler = rl.data.Sampler()
+        self.val_sampler = rl.data.Sampler()
         self.val_ids = set()
 
         class SplitHook(rl.data.Hook):
             def on_create(hook, seq_id: int, seq: dict):
-                is_val = np.random.rand() < cfg.val_frac
+                is_val = (len(self.val_ids) == 0) or (np.random.rand() < cfg.val_frac)
                 if is_val:
+                    self.val_sampler.add(seq_id)
                     self.val_ids.add(seq_id)
                 else:
                     self.train_sampler.add(seq_id)
 
             def on_delete(hook, seq_id: int, seq: dict):
                 if seq_id in self.val_ids:
+                    del self.val_sampler[seq_id]
                     self.val_ids.remove(seq_id)
                 else:
                     del self.train_sampler[seq_id]
@@ -251,12 +254,20 @@ class Runner:
 
         self.val_loader = data.SliceLoader(
             buf=self.buf,
+            sampler=self.val_sampler,
+            **ds_cfg,
+        )
+        self.val_iter = iter(self.val_loader)
+
+        self.val_epoch_loader = data.SliceLoader(
+            buf=self.buf,
             sampler=self.val_ids,
             **ds_cfg,
         )
 
         if self.cfg.repro.determinism != "full":
             self.train_iter = data.make_async(self.train_iter)
+            self.val_iter = data.make_async(self.val_iter)
 
         self.wm_trainer, self.ac_trainer = self._make_trainers(self.wm, self.actor)
 
@@ -500,6 +511,39 @@ class Runner:
         self.wm_opt_step += 1
         self.ac_opt_step += 1
 
+    def do_val_step(self):
+        if len(self.val_ids) == 0:
+            return
+
+        with self.buf_mtx:
+            wm_batch = next(self.val_iter)
+
+        wm_batch = self._move_to_device(wm_batch)
+
+        self.wm_trainer.eval()
+        self.ac_trainer.eval()
+
+        wm_loss, wm_mets, wm_states = self.wm_trainer.compute(
+            obs=wm_batch["obs"],
+            act=wm_batch["act"],
+            reward=wm_batch["reward"],
+            term=wm_batch["term"],
+            start=wm_batch["start"],
+        )
+
+        ac_batch = self.dream(
+            initial=wm_states.flatten(),
+            term=wm_batch["term"].flatten(),
+        )
+
+        ac_loss, ac_mets = self.ac_trainer.compute(**ac_batch)
+
+        with self.buf_mtx:
+            self.val_loader.update_states(wm_batch["pos"], wm_states[-1])
+
+        self.exp.add_scalar(f"wm/val_loss", wm_loss, step="wm_opt_step")
+        self.exp.add_scalar(f"ac/val_loss", ac_loss, step="wm_opt_step")
+
     def dream(self, initial, term):
         self.wm.requires_grad_(False)
 
@@ -588,8 +632,8 @@ class Runner:
 
         val_loss, val_n = 0.0, 0
 
-        self.val_loader.states.clear()
-        val_iter = iter(islice(self.val_loader, 0, max_batches))
+        self.val_epoch_loader.states.clear()
+        val_iter = iter(islice(self.val_epoch_loader, 0, max_batches))
 
         while True:
             with self.buf_mtx:
@@ -609,7 +653,7 @@ class Runner:
             )
 
             with self.buf_mtx:
-                self.val_ds.update_states(wm_batch["pos"], wm_states[-1])
+                self.val_loader.update_states(wm_batch["pos"], wm_states[-1])
 
             val_loss += wm_loss
             val_n += 1
@@ -680,8 +724,8 @@ class Runner:
 
         val_loss, val_n = 0.0, 0
 
-        self.val_loader.states.clear()
-        val_iter = iter(islice(self.val_loader, 0, limit))
+        self.val_epoch_loader.states.clear()
+        val_iter = iter(islice(self.val_epoch_loader, 0, limit))
 
         while True:
             with self.buf_mtx:
@@ -700,7 +744,7 @@ class Runner:
                 start=wm_batch["start"],
             )[0]
 
-            ac_batch = self.get_dream_batch(
+            ac_batch = self.dream(
                 initial=wm_states.flatten(),
                 term=wm_batch["term"].flatten(),
             )
@@ -733,7 +777,7 @@ class Runner:
                 start=wm_batch["start"],
             )[0]
 
-        ac_batch = self.get_dream_batch(
+        ac_batch = self.dream(
             initial=wm_states.flatten(),
             term=wm_batch["term"].flatten(),
         )
