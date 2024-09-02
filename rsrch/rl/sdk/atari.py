@@ -231,7 +231,7 @@ class AgentWrapper(gym.Agent):
 
 
 class BufferWrapper(data.Wrapper):
-    KEYS = ["obs", "act", "reward", "term"]
+    KEYS = ["obs", "act", "reward", "term", "trunc"]
 
     def __init__(
         self,

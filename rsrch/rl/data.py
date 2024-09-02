@@ -38,7 +38,6 @@ class Buffer(MutableMapping):
         raise RuntimeError("Cannot set buffer sequence directly.")
 
     def __delitem__(self, seq_id: int):
-        seq = self.data[seq_id]
         del self.data[seq_id]
 
     def reset(self, obs) -> int:
@@ -98,7 +97,16 @@ class Wrapper(MutableMapping):
         return self.buf.step(seq_id, act, next_obs)
 
     def push(self, seq_id, step, final):
-        return self.buf.push(seq_id, step, final)
+        if seq_id is None:
+            return self.reset(step)
+        else:
+            step = {**step}
+            act = step["act"]
+            del step["act"]
+            self.step(seq_id, act, (step, final))
+            if final:
+                seq_id = None
+            return seq_id
 
 
 class SizeLimited(Wrapper):
@@ -196,7 +204,7 @@ class Observable(Wrapper):
         if replay:
             for seq_id, seq in self.items():
                 hook.on_create(seq_id, seq[:1])
-                for t in range(2, len(seq)):
+                for t in range(2, len(seq) + 1):
                     hook.on_update(seq_id, seq[:t])
 
     def reset(self, obs):

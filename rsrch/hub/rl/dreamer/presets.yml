@@ -110,4 +110,4 @@ dmc:
             - do_env_step
 
 default:
-  $extends: [atari.base, atari.train_val]
+  $extends: [atari.base, atari.train]
