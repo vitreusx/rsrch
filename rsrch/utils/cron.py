@@ -1,49 +1,65 @@
+from typing import Callable
+
+
 class Every:
-    """A flag for running actions based on a loop counter, or other
-    monotonically increasing variable."""
+    """A flag for running actions periodically.
+
+    The behavior is as follows. Consider following code block:
+
+    ```python
+    step = step_0
+    should_do = Every(lambda: step, period, iters)
+    while True:
+        while should_do:
+            perform_action()
+        step += S
+    ```
+
+    Then,
+    - If `iters` is None, `bool(should_do)` is True every `period` steps, and stays True for as long as the step value is the same (in the case of the code above, `while` loop wouldn't terminate.) This setting is useful for e.g. logging metrics every so often, since for a given time step we want to log all the metrics, i.e. `bool(...)` should be True for the entire step.
+    - If `iters` is not None, then:
+        - `while` loop may repeat zero or more times;
+        - At step value `step`, we expect `perform_action` to have been invoked roughly `(step - step_0) * iters / period` times: every `period` steps, `while` loop will get repeated `iters` times.
+        - The step increment `S` may be greater than 1 - the mean number of calls to `perform_action` per single step will be same as above.
+    """
 
     def __init__(
         self,
-        step_fn,
-        every: int = 1,
+        step_fn: Callable[[], float],
+        every: float,
         iters: int | None = 1,
         never: bool = False,
     ):
-        """Create the flag variable.
-        :param step_fn: Step function, i.e. a function which returns current step value/loop counter.
-        :param every: How often (in terms of steps) to signal True.
-        :param iters: How many times, once the period of `every` has passed, to signal True. If None, the flag is on for as long as the trigger step value is the same.
-        """
-
         self.step_fn = step_fn
-        self.every, self.iters, self.never = every, iters, never
-        self._last, self._sent, self._acc = None, None, None
+        self.every = every
+        self.iters = iters
+        self.never = never
+        self.reset()
+
+    def reset(self):
+        self._last = None
+        self._acc = 0
 
     def __bool__(self):
         if self.never:
             return False
 
-        cur_step = self.step_fn()
-
-        if self._last is None:
-            self._last = self._sent = cur_step
-            if self.iters is not None:
+        step = self.step_fn()
+        if self.iters is None:
+            if (self._last is None) or (step - self._last >= self.every):
+                self._last = step
+            return step == self._last
+        else:
+            if self._last is None:
                 self._acc = self.iters
-        elif cur_step - self._sent >= self.every:
-            cycles = (cur_step - self._sent) // self.every
-            self._sent += cycles * self.every
-            self._last = cur_step
-            if self.iters is not None:
-                self._acc = self.iters
-
-        if cur_step == self._last:
-            if self._acc is None:
+            else:
+                self._acc += (step - self._last) * self.iters
+            self._last = step
+            if self._acc >= self.every:
+                self._acc -= self.every
                 return True
-            elif self._acc >= 1:
-                self._acc -= 1
-                return True
-
-        return False
+            else:
+                return False
 
 
 class Until:

@@ -37,13 +37,13 @@ atari:
     data.val_frac: 0.1
     stages:
       - env_rollout:
-          until: ${3e3 * _freq}
+          until: ${max(3e3 * _freq, 12e3)}
           mode: rand
       - train_loop:
-          until: ${1e5 * _freq}
+          until: ${max(1e5 * _freq, 400e3)}
           tasks:
             - do_val_epoch: ~
-              every: ${5e3 * _freq}
+              every: ${max(5e3 * _freq, 20e3)}
             - do_val_step: ~
               every: { n: 16, of: wm_opt_step }
             - do_opt_step: ~
