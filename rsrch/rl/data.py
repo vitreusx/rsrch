@@ -68,6 +68,11 @@ class Buffer(MutableMapping):
 class Wrapper(MutableMapping):
     def __init__(self, buf: Buffer):
         self.buf = buf
+        self._unwrapped = getattr(self.buf, "_unwrapped", self.buf)
+
+    @property
+    def data(self):
+        return self._unwrapped.data
 
     def save(self):
         return self.buf.save()
@@ -176,13 +181,13 @@ class Sampler:
 class Hook:
     buf: Buffer | None = None
 
-    def on_create(self, seq_id: int, seq: list):
+    def on_create(self, seq_id: int):
         pass
 
-    def on_update(self, seq_id: int, seq: list):
+    def on_update(self, seq_id: int, time: int):
         pass
 
-    def on_delete(self, seq_id: int, seq: list):
+    def on_delete(self, seq_id: int):
         pass
 
 
@@ -203,27 +208,26 @@ class Observable(Wrapper):
         hook.buf = self
         if replay:
             for seq_id, seq in self.items():
-                hook.on_create(seq_id, seq[:1])
-                for t in range(2, len(seq) + 1):
-                    hook.on_update(seq_id, seq[:t])
+                hook.on_create(seq_id)
+                for t in range(1, len(seq)):
+                    hook.on_update(seq_id, t)
 
     def reset(self, obs):
         seq_id = super().reset(obs)
-        seq = self[seq_id]
         for hook in self._hooks:
-            hook.on_create(seq_id, seq)
+            hook.on_create(seq_id)
         return seq_id
 
     def step(self, seq_id, act, next_obs):
         super().step(seq_id, act, next_obs)
-        seq = self[seq_id]
+        seq_len = len(self.data[seq_id])
         for hook in self._hooks:
-            hook.on_update(seq_id, seq)
+            hook.on_update(seq_id, seq_len - 1)
 
     def __delitem__(self, seq_id):
         seq = self[seq_id]
         for hook in self._hooks:
-            hook.on_delete(seq_id, seq)
+            hook.on_delete(seq_id)
         super().__delitem__(seq_id)
 
 

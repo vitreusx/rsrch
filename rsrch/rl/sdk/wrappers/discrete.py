@@ -4,9 +4,8 @@ import numpy as np
 import torch
 
 from rsrch import spaces
-
-from .. import data, gym
-from .utils import MapSeq
+from rsrch.rl import data, gym
+from rsrch.rl.sdk.utils import MapSeq
 
 
 class Quantize:

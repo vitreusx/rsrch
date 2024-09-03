@@ -121,6 +121,15 @@ class Trainer(TrainerBase):
         self.parameters = [*self.actor.parameters(), *self.critic.parameters()]
         self.opt_iter = 0
 
+    def save(self):
+        state = super().save()
+        state["opt_iter"] = self.opt_iter
+        return state
+
+    def load(self, state):
+        super().load(state)
+        self.opt_iter = state["opt_iter"]
+
     def _make_opt(self):
         cfg = {**self.cfg.opt}
 

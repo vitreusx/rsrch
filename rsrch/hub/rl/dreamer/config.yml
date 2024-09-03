@@ -49,21 +49,25 @@ env:
     time_limit: 108e3
     stack_num: ~
 
-agent:
-  train_noise: 0.0
-  eval_noise: 0.0
-train:
-  dataset:
+data:
+  buffer:
     capacity: 2e6
     batch_size: 16
     slice_len: 50
     subseq_len: [50, 50]
     prioritize_ends: true
     ongoing: false
+  dream:
+    batch_size: ${data.buffer.batch_size}
+    horizon: 15
   val_frac: 0.0
+
+train:
   num_envs: 1
-  horizon: 15
-val_envs: 4
+  agent_noise: 0.0
+val:
+  num_envs: 4
+  agent_noise: 0.0
 
 wm:
   type: dreamer

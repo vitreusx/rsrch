@@ -17,14 +17,23 @@ class Config:
         create_commit: bool = True
         log_every: int = 4
 
-    @dataclass
-    class Debug:
-        detect_anomaly: bool
+    run: Run
 
     @dataclass
     class Repro:
         seed: int
         determinism: Literal["none", "sufficient", "full"]
+
+    repro: Repro
+    device: str
+    compute_dtype: Literal["float16", "float32"]
+    def_step: str
+
+    @dataclass
+    class Debug:
+        detect_anomaly: bool
+
+    debug: Debug
 
     @dataclass
     class Profile:
@@ -32,50 +41,65 @@ class Config:
         schedule: dict
         functions: list[str]
 
+    profile: Profile
+
+    env: rl.sdk.Config
+
+    @dataclass
+    class Data:
+        @dataclass
+        class Buffer:
+            capacity: int
+            batch_size: int
+            slice_len: int
+            subseq_len: int | tuple[int, int] | None = None
+            prioritize_ends: bool = False
+            ongoing: bool = False
+
+        buffer: Buffer
+
+        @dataclass
+        class Dream:
+            batch_size: int
+            horizon: int
+
+        dream: Dream
+        val_frac: float
+
+    data: Data
+
+    @dataclass
+    class Train:
+        num_envs: int
+        agent_noise: float
+
+    train: Train
+
+    @dataclass
+    class Val:
+        num_envs: int
+        agent_noise: float
+
+    val: Val
+
     @dataclass
     class WM:
         type: Literal["dreamer"]
         dreamer: dreamer.Config | None
+
+    wm: WM
 
     @dataclass
     class Actor:
         type: Literal["ref"]
         ref: ref.Config | None
 
-    @dataclass
-    class Train:
-        @dataclass
-        class Dataset:
-            capacity: int
-            batch_size: int
-            slice_len: int
-            ongoing: bool = False
-            subseq_len: int | tuple[int, int] | None = None
-            prioritize_ends: bool = False
+    ac: Actor
 
-        dataset: Dataset
-        val_frac: float
-        num_envs: int
-        horizon: int
+    stages: list[dict | str]
 
     @dataclass
     class Extras:
         discrete_actions: int | None = None
 
-    run: Run
-    repro: Repro
-    device: str
-    compute_dtype: Literal["float16", "float32"]
-    def_step: str
-    val_envs: int
     extras: Extras
-
-    debug: Debug
-    profile: Profile
-    env: rl.sdk.Config
-    wm: WM
-    ac: Actor
-    agent: agent.Config
-    train: Train
-
-    stages: list[dict | str]

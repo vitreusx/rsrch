@@ -22,6 +22,7 @@ from rsrch.exp import Experiment
 from rsrch.exp.board.tensorboard import Tensorboard
 from rsrch.exp.profile import Profiler
 from rsrch.nn.utils import frozen, over_seq
+from rsrch.rl.utils import polyak
 from rsrch.utils import cron, repro
 from rsrch.utils.early_stop import EarlyStopping
 
@@ -98,8 +99,8 @@ class Runner:
         self.exp.boards.append(board)
         self.exp.set_as_default(self.cfg.def_step)
 
-        self.wm, self.actor = self._make_nets()
-        self.fwd_mtx = Lock()
+        self.wm = self._make_wm()
+        self.actor = self._make_ac(self.wm)
 
         if self.cfg.profile.enabled:
             cfg = self.cfg.profile
@@ -113,6 +114,7 @@ class Runner:
                 setattr(self, name, f)
 
         self.buf = rl.data.Buffer()
+        self.buf = self.sdk.wrap_buffer(self.buf)
         self.buf_mtx = Lock()
 
         self.envs = self.sdk.make_envs(
@@ -132,14 +134,10 @@ class Runner:
         self.agent_step = 0
         self.exp.register_step("agent_step", lambda: self.agent_step)
 
-        self.val_envs = self.sdk.make_envs(self.cfg.val_envs, mode="val")
-        self.val_agent = self._make_agent(mode="val")
-
-    def _make_nets(self):
+    def _make_wm(self):
         wm_type = self.cfg.wm.type
         if wm_type == "dreamer":
             wm_cfg = self.cfg.wm.dreamer
-            Encoder = dreamer.AsTensor
 
             # We need the trainer to deduce the reward space, even if we don't
             # run the training.
@@ -152,6 +150,12 @@ class Runner:
             raise ValueError(wm_type)
 
         wm = wm.to(self.device)
+        return wm
+
+    def _make_ac(self, wm: dreamer.WorldModel):
+        wm_type = self.cfg.wm.type
+        if wm_type == "dreamer":
+            Encoder = dreamer.AsTensor
 
         ac_type = self.cfg.ac.type
         if ac_type == "ref":
@@ -164,8 +168,7 @@ class Runner:
             raise ValueError(ac_type)
 
         actor = actor.to(self.device)
-
-        return wm, actor
+        return actor
 
     def _make_agent(self, mode: Literal["train", "val"]):
         agent_ = ref.Agent(
@@ -178,10 +181,11 @@ class Runner:
             wm=self.wm,
             compute_dtype=self.compute_dtype,
         )
+        noise = getattr(self.cfg, mode).agent_noise
         agent_ = agent.Agent(
             agent_,
             act_space=self.sdk.act_space,
-            cfg=self.cfg.agent,
+            noise=noise,
             mode=mode,
         )
         return agent_
@@ -194,7 +198,7 @@ class Runner:
             of = self.cfg.def_step
         return max_value, of
 
-    def _make_until(self, cfg):
+    def _make_until(self, cfg: dict | str):
         max_value, of = self._get_until_params(cfg)
         return cron.Until(lambda of=of: getattr(self, of), max_value)
 
@@ -213,23 +217,23 @@ class Runner:
         return cron.Every(lambda of=of: getattr(self, of), every, iters)
 
     @exec_once
-    def _setup_train(self):
-        cfg = self.cfg.train
-
+    def setup_train(self):
         self.train_sampler = rl.data.Sampler()
         self.val_sampler = rl.data.Sampler()
         self.val_ids = set()
 
         class SplitHook(rl.data.Hook):
-            def on_create(hook, seq_id: int, seq: dict):
-                is_val = (len(self.val_ids) == 0) or (np.random.rand() < cfg.val_frac)
+            def on_create(hook, seq_id: int):
+                is_val = (len(self.val_ids) == 0) or (
+                    np.random.rand() < self.cfg.data.val_frac
+                )
                 if is_val:
                     self.val_sampler.add(seq_id)
                     self.val_ids.add(seq_id)
                 else:
                     self.train_sampler.add(seq_id)
 
-            def on_delete(hook, seq_id: int, seq: dict):
+            def on_delete(hook, seq_id: int):
                 if seq_id in self.val_ids:
                     del self.val_sampler[seq_id]
                     self.val_ids.remove(seq_id)
@@ -239,37 +243,23 @@ class Runner:
         self.buf = rl.data.Observable(self.buf)
         self.buf.attach(SplitHook(), replay=True)
 
-        ds_cfg = {**vars(cfg.dataset)}
-        self.buf = rl.data.SizeLimited(self.buf, cap=ds_cfg["capacity"])
-        del ds_cfg["capacity"]
-
-        self.buf = self.sdk.wrap_buffer(self.buf)
+        buf_cfg = {**vars(self.cfg.data.buffer)}
+        self.buf = rl.data.SizeLimited(self.buf, cap=buf_cfg["capacity"])
+        del buf_cfg["capacity"]
+        self.buf_cfg = buf_cfg
 
         self.train_loader = data.SliceLoader(
             buf=self.buf,
             sampler=self.train_sampler,
-            **ds_cfg,
+            **self.buf_cfg,
         )
         self.train_iter = iter(self.train_loader)
 
-        self.val_loader = data.SliceLoader(
-            buf=self.buf,
-            sampler=self.val_sampler,
-            **ds_cfg,
-        )
-        self.val_iter = iter(self.val_loader)
-
-        self.val_epoch_loader = data.SliceLoader(
-            buf=self.buf,
-            sampler=self.val_ids,
-            **ds_cfg,
-        )
-
         if self.cfg.repro.determinism != "full":
             self.train_iter = data.make_async(self.train_iter)
-            self.val_iter = data.make_async(self.val_iter)
 
-        self.wm_trainer, self.ac_trainer = self._make_trainers(self.wm, self.actor)
+        self.wm_trainer = self._make_wm_trainer(self.wm)
+        self.ac_trainer = self._make_ac_trainer(self.actor)
 
         self.wm_opt_step = 0
         self.exp.register_step("wm_opt_step", lambda: self.wm_opt_step)
@@ -288,13 +278,21 @@ class Runner:
             iters=None,
         )
 
-    def _make_trainers(self, wm, actor):
+    def _make_wm_trainer(self, wm):
         wm_type = self.cfg.wm.type
         if wm_type == "dreamer":
             wm_cfg = self.cfg.wm.dreamer
-            Encoder = dreamer.AsTensor
             wm_trainer = dreamer.Trainer(wm_cfg, self.compute_dtype)
             wm_trainer.setup(wm)
+        else:
+            raise ValueError(wm_type)
+
+        return wm_trainer
+
+    def _make_ac_trainer(self, actor):
+        wm_type = self.cfg.wm.type
+        if wm_type == "dreamer":
+            Encoder = dreamer.AsTensor
 
         ac_type = self.cfg.ac.type
         if ac_type == "ref":
@@ -311,7 +309,32 @@ class Runner:
 
             ac_trainer.setup(actor, make_critic, self.sdk.act_space)
 
-        return wm_trainer, ac_trainer
+        return ac_trainer
+
+    @exec_once
+    def setup_val(self):
+        self.val_loader = data.SliceLoader(
+            buf=self.buf,
+            sampler=self.val_sampler,
+            **self.buf_cfg,
+        )
+        self.val_iter = iter(self.val_loader)
+
+        self.val_epoch_loader = data.SliceLoader(
+            buf=self.buf,
+            sampler=self.val_ids,
+            **self.buf_cfg,
+        )
+
+        if self.cfg.repro.determinism != "full":
+            self.val_iter = data.make_async(self.val_iter)
+
+        self.val_envs = self.sdk.make_envs(
+            self.cfg.val.num_envs,
+            mode="val",
+        )
+
+        self.val_agent = self._make_agent(mode="val")
 
     def save_data(self, tag: str | None = None):
         if tag is None:
@@ -378,19 +401,30 @@ class Runner:
     def env_rollout(self, until, mode: str = "train"):
         should_do = self._make_until(until)
 
-        pbar = self._make_pbar("Env rollout", until)
+        pbar = self._make_pbar("Env rollout", until=until)
         while should_do:
             self.do_env_step(mode=mode)
             self._update_pbar(pbar, should_do)
 
-    def _make_pbar(self, desc, until_cfg: dict | str):
-        max_value, of = self._get_until_params(until_cfg)
+    def _make_pbar(
+        self,
+        desc: str,
+        *,
+        until: dict | str | None = None,
+        of: str | None = None,
+        **kwargs,
+    ):
+        if until is not None:
+            max_value, of = self._get_until_params(until)
+        else:
+            max_value = None
 
         return self.exp.pbar(
             desc=desc,
             initial=getattr(self, of),
             total=max_value,
             unit=f" {of}",
+            **kwargs,
         )
 
     def _update_pbar(self, pbar: tqdm, until: cron.Until):
@@ -424,9 +458,8 @@ class Runner:
         until: dict | str,
         tasks: list[dict | str],
     ):
-        if not hasattr(self, "_setup_train_done"):
-            self._setup_train()
-            self._setup_train_done = True
+        self.setup_train()
+        self.setup_val()
 
         task_functions = []
         should_run = []
@@ -458,7 +491,7 @@ class Runner:
             task_functions.append(func)
 
         should_loop = self._make_until(until)
-        pbar = self._make_pbar("Train loop", until)
+        pbar = self._make_pbar("Train loop", until=until)
 
         while should_loop:
             for task_idx in range(len(tasks)):
@@ -549,7 +582,7 @@ class Runner:
 
         with autocast(self.device, self.compute_dtype):
             states, actions = [initial], []
-            for _ in range(self.cfg.train.horizon):
+            for _ in range(self.cfg.data.dream.horizon):
                 policy = self.actor(states[-1].detach())
                 enc_act = policy.rsample()
                 actions.append(enc_act)
@@ -569,6 +602,8 @@ class Runner:
         return {"obs": states, "act": actions, "reward": reward, "term": term_}
 
     def do_val_epoch(self, max_batches=None):
+        self.setup_val()
+
         wm_loss = self.do_wm_val_epoch(max_batches)
         if wm_loss is not None:
             self.exp.add_scalar("val/wm_loss", wm_loss, step="wm_opt_step")
@@ -591,13 +626,25 @@ class Runner:
 
         self.exp.add_scalar("val/mean_ep_ret", np.mean(all_rets))
 
-    def train_wm(self, stop_criteria, val_every, max_val_batches=None):
+    def train_wm(
+        self,
+        stop_criteria: dict,
+        val_every: int,
+        max_val_batches: int | None = None,
+        from_scratch: bool = True,
+    ):
+        self.setup_train()
+
         should_stop = EarlyStopping(**stop_criteria)
         should_val = cron.Every(lambda: self.wm_opt_step, val_every)
 
         best_loss = np.inf
         best_ckpt = tempfile.mktemp(suffix=".pth")
 
+        if from_scratch:
+            self.reset_wm()
+
+        pbar = self._make_pbar("Train WM", of="wm_opt_step")
         while True:
             if should_val:
                 val_loss = self.do_wm_val_epoch(max_val_batches)
@@ -617,6 +664,7 @@ class Runner:
                     break
 
             self.do_wm_opt_step()
+            pbar.update()
 
         with open(best_ckpt, "rb") as f:
             best_state = torch.load(f, map_location="cpu")
@@ -627,6 +675,8 @@ class Runner:
 
     @torch.no_grad()
     def do_wm_val_epoch(self, max_batches=None):
+        self.setup_val()
+
         if len(self.val_ids) == 0:
             return
 
@@ -719,6 +769,8 @@ class Runner:
 
     @torch.no_grad()
     def do_ac_val_epoch(self, limit=None):
+        self.setup_val()
+
         if len(self.val_ids) == 0:
             return
 
@@ -791,6 +843,13 @@ class Runner:
                 self.exp.add_scalar(f"ac/{k}", v, step="ac_opt_step")
 
         self.ac_opt_step += 1
+
+    def reset_wm(self):
+        # We create a new WM and copy the parameters, so that the
+        # references in other objects (e.g. the agent) stay the same.
+        new_wm = self._make_wm()
+        polyak.sync(new_wm, self.wm)
+        self.wm_trainer.setup(self.wm)
 
     def _move_to_device(self, batch: dict):
         res = {}
