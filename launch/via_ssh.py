@@ -136,7 +136,7 @@ def main():
 
     hosts = args.hosts
     for host in hosts:
-        CMD = ["ssh", host]
+        CMD = ["ssh", host, "true"]
         logging.info(shlex.join(CMD))
         subprocess.run(CMD, stdout=DEVNULL, timeout=10.0).check_returncode()
 

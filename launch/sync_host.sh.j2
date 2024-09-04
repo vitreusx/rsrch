@@ -1,6 +1,10 @@
 #!/usr/bin/bash -i
 set -exo pipefail
 
+# Check whether GPUs work and whether Internet is available
+nvidia-smi
+ping -c1 google.com
+
 if [ ! -d "${HOME}/miniforge3" ]; then
     NAME="Miniforge3-$(uname)-$(uname -m).sh"
     URL="https://github.com/conda-forge/miniforge/releases/latest/download/${NAME}"
