@@ -42,10 +42,8 @@ if [ ! -d "{{ repo_dir }}" ]; then
 fi
 
 cd "{{ repo_dir }}"
-git fetch -a
 git checkout "{{ git_ref }}"
-git pull
-git clean -xdf
+git fetch && git pull
 
 python -m keyring --disable 2>/dev/null || true
 POETRY_NO_INTERACTION=1 ~/.local/bin/poetry install --sync
