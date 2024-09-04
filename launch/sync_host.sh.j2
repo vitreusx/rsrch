@@ -36,14 +36,16 @@ python3 -m pipx install poetry
 if [ ! -d "{{ repo_dir }}" ]; then
     mkdir -p "$(dirname "{{ repo_dir }}")"
     git clone "{{ git_repo_url }}" "{{ repo_dir }}"
-    cd "{{ repo_dir }}"
-    git config user.name "{{ git_user_name }}"
-    git config user.email "{{ git_user_email }}"
 fi
-
 cd "{{ repo_dir }}"
+
+git config user.name "{{ git_user_name }}"
+git config user.email "{{ git_user_email }}"
+git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
+
+git fetch
 git checkout "{{ git_ref }}"
-git fetch && git pull
+git pull
 
 python -m keyring --disable 2>/dev/null || true
 POETRY_NO_INTERACTION=1 ~/.local/bin/poetry install --sync
