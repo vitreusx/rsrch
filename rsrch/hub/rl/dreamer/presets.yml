@@ -37,7 +37,7 @@ atari:
     data.val_frac: 0.1
     stages:
       - env_rollout:
-          until: ${max(3e3 * _freq, 12e3)}
+          until: ${max(3e3 * _freq, 20e3)}
           mode: rand
       - train_loop:
           until: ${max(1e5 * _freq, 400e3)}
