@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 from rsrch import rl
@@ -12,7 +13,7 @@ from .wm import dreamer
 class Config:
     @dataclass
     class Run:
-        prefix: str | None = None
+        dir: str | None = None
         no_ansi: bool = False
         create_commit: bool = True
         log_every: int = 4

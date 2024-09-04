@@ -83,13 +83,10 @@ class Runner:
             if n is not None:
                 self.sdk = rl.sdk.wrappers.DiscreteActions(self.sdk, n=n)
 
-        prefix = self.sdk.id
-        if self.cfg.run.prefix is not None:
-            prefix = self.cfg.run.prefix
-
         self.exp = Experiment(
             project="dreamer",
-            prefix=prefix,
+            prefix=self.sdk.id,
+            run_dir=self.cfg.run.dir,
             config=asdict(self.cfg),
             no_ansi=self.cfg.run.no_ansi,
             create_commit=self.cfg.run.create_commit,

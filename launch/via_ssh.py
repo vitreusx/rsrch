@@ -1,4 +1,5 @@
 import argparse
+import inspect
 import io
 import logging
 import os
@@ -187,10 +188,11 @@ def main():
             cmd_path = remote_dump(host, "\n".join(cmds), "cmd")
 
             tmux_script = f"""
-cd "{args.repo_dir}"
-source $(poetry env info --path)/bin/activate
-parallel -j{args.tasks_per_host} -a "{cmd_path}"
-""".strip()
+            cd "{args.repo_dir}"
+            source $(poetry env info --path)/bin/activate
+            parallel -j{args.tasks_per_host} -a "{cmd_path}"
+            """
+            tmux_script = inspect.cleandoc(tmux_script)
             tmux_path = remote_dump(host, tmux_script, "tmux")
 
             exec_script = (

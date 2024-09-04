@@ -53,7 +53,8 @@ class Experiment:
         self,
         *,
         project: str,
-        run_dir: Path | None = None,
+        prefix: str | None = None,
+        run_dir: str | Path | None = None,
         config: dict | None = None,
         create_commit: bool = True,
         no_ansi: bool = False,
@@ -61,10 +62,12 @@ class Experiment:
         self.project = project
         self.no_ansi = no_ansi
 
-        self.dir = run_dir
-        if self.dir is None:
+        if run_dir is not None:
+            self.dir = Path(run_dir)
+        else:
             day, time = timestamp2()
-            self.dir = Path("runs") / sanitize(project) / day / time
+            filename = time if prefix is None else f"{prefix}__{time}"
+            self.dir = Path("runs") / sanitize(project) / day / filename
 
         self.dir.mkdir(parents=True, exist_ok=True)
 
