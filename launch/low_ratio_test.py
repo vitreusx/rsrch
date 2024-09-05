@@ -16,8 +16,8 @@ def low_ratio_test(test_name, suffix=""):
     }
 
     seeds = [0]
-    envs = ATARI_100k_3
-    freqs = [2, 1, 0.5]
+    envs = ATARI_100k_5
+    freqs = [2, 1]
 
     for seed, env, freq in product(seeds, envs, freqs):
         options = {
