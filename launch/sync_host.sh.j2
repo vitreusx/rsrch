@@ -17,9 +17,10 @@ if [ ! -d "${HOME}/miniforge3" ]; then
 
     # We cannot use exec $SHELL over ssh, so we need to source the rc files
     # manually.
-    if [ "${SHELL}" = "/usr/bin/bash" ]; then
+    SHELL_NAME="$(basename "${SHELL}")"
+    if [ "${SHELL_NAME}" = "bash" ]; then
         source ~/.bashrc
-    elif [ "${SHELL}" = "/usr/bin/zsh" ]; then
+    elif [ "${SHELL_NAME}" = "zsh" ]; then
         source ${ZDOTDIR:-$HOME}/.zshrc
     else
         echo "Shell ${SHELL} is not supported!"
