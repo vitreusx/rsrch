@@ -466,18 +466,21 @@ class Runner:
         for task in tasks:
             if isinstance(task, str):
                 task = {task: {}}
-                every = 1
-            else:
+            every = task.get("every")
+            if "every" in task:
                 task = {**task}
-                every = task.get("every", 1)
-                if "every" in task:
-                    del task["every"]
+                del task["every"]
 
-            if not isinstance(every, dict):
-                # If only a number is supplied, use default 'of' value.
-                every = dict(n=every, of=of)
+            if every is None:
+                # Task should be performed once per cycle
+                should_run_task = None
+            else:
+                if not isinstance(every, dict):
+                    # If only a number is supplied, use default 'of' value.
+                    every = dict(n=every, of=of)
+                # Task should be performed according to user-provided schedule.
+                should_run_task = self._make_every(every)
 
-            should_run_task = self._make_every(every)
             should_run.append(should_run_task)
 
             name = next(iter(task.keys()))
@@ -492,8 +495,17 @@ class Runner:
 
         while should_loop:
             for task_idx in range(len(tasks)):
-                if should_run[task_idx]:
-                    task_functions[task_idx]()
+                flag = should_run[task_idx]
+                run_task = task_functions[task_idx]
+
+                if flag is None:
+                    # Run only once
+                    run_task()
+                else:
+                    # Run for as long as we ought
+                    while flag:
+                        run_task()
+
                 self._update_pbar(pbar, should_loop)
 
     def do_opt_step(self, n=1):
