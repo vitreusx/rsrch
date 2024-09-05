@@ -51,7 +51,7 @@ class Every:
             return step == self._last
         else:
             if self._last is None:
-                self._acc = self.iters
+                self._acc = self.every * self.iters
             else:
                 self._acc += (step - self._last) * self.iters
             self._last = step

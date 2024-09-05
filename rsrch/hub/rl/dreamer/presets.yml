@@ -64,7 +64,7 @@ atari:
                 stop_criteria: { patience: 2048 }
                 val_every: 512
                 max_val_batches: 64
-                from_scratch: true
+                reset: true
               every: ${3e3 * _freq}
             - do_val_epoch: ~
               every: ${5e3 * _freq}
@@ -73,6 +73,46 @@ atari:
             - do_opt_step: ~
               every: ${_freq}
             - do_env_step
+
+  opt_400k_v1:
+    _opt_every: 4
+    data:
+      val_frac: 0.1
+    stages:
+      - env_rollout:
+          until: 40e3
+          mode: rand
+      - train_loop:
+          until: 400e3
+          tasks:
+            - train_wm:
+                stop_criteria: { patience: 2048 }
+                val_every: 512
+                max_val_batches: 64
+                reset: true
+              every: 40e3
+            - do_opt_step: ~
+              every: ${_opt_every}
+            - do_val_step: ~
+              every: { n: 16, of: wm_opt_step }
+            - do_env_step
+
+  ac_conv_test:
+    data:
+      val_frac: 0.1
+    stages:
+      - env_rollout:
+          until: 100e3
+          mode: rand
+      - train_wm:
+          stop_criteria: { patience: 2048 }
+          val_every: 512
+          max_val_batches: 64
+          reset: true
+      - train_loop:
+          until: { n: 100e3, of: ac_opt_step }
+          tasks:
+            - do_ac_opt_step
 
 dmc:
   base:
@@ -134,4 +174,4 @@ dmc:
             - do_env_step
 
 default:
-  $extends: [atari.base, atari.primed_wm]
+  $extends: [atari.base, atari.opt_400k_v1]

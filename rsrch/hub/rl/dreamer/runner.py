@@ -640,7 +640,7 @@ class Runner:
         stop_criteria: dict,
         val_every: int,
         max_val_batches: int | None = None,
-        from_scratch: bool = True,
+        reset: bool = True,
     ):
         self.setup_train()
 
@@ -650,7 +650,7 @@ class Runner:
         best_loss = np.inf
         best_ckpt = tempfile.mktemp(suffix=".pth")
 
-        if from_scratch:
+        if reset:
             self.reset_wm()
 
         pbar = self._make_pbar("Train WM", of="wm_opt_step")
