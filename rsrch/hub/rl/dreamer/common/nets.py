@@ -13,6 +13,7 @@ from . import dh
 from .utils import to_camel_case
 
 ActType = Literal["relu", "elu", "tanh"]
+
 ACT_LAYERS = {"relu": nn.ReLU, "elu": nn.ELU, "tanh": nn.Tanh}
 
 
@@ -33,11 +34,13 @@ class LayerNorm2d(nn.Module):
 
 
 NormType = Literal["none", "batch", "layer"]
+
 NORM_LAYERS_1D = {
     "none": lambda _: nn.Identity(),
     "batch": nn.BatchNorm1d,
     "layer": nn.LayerNorm,
 }
+
 NORM_LAYERS_2D = {
     "none": lambda _: nn.Identity(),
     "batch": nn.BatchNorm2d,

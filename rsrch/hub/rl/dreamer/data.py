@@ -21,12 +21,16 @@ class StateCache:
         return self.states.get(key)
 
     def __setitem__(self, key, value):
-        if key not in self.states:
-            if len(self._order) == self.size:
-                oldest = self._order.popleft()
-                del self.states[oldest]
-            self._order.append(key)
-        self.states[key] = value
+        if isinstance(key, list):
+            for key_, value_ in zip(key, value):
+                self[key_] = value_
+        else:
+            if key not in self.states:
+                if len(self._order) == self.size:
+                    oldest = self._order.popleft()
+                    del self.states[oldest]
+                self._order.append(key)
+            self.states[key] = value
 
     def clear(self):
         self.states.clear()
@@ -116,9 +120,9 @@ class SliceLoader(data.IterableDataset):
                 start = end - self.slice_len
                 subseq = self._subseq(ep["seq"], start, end)
 
-                subseq["ep_id"] = ep["ep_id"]
-                subseq["pos"] = (ep["seq_id"], start)
-                subseq["start"] = self.states.get(subseq["pos"])
+                subseq["start"] = (ep["seq_id"], start)
+                subseq["end"] = (ep["seq_id"], end)
+                subseq["h_0"] = self.states.get(subseq["start"])
 
                 batch.append(subseq)
 
@@ -145,20 +149,15 @@ class SliceLoader(data.IterableDataset):
 
         return res
 
-    def update_states(self, pos, states):
-        for (seq_id, offset), state in zip(pos, states):
-            end = offset + self.slice_len
-            self.states[seq_id, end] = state
-
     def collate_fn(self, batch):
         return {
             "obs": torch.stack([seq["obs"] for seq in batch], 1),
             "act": torch.stack([seq["act"] for seq in batch], 1),
             "reward": torch.stack([seq["reward"] for seq in batch], 1),
             "term": torch.stack([seq["term"] for seq in batch], 1),
-            "ep_id": np.asarray([seq["ep_id"] for seq in batch]),
-            "pos": [seq["pos"] for seq in batch],
             "start": [seq["start"] for seq in batch],
+            "end": [seq["end"] for seq in batch],
+            "h_0": [seq["h_0"] for seq in batch],
         }
 
 

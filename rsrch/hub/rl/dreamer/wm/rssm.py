@@ -12,8 +12,8 @@ from rsrch import spaces
 from rsrch.nn.utils import over_seq, pass_gradient, safe_mode
 from rsrch.types import Tensorlike
 
+from ..common import dh, nets
 from ..common.utils import tf_init
-from . import dh, nets
 
 
 @dataclass
@@ -160,11 +160,11 @@ class GenericRSSM(nn.Module):
 
     def observe(
         self,
+        state: State,
         obs: Tensor,
         act: Tensor,
-        state: State,
         sample: bool = True,
-    ) -> tuple[State, StateDist, StateDist]:
+    ):
         states, posts, priors = [], [], []
 
         for t in range(obs.shape[0]):
@@ -180,30 +180,26 @@ class GenericRSSM(nn.Module):
         states = torch.stack(states)
         posts = torch.stack(posts)
         priors = torch.stack(priors)
-        return states, posts, priors
+        return (states, posts, priors), states[-1]
 
     def obs_step(
         self,
         state: State,
         act: Tensor,
         next_obs: Tensor,
-        sample: bool = True,
-    ) -> State:
+    ) -> StateDist:
         deter = self._img_cell(state, act)
         dist = self._obs_dist(deter, next_obs)
-        stoch = dist.rsample() if sample else dist.mode
-        return State(deter, stoch)
+        return StateDist(deter=deter, stoch=dist)
 
     def img_step(
         self,
         state: State,
         act: Tensor,
-        sample: bool = True,
-    ) -> State:
+    ) -> StateDist:
         deter = self._img_cell(state, act)
         dist = self._img_dist(deter)
-        stoch = dist.rsample() if sample else dist.mode
-        return State(deter, stoch)
+        return StateDist(deter=deter, stoch=dist)
 
     def _img_cell(self, state: State, act: Tensor):
         x = torch.cat((state.stoch, act), -1)
@@ -291,22 +287,22 @@ class OptRSSM(nn.Module):
         return State(self.deter0, self.stoch0)
 
     @torch.jit.ignore
-    def observe(
+    def forward(
         self,
-        obs: Tensor,
-        act: Tensor,
-        state: State,
+        input: tuple[Tensor, Tensor],
+        h_0: State,
         sample: bool = True,
-    ) -> tuple[State, StateDist, StateDist]:
+    ):
         assert sample
+        obs, act = input
         obs = over_seq(self._obs_out_o)(obs)
         act = over_seq(self._img_in_a)(act)
-        deters, stochs, posts = self._observe(obs, act, state.deter, state.stoch)
+        deters, stochs, posts = self._observe(obs, act, h_0.deter, h_0.stoch)
         states = State(deters, stochs)
         priors = over_seq(self._img_dist)(deters)
         priors = StateDist(deter=deters, stoch=D.Discrete(logits=priors))
         posts = StateDist(deter=deters, stoch=D.Discrete(logits=posts))
-        return states, posts, priors
+        return (states, posts, priors), states[-1]
 
     @torch.jit.export
     def _observe(self, obs, act, deter, stoch):
@@ -330,33 +326,31 @@ class OptRSSM(nn.Module):
         )
 
     @torch.jit.ignore
-    def obs_step(self, state: State, act: Tensor, next_obs: Tensor, sample=True):
-        assert sample
+    def obs_step(self, state: State, act: Tensor, next_obs: Tensor):
         next_obs = self._obs_out_o(next_obs)
         act = self._img_in_a(act)
-        deter, stoch = self._obs_step(state.deter, state.stoch, act, next_obs)
-        return State(deter, stoch)
+        deter, logits = self._obs_step(state.deter, state.stoch, act, next_obs)
+        stoch = D.Discrete(logits=logits)
+        return StateDist(deter=deter, stoch=stoch)
 
     @torch.jit.export
     def _obs_step(self, deter, stoch, act, next_obs):
         deter = self._img_cell(deter, stoch, act)
         dist = self._obs_dist(deter, next_obs)
-        stoch = self._discrete_sample(dist)
-        return deter, stoch
+        return deter, dist
 
     @torch.jit.ignore
-    def img_step(self, state: State, act: Tensor, sample=True):
-        assert sample
+    def img_step(self, state: State, act: Tensor):
         act = self._img_in_a(act)
-        deter, stoch = self._img_step(state.deter, state.stoch, act)
-        return State(deter, stoch)
+        deter, logits = self._img_step(state.deter, state.stoch, act)
+        stoch = D.Discrete(logits=logits)
+        return StateDist(deter=deter, stoch=stoch)
 
     @torch.jit.export
     def _img_step(self, deter, stoch, act):
         deter = self._img_cell(deter, stoch, act)
         dist = self._img_dist(deter)
-        stoch = self._discrete_sample(dist)
-        return deter, stoch
+        return deter, dist
 
     def _img_cell(self, deter, stoch, act):
         x = act + self._img_in_s(stoch)
@@ -379,14 +373,31 @@ class OptRSSM(nn.Module):
 
     def _discrete_sample(self, logits: Tensor):
         probs = F.softmax(logits, -1)
-        eps = 1e-5
-        unif = torch.rand_like(probs).clamp(eps, 1 - eps)
+        eps = self._get_eps(probs)
+        unif = torch.rand_like(probs).clamp(eps, 1.0 - eps)
         idxes = (logits - (-unif.log()).log()).argmax(-1)
         # idxes = torch.multinomial(probs, 1, True).squeeze(-1)
         sample = F.one_hot(idxes, self.vocab_size).type_as(probs)
         sample = pass_gradient(sample, probs)
         sample = sample.reshape(-1, self.stoch_size)
         return sample
+
+    def _get_eps(
+        self,
+        x: Tensor,
+        eps16: float = torch.finfo(torch.float16).eps,
+        eps32: float = torch.finfo(torch.float32).eps,
+        eps64: float = torch.finfo(torch.float64).eps,
+    ) -> float:
+        """https://github.com/pytorch/pytorch/issues/25661#issuecomment-845419189"""
+        if x.dtype == torch.float16:
+            return eps16
+        elif x.dtype == torch.float32:
+            return eps32
+        elif x.dtype == torch.float64:
+            return eps64
+        else:
+            raise RuntimeError(f"Expected x to be floating-point, got {x.dtype}")
 
 
 def RSSM(cfg: Config, obs_size: int, act_size: int) -> OptRSSM | GenericRSSM:

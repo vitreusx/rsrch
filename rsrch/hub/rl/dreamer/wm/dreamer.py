@@ -13,9 +13,10 @@ from rsrch import spaces
 from rsrch.nn.utils import over_seq, safe_mode
 from rsrch.rl import gym
 
-from ..common import nets, rssm
+from ..common import nets
 from ..common.trainer import TrainerBase
 from ..common.utils import autocast, find_class, tf_init
+from . import rssm
 
 
 @dataclass
@@ -94,7 +95,7 @@ class WorldModel(nn.Module):
         act = torch.zeros((obs.shape[0], self.act_size)).type_as(obs)
         return self.rssm.obs_step(state, act, obs)
 
-    def step(self, state, act, next_obs):
+    def obs_step(self, state, act, next_obs):
         act = self.act_enc(act)
         next_obs = self.obs_enc(next_obs)
         return self.rssm.obs_step(state, act, next_obs)
@@ -102,15 +103,20 @@ class WorldModel(nn.Module):
     def img_step(self, state, enc_act):
         return self.rssm.img_step(state, enc_act)
 
-    def observe(self, obs, act, start):
-        enc_obs: Tensor = over_seq(self.obs_enc)(obs)
-        enc_act: Tensor = over_seq(self.act_enc)(act)
+    def observe(
+        self,
+        input: tuple[Tensor, Tensor],
+        h_0: list[Tensor | None],
+    ):
+        obs_seq, act_seq = input
+        enc_obs: Tensor = over_seq(self.obs_enc)(obs_seq)
+        enc_act: Tensor = over_seq(self.act_enc)(act_seq)
 
-        is_first = np.array([x is None for x in start])
+        is_first = np.array([x is None for x in h_0])
         enc_act[0, is_first].zero_()
-        starts = torch.stack([self.rssm.initial() if x is None else x for x in start])
+        h_0 = torch.stack([self.rssm.initial() if x is None else x for x in h_0])
 
-        return self.rssm.observe(enc_obs, enc_act, starts)
+        return self.rssm((enc_obs, enc_act), h_0)
 
     def as_tensor(self, state: rssm.State):
         return state.as_tensor()
@@ -150,13 +156,21 @@ class Trainer(TrainerBase):
         del cfg["type"]
         return cls(self.parameters, **cfg)
 
-    def compute(self, obs, act, reward, term, start):
+    def compute(
+        self,
+        obs: Tensor,
+        act: Tensor,
+        reward: Tensor,
+        term: Tensor,
+        h_0: list[Tensor | None],
+    ):
         mets, losses = {}, {}
 
         with self.autocast():
             reward = self._reward_fn(reward)
 
-            states, post, prior = self.wm.observe(obs, act, start)
+            out, h_n = self.wm.observe((obs, act), h_0)
+            states, post, prior = out
 
             kl_loss, kl_value = self._kl_loss(post, prior, **vars(self.cfg.kl))
             losses["kl"] = kl_loss
@@ -171,7 +185,7 @@ class Trainer(TrainerBase):
 
             rew_dist = over_seq(self.wm.reward_dec)(states)
             rew_loss = -rew_dist.log_prob(reward)
-            is_first = np.array([x is None for x in start])
+            is_first = np.array([x is None for x in h_0])
             rew_loss[0, is_first].zero_()
             losses["reward"] = rew_loss.mean()
 
@@ -199,7 +213,7 @@ class Trainer(TrainerBase):
                 if "obs_loss" in locals():
                     mets["obs_loss"] = obs_loss
 
-        return loss, mets, states.detach()
+        return loss, mets, states.detach(), h_n.detach()
 
     def _kl_loss(
         self,
@@ -229,52 +243,3 @@ class Trainer(TrainerBase):
 
 
 AsTensor = rssm.AsTensor
-
-
-class Agent(gym.VecAgentWrapper):
-    def __init__(
-        self,
-        agent: gym.VecAgent,
-        wm: WorldModel,
-        compute_dtype: torch.dtype | None = None,
-    ):
-        super().__init__(agent)
-        self.wm = wm
-        self.compute_dtype = compute_dtype
-        self._state = None
-
-    @cached_property
-    def device(self):
-        return next(self.wm.parameters()).device
-
-    @contextmanager
-    def compute_ctx(self):
-        if self.wm.training:
-            self.wm.eval()
-
-        with torch.no_grad():
-            with autocast(self.device, self.compute_dtype):
-                yield
-
-    def reset(self, idxes, obs):
-        obs = obs.to(self.device)
-        with self.compute_ctx():
-            state = self.wm.reset(obs)
-        super().reset(idxes, state)
-        if self._state is None:
-            self._state = state.clone()
-        else:
-            self._state[idxes] = state.type_as(self._state)
-
-    def policy(self, idxes):
-        enc_act = super().policy(idxes)
-        act = self.wm.act_enc.inverse(enc_act)
-        return act
-
-    def step(self, idxes, act: Tensor, next_obs: Tensor):
-        act, next_obs = act.to(self.device), next_obs.to(self.device)
-        with self.compute_ctx():
-            state = self.wm.step(self._state[idxes], act, next_obs)
-        state = state.type_as(self._state)
-        super().step(idxes, act, state)
-        self._state[idxes] = state
