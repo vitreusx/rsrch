@@ -49,6 +49,12 @@ def create_exp_commit(run: str) -> str:
     return commit_sha
 
 
+def head_commit() -> str | None:
+    repo = git.Repo(Path(__file__).parent, search_parent_directories=True)
+    if not repo.is_dirty():
+        return repo.head.object.hexsha
+
+
 def main():
     import argparse
 

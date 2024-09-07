@@ -14,7 +14,7 @@ class Config:
     @dataclass
     class Run:
         dir: str | None = None
-        no_ansi: bool = False
+        interactive: bool = True
         create_commit: bool = True
         log_every: int = 4
 

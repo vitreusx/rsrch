@@ -14,6 +14,9 @@ from subprocess import DEVNULL, PIPE
 
 import git
 import jinja2
+from ruamel.yaml import YAML
+
+yaml = YAML(typ="safe", pure=True)
 
 
 def remote_dump(host: str, text: str, prefix: str):
@@ -103,6 +106,11 @@ def main():
         help="Allow launch even if the repo is dirty",
     )
     grid_p.add_argument(
+        "--dump-info",
+        type=Path,
+        help="(Optional) Path for the yaml file with info about the launch",
+    )
+    grid_p.add_argument(
         "commands",
         type=argparse.FileType("r"),
         default=sys.stdin,
@@ -138,7 +146,7 @@ def main():
     for host in hosts:
         CMD = ["ssh", host, "true"]
         logging.info(shlex.join(CMD))
-        subprocess.run(CMD, stdout=DEVNULL, timeout=10.0).check_returncode()
+        subprocess.run(CMD, stdout=DEVNULL).check_returncode()
 
     def sync_hosts():
         repo = git.Repo(
@@ -203,6 +211,14 @@ def main():
             CMD = ["ssh", host, "bash", "-i", exec_path]
             logging.info(shlex.join(CMD))
             subprocess.run(CMD).check_returncode()
+
+        if args.dump_info is not None:
+            info = {
+                "session": args.session,
+                "hosts": {host: "\n".join(cmds) for host, cmds in zip(hosts, all_cmds)},
+            }
+            with open(args.dump_info, "w") as f:
+                yaml.dump(info, f)
 
     def kill():
         for host in hosts:

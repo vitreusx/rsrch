@@ -15,69 +15,7 @@ from rsrch import spaces
 from rsrch.spaces.utils import from_gym
 from rsrch.types.shared import shared_ndarray
 
-from .agents import Agent, VecAgent
-
-
-class Env(ABC):
-    obs_space: Any
-    act_space: Any
-
-    @abstractmethod
-    def reset(self) -> dict:
-        ...
-
-    @abstractmethod
-    def step(self, act) -> tuple[dict, bool]:
-        ...
-
-    def rollout(self, agent: Agent):
-        obs = None
-        while True:
-            if obs is None:
-                obs = self.reset()
-                agent.reset(obs)
-                yield obs, False
-
-            act = agent.policy()
-            next_obs, final = self.step(act)
-            agent.step(act, next_obs)
-            yield {**next_obs, "act": act}, final
-
-            obs = next_obs
-            if final:
-                obs = None
-
-
-class EnvWrapper(Env):
-    def __init__(self, env: Env):
-        super().__init__()
-        self.env = env
-        self.obs_space = env.obs_space
-        self.act_space = env.act_space
-
-    def reset(self):
-        return self.env.reset()
-
-    def step(self, act):
-        return self.env.step(act)
-
-
-class VecEnv(ABC):
-    num_envs: int
-    obs_space: Any
-    act_space: Any
-
-    @abstractmethod
-    def rollout(self, agent: VecAgent) -> Iterable[tuple[int, tuple[dict, bool]]]:
-        ...
-
-
-class VecEnvWrapper(VecEnv):
-    def __init__(self, env: VecEnv):
-        self.env = env
-        self.num_envs = env.num_envs
-        self.act_space = env.act_space
-        self.obs_space = env.obs_space
+from ._api import *
 
 
 def unbind(x):
@@ -454,3 +392,26 @@ class EnvSet(VecEnv):
                     actions[env_idx] = action
                     fut = pool.submit(self.envs[env_idx].step, action)
                     futures[fut] = env_idx
+
+
+class OrdinalEnv(Env):
+    def __init__(self, is_final):
+        super().__init__()
+        self.act_space = spaces.np.Discrete(1)
+        self.is_final = is_final
+        self.ep_id = 0
+        self.step_idx = 0
+
+    def reset(self) -> dict:
+        self.step_idx = 0
+        obs = (self.ep_id, self.step_idx)
+        self.step_idx += 1
+        return {"obs": obs}
+
+    def step(self, act) -> dict:
+        obs = (self.ep_id, self.step_idx)
+        self.step_idx += 1
+        final = self.is_final(self.ep_id, self.step_idx)
+        if final:
+            self.ep_id += 1
+        return {"obs": obs, "term": final}, final

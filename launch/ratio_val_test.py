@@ -11,7 +11,7 @@ def ratio_val_test(test_name, suffix=""):
 
     common_args = ["-p", "atari.base", "atari.train_val"]
     common_opts = {
-        "run.no_ansi": True,
+        "run.interactive": False,
         "run.create_commit": False,
     }
 

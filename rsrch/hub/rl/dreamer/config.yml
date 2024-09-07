@@ -19,7 +19,7 @@ _:
 
 run:
   dir: ~
-  no_ansi: false
+  interactive: true
   create_commit: true
 
 repro:

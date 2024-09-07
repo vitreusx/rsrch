@@ -8,7 +8,10 @@ def sanity_check(test_name, suffix=""):
     all_tests = []
 
     common_args = ["-p", "atari.base", "atari.train"]
-    common_opts = {"run.no_ansi": True, "run.create_commit": False}
+    common_opts = {
+        "run.interactive": False,
+        "run.create_commit": False,
+    }
 
     env, freq = "MsPacman", 64
     for seed in range(3):

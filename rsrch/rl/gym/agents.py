@@ -3,61 +3,14 @@ from typing import Callable
 
 import numpy as np
 
-
-class Agent(ABC):
-    def reset(self, obs):
-        pass
-
-    @abstractmethod
-    def policy(self):
-        ...
-
-    def step(self, act, next_obs):
-        pass
+from ._api import *
 
 
-class AgentWrapper(Agent):
-    def __init__(self, agent: Agent):
-        super().__init__()
-        self.agent = agent
-
-    def reset(self, step):
-        return self.agent.reset(step)
-
-
-class VecAgent(ABC):
-    def reset(self, idxes: np.ndarray, obs_seq):
-        pass
-
-    @abstractmethod
-    def policy(self, idxes: np.ndarray):
-        ...
-
-    def step(self, idxes: np.ndarray, act_seq, next_obs_seq):
-        pass
-
-
-class VecAgentWrapper(VecAgent):
-    def __init__(self, agent: VecAgent):
-        super().__init__()
-        self.agent = agent
-
-    def reset(self, idxes: np.ndarray, obs_seq):
-        self.agent.reset(idxes, obs_seq)
-
-    def policy(self, idxes: np.ndarray):
-        return self.agent.policy(idxes)
-
-    def step(self, idxes: np.ndarray, act_seq, next_obs_seq):
-        self.agent.step(idxes, act_seq, next_obs_seq)
-
-
-class Pointwise(VecAgent):
+class Pointwise(VecAgentWrapper):
     """A vec agent wrapper which (implicitly) applies a transform to each "sub-agent" of a vec agent (hence 'pointwise.')"""
 
     def __init__(self, agent: VecAgent, transform: Callable[[Agent], Agent]):
-        super().__init__()
-        self.agent = agent
+        super().__init__(agent)
         self.transform = transform
         self._agents: dict[int, Agent] = {}
         self._argv = []
@@ -110,3 +63,12 @@ class Pointwise(VecAgent):
                 self._agents[env_idx] = self._make_proxy(env_idx)
             self._agents[env_idx].step(act, next_obs)
         self.agent.step(idxes, *zip(*self._argv))
+
+
+class RandomAgent(Agent):
+    def __init__(self, env: Env):
+        super().__init__()
+        self.env = env
+
+    def policy(self):
+        return self.env.act_space.sample()

@@ -1,7 +1,9 @@
 import os
+import signal
+import subprocess
 import sys
 from datetime import datetime
-from functools import partial
+from functools import partial, wraps
 from numbers import Number
 from pathlib import Path
 from typing import Callable, Literal, ParamSpec, TypeVar
@@ -16,7 +18,7 @@ from rsrch.utils.path import sanitize
 from . import board, logging
 from .board import Board, StepMixin
 from .board.base import Image, Step, VideoClip
-from .git import create_exp_commit
+from .git import create_exp_commit, head_commit
 
 yaml = YAML(typ="safe", pure=True)
 
@@ -48,6 +50,18 @@ def partial_typed(f: Callable[P, R], *args, **kwargs) -> Callable[P, R]:
 LevelStr = Literal["INFO", "WARN", "ERROR", "DEBUG"]
 
 
+class Tee:
+    def __init__(self, stream, path: str | Path):
+        self.path = Path(path)
+        self.stream = stream
+        self.tee = subprocess.Popen(
+            ["tee", str(self.path)],
+            stdin=subprocess.PIPE,
+            preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_IGN),
+        )
+        os.dup2(self.tee.stdin.fileno(), stream.fileno())
+
+
 class Experiment:
     def __init__(
         self,
@@ -57,10 +71,12 @@ class Experiment:
         run_dir: str | Path | None = None,
         config: dict | None = None,
         create_commit: bool = True,
-        no_ansi: bool = False,
+        interactive: bool = True,
     ):
         self.project = project
-        self.no_ansi = no_ansi
+        self.interactive = interactive
+
+        self.boards: list[Board] = []
 
         if run_dir is not None:
             self.dir = Path(run_dir)
@@ -71,14 +87,17 @@ class Experiment:
 
         self.dir.mkdir(parents=True, exist_ok=True)
 
+        if not self.interactive:
+            self.tee_out = Tee(sys.stdout, self.dir / "out.txt")
+            self.tee_err = Tee(sys.stderr, self.dir / "err.txt")
+
         logging.setup(
             extra_handlers=[
                 (logging.FileHandler(self.dir / "log.txt"), logging.DEBUG),
             ],
-            no_ansi=self.no_ansi,
+            no_ansi=not self.interactive,
         )
         self.logger = logging.getLogger(project)
-        self.boards: list[Board] = []
 
         self.log("INFO", f"Exp dir: {self.dir}")
 
@@ -94,26 +113,28 @@ class Experiment:
 
         if create_commit:
             commit = create_exp_commit(str(self.dir))
+        else:
+            commit = head_commit()
+
+        if commit is not None:
             info["commit_sha"] = commit
 
         with open(self.dir / "info.yml", "w") as f:
             yaml.dump(info, f)
             self.log("INFO", f"Saved extra info to: {self.dir / 'info.yml'}")
 
-        self.pbar = self._make_pbar()
-
-    def _make_pbar(self):
-        # If non-interactive, we still keep the progress bar, but update it only every 30 seconds to prevent unnecessarily polluting logs with progress updates.
-        interactive = not self.no_ansi and (sys.stderr.isatty())
-        mininterval = 0.1 if interactive else 30.0
-        maxinterval = 30.0
-
-        return partial(
-            tqdm,
+    def pbar(self, iterable=None, **kwargs):
+        args = dict(
             dynamic_ncols=True,
-            mininterval=mininterval,
-            maxinterval=maxinterval,
+            **kwargs,
         )
+        if not self.interactive:
+            args.update(
+                mininterval=30.0,
+                maxinterval=30.0,
+            )
+
+        return tqdm(iterable, **args)
 
     def register_step(self, name: str, value_fn, default=False):
         for board in self.boards:

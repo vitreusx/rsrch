@@ -89,7 +89,7 @@ class Runner:
             prefix=self.sdk.id,
             run_dir=self.cfg.run.dir,
             config=asdict(self.cfg),
-            no_ansi=self.cfg.run.no_ansi,
+            interactive=self.cfg.run.interactive,
             create_commit=self.cfg.run.create_commit,
         )
 

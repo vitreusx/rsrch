@@ -1,8 +1,18 @@
 import io
 
-from ruamel.yaml import YAML
+from ruamel.yaml import YAML, SafeRepresenter
+
+
+class Representer(SafeRepresenter):
+    def represent_str(self, s):
+        if "\n" in s:
+            return self.represent_scalar("tag:yaml.org,2002:str", s, style="|")
+        else:
+            return self.represent_scalar("tag:yaml.org,2002:str", s)
+
 
 yaml = YAML(typ="safe", pure=True)
+yaml.Representer = Representer
 yaml.default_flow_style = True
 yaml.width = int(2**10)
 
