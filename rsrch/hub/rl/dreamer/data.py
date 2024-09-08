@@ -215,6 +215,7 @@ class DreamLoaderRL(data.IterableDataset):
         self.slice_len = slice_len
         self.device = device
         self.compute_dtype = compute_dtype
+        self.to_reuse = None
 
     def dream_from(self, h_0: Tensor, term: Tensor):
         self.wm.requires_grad_(False)
@@ -246,11 +247,24 @@ class DreamLoaderRL(data.IterableDataset):
         real_iter = iter(self.real_slices)
 
         while True:
+            chunks, remaining = [], self.batch_size
+
+            if self.to_reuse is not None:
+                h_0, term = self.to_reuse
+                if len(term) > remaining:
+                    chunks.append((h_0[:remaining], term[:remaining]))
+                    self.to_reuse[0] = h_0[remaining:], term[remaining:]
+                    remaining = 0
+                else:
+                    chunks.append((h_0, term))
+                    self.to_reuse = None
+                    remaining -= len(term)
+
             with torch.no_grad():
                 with autocast(self.device, self.compute_dtype):
-                    chunks, remaining = [], self.batch_size
                     while remaining > 0:
                         real_batch = next(real_iter)
+                        real_batch = real_batch.to(self.device)
 
                         out, _ = self.wm.observe(
                             input=(real_batch.seq.obs, real_batch.seq.act),
@@ -266,7 +280,7 @@ class DreamLoaderRL(data.IterableDataset):
                             remaining -= len(term)
                         chunks.append((h_0, term))
 
-                    h_0 = torch.cat([h_0 for h_0, term in chunks], 0)
-                    term = torch.cat([term for h_0, term in chunks], 0)
+            h_0 = torch.cat([h_0 for h_0, term in chunks], 0)
+            term = torch.cat([term for h_0, term in chunks], 0)
 
             yield self.dream_from(h_0, term)

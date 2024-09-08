@@ -64,10 +64,9 @@ atari:
               every: ${_freq}
             - do_env_step
 
-  opt_400k:
-    _:
-      opt_ac_every: 4
-      opt_wm_every: 4
+  primed_wm:
+    _wm_freq: 8
+    _ac_freq: 8
     data:
       val_frac: 0.1
     stages:
@@ -88,9 +87,9 @@ atari:
                 reset: true
               every: 80e3
             - do_wm_opt_step: ~
-              every: ${_.opt_wm_every}
+              every: ${_wm_freq}
             - do_ac_opt_step: ~
-              every: ${_.opt_ac_every}
+              every: ${_ac_freq}
             - do_env_step
 
   ac_conv_test:
@@ -170,4 +169,4 @@ dmc:
             - do_env_step
 
 default:
-  $extends: [atari.base, atari.debug]
+  $extends: [atari.base, atari.primed_wm]

@@ -41,3 +41,6 @@ ATARI_100k_5 = ["Assault", "BankHeist", "BattleZone", "DemonAttack", "MsPacman"]
 A100k_STABLE_1 = ["Assault"]
 A100k_STABLE_3 = ["Assault", "BattleZone", "CrazyClimber"]
 A100k_STABLE_5 = ["Assault", "BankHeist", "BattleZone", "CrazyClimber", "MsPacman"]
+
+# Manually selected subset of games, for which the performance curve is monotonic enough
+A100k_MONO = ["Pong", "CrazyClimber", "Assault", "Asterix"]

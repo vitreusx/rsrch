@@ -727,6 +727,11 @@ class Runner:
 
         self.wm_trainer.opt_step(wm_output.loss)
 
+        self.dream_loader.to_reuse = (
+            wm_output.states.flatten(),
+            wm_batch.seq.term.flatten(),
+        )
+
         with self.buf_mtx:
             self.train_loader.h_0s[wm_batch.end_pos] = wm_output.h_n
 
