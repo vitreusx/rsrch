@@ -58,7 +58,7 @@ data:
     prioritize_ends: true
     ongoing: false
   dream:
-    batch_size: ${data.buffer.batch_size}
+    batch_size: ${data.buffer.batch_size * data.buffer.slice_len}
     horizon: 15
   val_frac: 0.0
 

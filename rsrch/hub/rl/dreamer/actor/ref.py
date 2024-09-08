@@ -1,3 +1,4 @@
+from collections import namedtuple
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import cached_property
@@ -16,6 +17,7 @@ from rsrch.utils import sched
 
 from ..common import nets
 from ..common.trainer import TrainerBase
+from ..common.types import Slices
 from ..common.utils import autocast, find_class, null_ctx, tf_init
 
 
@@ -72,6 +74,9 @@ def gae_lambda(rew, val, gamma, bootstrap, lambda_):
 
     returns.reverse()
     return torch.stack(returns)
+
+
+TrainerOutput = namedtuple("TrainerOutput", ("loss", "metrics"))
 
 
 class Trainer(TrainerBase):
@@ -159,7 +164,7 @@ class Trainer(TrainerBase):
             del cfg["type"]
             return cls(**cfg)
 
-    def compute(self, obs, act, reward, term):
+    def compute(self, seq: Slices):
         losses, mets = {}, {}
 
         # For reinforce, we detach `target` variable, so requiring gradients on
@@ -167,11 +172,11 @@ class Trainer(TrainerBase):
         no_grad = torch.no_grad if self.actor_grad == "reinforce" else null_ctx
         with no_grad():
             with self.autocast():
-                gamma = self.cfg.gamma * (1.0 - term.float())
+                gamma = self.cfg.gamma * (1.0 - seq.term.float())
 
-                vt = over_seq(self.target_critic)(obs).mode
+                vt = over_seq(self.target_critic)(seq.obs).mode
                 target = gae_lambda(
-                    rew=reward[:-1],
+                    rew=seq.reward[:-1],
                     val=vt[:-1],
                     gamma=gamma[:-1],
                     bootstrap=vt[-1],
@@ -184,17 +189,17 @@ class Trainer(TrainerBase):
                 weight = weight.cumprod(0)
 
         with self.autocast():
-            policies = over_seq(self.actor)(obs[:-2].detach())
+            policies = over_seq(self.actor)(seq.obs[:-2].detach())
             if self.actor_grad == "dynamics":
                 objective = target[1:]
             elif self.actor_grad == "reinforce":
-                baseline = over_seq(self.target_critic)(obs[:-2]).mode
+                baseline = over_seq(self.target_critic)(seq.obs[:-2]).mode
                 adv = (target[1:] - baseline).detach()
-                objective = adv * policies.log_prob(act[:-1].detach())
+                objective = adv * policies.log_prob(seq.act[:-1].detach())
             elif self.actor_grad == "both":
-                baseline = over_seq(self.target_critic)(obs[:-2]).mode
+                baseline = over_seq(self.target_critic)(seq.obs[:-2]).mode
                 adv = (target[1:] - baseline).detach()
-                objective = adv * policies.log_prob(act[:-1].detach())
+                objective = adv * policies.log_prob(seq.act[:-1].detach())
                 mix = self.actor_grad_mix(self.opt_iter)
                 objective = mix * target[1:] + (1.0 - mix) * objective
 
@@ -203,7 +208,7 @@ class Trainer(TrainerBase):
             objective = objective + ent_scale * policy_ent
             losses["actor"] = -(weight[:-2] * objective).mean()
 
-            value_dist = over_seq(self.critic)(obs[:-1].detach())
+            value_dist = over_seq(self.critic)(seq.obs[:-1].detach())
             critic_losses = -value_dist.log_prob(target.detach())
             losses["critic"] = (weight[:-1] * critic_losses).mean()
 
@@ -214,8 +219,8 @@ class Trainer(TrainerBase):
             with self.autocast():
                 mets = {}
 
-                mets["reward_mean"] = reward.mean()
-                mets["reward_std"] = reward.std()
+                mets["reward_mean"] = seq.reward.mean()
+                mets["reward_std"] = seq.reward.std()
                 mets["target_mean"] = target.mean()
                 mets["target_std"] = target.std()
                 mets["ent_scale"] = ent_scale
@@ -228,7 +233,7 @@ class Trainer(TrainerBase):
                 for k, v in losses.items():
                     mets[f"{k}_loss"] = v.detach()
 
-        return loss, mets
+        return TrainerOutput(loss, mets)
 
     def opt_step(self, loss: Tensor, lock: Lock | None = None):
         super().opt_step(loss, lock)

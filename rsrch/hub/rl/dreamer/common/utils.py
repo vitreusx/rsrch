@@ -1,6 +1,7 @@
 from contextlib import contextmanager
 from functools import cached_property
 from multiprocessing.synchronize import Lock
+from typing import Any, TypeVar
 
 import torch
 from torch import nn
@@ -35,3 +36,6 @@ def tf_init(module: nn.Module):
         nn.init.xavier_uniform_(module.weight)
         if module.bias is not None:
             nn.init.zeros_(module.bias)
+
+
+T = TypeVar("T")

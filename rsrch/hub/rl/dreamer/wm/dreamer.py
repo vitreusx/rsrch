@@ -1,3 +1,4 @@
+from collections import namedtuple
 from contextlib import contextmanager
 from copy import copy
 from dataclasses import dataclass
@@ -15,6 +16,7 @@ from rsrch.rl import gym
 
 from ..common import nets
 from ..common.trainer import TrainerBase
+from ..common.types import Slices
 from ..common.utils import autocast, find_class, tf_init
 from . import rssm
 
@@ -122,6 +124,9 @@ class WorldModel(nn.Module):
         return state.as_tensor()
 
 
+TrainerOutput = namedtuple("TrainerOutput", ("loss", "metrics", "states", "h_n"))
+
+
 class Trainer(TrainerBase):
     def __init__(
         self,
@@ -158,18 +163,15 @@ class Trainer(TrainerBase):
 
     def compute(
         self,
-        obs: Tensor,
-        act: Tensor,
-        reward: Tensor,
-        term: Tensor,
+        seq: Slices,
         h_0: list[Tensor | None],
     ):
         mets, losses = {}, {}
 
         with self.autocast():
-            reward = self._reward_fn(reward)
+            reward = self._reward_fn(seq.reward)
 
-            out, h_n = self.wm.observe((obs, act), h_0)
+            out, h_n = self.wm.observe((seq.obs, seq.act), h_0)
             states, post, prior = out
 
             kl_loss, kl_value = self._kl_loss(post, prior, **vars(self.cfg.kl))
@@ -178,10 +180,10 @@ class Trainer(TrainerBase):
             obs_dist = over_seq(self.wm.obs_dec)(states)
             if isinstance(obs_dist, dict):
                 for name, dist in obs_dist.items():
-                    losses[name] = -dist.log_prob(obs[name]).mean()
+                    losses[name] = -dist.log_prob(seq.obs[name]).mean()
                 obs_loss = sum(losses[name].detach() for name in obs_dist)
             else:
-                losses["obs"] = -obs_dist.log_prob(obs).mean()
+                losses["obs"] = -obs_dist.log_prob(seq.obs).mean()
 
             rew_dist = over_seq(self.wm.reward_dec)(states)
             rew_loss = -rew_dist.log_prob(reward)
@@ -190,7 +192,7 @@ class Trainer(TrainerBase):
             losses["reward"] = rew_loss.mean()
 
             term_dist = over_seq(self.wm.term_dec)(states)
-            losses["term"] = -term_dist.log_prob(term).mean()
+            losses["term"] = -term_dist.log_prob(seq.term).mean()
 
             coef = self.cfg.coef
             loss = sum(coef.get(k, 1.0) * v for k, v in losses.items())
@@ -213,7 +215,7 @@ class Trainer(TrainerBase):
                 if "obs_loss" in locals():
                     mets["obs_loss"] = obs_loss
 
-        return loss, mets, states.detach(), h_n.detach()
+        return TrainerOutput(loss, mets, states.detach(), h_n.detach())
 
     def _kl_loss(
         self,

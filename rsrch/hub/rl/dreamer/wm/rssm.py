@@ -1,3 +1,4 @@
+from collections import namedtuple
 from dataclasses import dataclass
 from functools import partial
 from typing import List
@@ -25,6 +26,9 @@ class Config:
     norm: nets.NormType
     hidden_size: int
     jit: bool
+
+
+Output = namedtuple("Output", ("states", "post", "prior"))
 
 
 class State(Tensorlike):
@@ -158,7 +162,7 @@ class GenericRSSM(nn.Module):
     def initial(self):
         return State(self.deter0, self.stoch0)
 
-    def observe(
+    def forward(
         self,
         state: State,
         obs: Tensor,
@@ -180,7 +184,7 @@ class GenericRSSM(nn.Module):
         states = torch.stack(states)
         posts = torch.stack(posts)
         priors = torch.stack(priors)
-        return (states, posts, priors), states[-1]
+        return Output(states, posts, priors), states[-1]
 
     def obs_step(
         self,
@@ -302,7 +306,7 @@ class OptRSSM(nn.Module):
         priors = over_seq(self._img_dist)(deters)
         priors = StateDist(deter=deters, stoch=D.Discrete(logits=priors))
         posts = StateDist(deter=deters, stoch=D.Discrete(logits=posts))
-        return (states, posts, priors), states[-1]
+        return Output(states, posts, priors), states[-1]
 
     @torch.jit.export
     def _observe(self, obs, act, deter, stoch):

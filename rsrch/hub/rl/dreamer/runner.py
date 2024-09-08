@@ -21,7 +21,6 @@ from rsrch import rl
 from rsrch.exp import Experiment
 from rsrch.exp.board.tensorboard import Tensorboard
 from rsrch.exp.profile import Profiler
-from rsrch.nn.utils import frozen, over_seq
 from rsrch.rl.utils import polyak
 from rsrch.utils import cron, repro
 from rsrch.utils.early_stop import EarlyStopping
@@ -29,7 +28,6 @@ from rsrch.utils.early_stop import EarlyStopping
 from . import agent, data
 from . import wm as wm_
 from .actor import ref
-from .common.utils import autocast
 from .config import Config
 from .wm import dreamer
 
@@ -249,12 +247,24 @@ class Runner:
         del buf_cfg["capacity"]
         self.buf_cfg = buf_cfg
 
-        self.train_loader = data.SliceLoader(
+        self.train_loader = data.RealLoaderWM(
             buf=self.buf,
             sampler=self.train_sampler,
             **self.buf_cfg,
         )
         self.train_iter = iter(self.train_loader)
+
+        cfg = self.cfg.data.dream
+        self.dream_loader = data.DreamLoaderRL(
+            real_slices=self.train_loader,
+            wm=self.wm,
+            actor=self.actor,
+            batch_size=cfg.batch_size,
+            slice_len=cfg.horizon,
+            device=self.device,
+            compute_dtype=self.compute_dtype,
+        )
+        self.dream_iter = iter(self.dream_loader)
 
         if self.cfg.repro.determinism != "full":
             self.train_iter = data.make_async(self.train_iter)
@@ -314,14 +324,26 @@ class Runner:
 
     @exec_once
     def setup_val(self):
-        self.val_loader = data.SliceLoader(
+        self.val_loader = data.RealLoaderWM(
             buf=self.buf,
             sampler=self.val_sampler,
             **self.buf_cfg,
         )
         self.val_iter = iter(self.val_loader)
 
-        self.val_epoch_loader = data.SliceLoader(
+        cfg = self.cfg.data.dream
+        self.val_dream_loader = data.DreamLoaderRL(
+            real_slices=self.val_loader,
+            wm=self.wm,
+            actor=self.actor,
+            batch_size=cfg.batch_size,
+            slice_len=cfg.horizon,
+            device=self.device,
+            compute_dtype=self.compute_dtype,
+        )
+        self.val_dream_iter = iter(self.val_dream_loader)
+
+        self.val_epoch_loader = data.RealLoaderWM(
             buf=self.buf,
             sampler=self.val_ids,
             **self.buf_cfg,
@@ -482,6 +504,7 @@ class Runner:
                 if not isinstance(every, dict):
                     # If only a number is supplied, use default 'of' value.
                     every = dict(n=every, of=of)
+
                 # Task should be performed according to user-provided schedule.
                 should_run_task = self._make_every(every)
 
@@ -520,38 +543,33 @@ class Runner:
         with self.buf_mtx:
             wm_batch = next(self.train_iter)
 
-        wm_batch = self._move_to_device(wm_batch)
+        wm_batch = wm_batch.to(self.device)
 
         self.wm_trainer.train()
         self.ac_trainer.train()
 
-        wm_loss, wm_mets, wm_states, wm_h_n = self.wm_trainer.compute(
-            obs=wm_batch["obs"],
-            act=wm_batch["act"],
-            reward=wm_batch["reward"],
-            term=wm_batch["term"],
-            h_0=wm_batch["h_0"],
+        wm_output = self.wm_trainer.compute(
+            seq=wm_batch.seq,
+            h_0=wm_batch.h_0,
         )
+        self.wm_trainer.opt_step(wm_output.loss)
 
-        ac_batch = self.dream(
-            initial=wm_states.flatten(),
-            term=wm_batch["term"].flatten(),
+        ac_batch = self.dream_loader.dream_from(
+            h_0=wm_output.states.flatten(),
+            term=wm_batch.seq.term.flatten(),
         )
-
-        ac_loss, ac_mets = self.ac_trainer.compute(**ac_batch)
-
-        self.wm_trainer.opt_step(wm_loss)
-        self.ac_trainer.opt_step(ac_loss)
+        ac_output = self.ac_trainer.compute(ac_batch)
+        self.ac_trainer.opt_step(ac_output.loss)
 
         with self.buf_mtx:
-            self.train_loader.states[wm_batch["end"]] = wm_h_n
+            self.train_loader.h_0s[wm_batch.end_pos] = wm_output.h_n
 
         if self.should_log_wm:
-            for k, v in wm_mets.items():
+            for k, v in wm_output.metrics.items():
                 self.exp.add_scalar(f"wm/{k}", v, step="wm_opt_step")
 
         if self.should_log_ac:
-            for k, v in ac_mets.items():
+            for k, v in ac_output.metrics.items():
                 self.exp.add_scalar(f"ac/{k}", v, step="ac_opt_step")
 
         self.wm_opt_step += 1
@@ -561,58 +579,31 @@ class Runner:
         if len(self.val_ids) == 0:
             return
 
-        with self.buf_mtx:
-            wm_batch = next(self.val_iter)
-
-        wm_batch = self._move_to_device(wm_batch)
-
         self.wm_trainer.eval()
         self.ac_trainer.eval()
 
-        wm_loss, wm_mets, wm_states, wm_h_n = self.wm_trainer.compute(
-            obs=wm_batch["obs"],
-            act=wm_batch["act"],
-            reward=wm_batch["reward"],
-            term=wm_batch["term"],
-            h_0=wm_batch["h_0"],
+        with self.buf_mtx:
+            wm_batch = next(self.val_iter)
+
+        wm_batch = wm_batch.to(self.device)
+
+        wm_output = self.wm_trainer.compute(
+            seq=wm_batch.seq,
+            h_0=wm_batch.h_0,
         )
 
-        ac_batch = self.dream(
-            initial=wm_states.flatten(),
-            term=wm_batch["term"].flatten(),
+        ac_batch = self.dream_loader.dream_from(
+            wm_output.states.flatten(),
+            wm_batch.seq.term.flatten(),
         )
 
-        ac_loss, ac_mets = self.ac_trainer.compute(**ac_batch)
+        ac_output = self.ac_trainer.compute(ac_batch)
 
         with self.buf_mtx:
-            self.val_loader.states[wm_batch["end"]] = wm_h_n
+            self.val_loader.h_0s[wm_batch.end_pos] = wm_output.h_n
 
-        self.exp.add_scalar(f"wm/val_loss", wm_loss, step="wm_opt_step")
-        self.exp.add_scalar(f"ac/val_loss", ac_loss, step="wm_opt_step")
-
-    def dream(self, initial, term):
-        self.wm.requires_grad_(False)
-
-        with autocast(self.device, self.compute_dtype):
-            states, actions = [initial], []
-            for _ in range(self.cfg.data.dream.horizon):
-                policy = self.actor(states[-1].detach())
-                enc_act = policy.rsample()
-                actions.append(enc_act)
-                next_state = self.wm.img_step(states[-1], enc_act).rsample()
-                states.append(next_state)
-            states, actions = torch.stack(states), torch.stack(actions)
-
-            reward_dist = over_seq(self.wm.reward_dec)(states)
-            reward = reward_dist.mode
-
-            term_dist = over_seq(self.wm.term_dec)(states)
-            term_ = term_dist.mean.contiguous()
-            term_[0] = term.float()
-
-        self.wm.requires_grad_(True)
-
-        return {"obs": states, "act": actions, "reward": reward, "term": term_}
+        self.exp.add_scalar(f"wm/val_loss", wm_output.loss, step="wm_opt_step")
+        self.exp.add_scalar(f"ac/val_loss", ac_output.loss, step="ac_opt_step")
 
     def do_val_epoch(self, max_batches=None):
         self.setup_val()
@@ -620,10 +611,6 @@ class Runner:
         wm_loss = self.do_wm_val_epoch(max_batches)
         if wm_loss is not None:
             self.exp.add_scalar("val/wm_loss", wm_loss, step="wm_opt_step")
-
-        ac_loss = self.do_ac_val_epoch(max_batches)
-        if ac_loss is not None:
-            self.exp.add_scalar("val/ac_loss", ac_loss, step="ac_opt_step")
 
         val_iter = iter(self.sdk.rollout(self.val_envs, self.val_agent))
         env_rets = defaultdict(lambda: 0.0)
@@ -695,30 +682,27 @@ class Runner:
 
         val_loss, val_n = 0.0, 0
 
-        self.val_epoch_loader.states.clear()
+        self.val_epoch_loader.h_0s.clear()
         val_iter = iter(islice(self.val_epoch_loader, 0, max_batches))
 
         while True:
             with self.buf_mtx:
-                wm_batch = next(val_iter, None)
+                wm_batch: data.BatchWM | None = next(val_iter, None)
                 if wm_batch is None:
                     break
 
-            wm_batch = self._move_to_device(wm_batch)
+            wm_batch = wm_batch.to(self.device)
 
             self.wm_trainer.eval()
-            wm_loss, wm_mets, wm_states, wm_h_n = self.wm_trainer.compute(
-                obs=wm_batch["obs"],
-                act=wm_batch["act"],
-                reward=wm_batch["reward"],
-                term=wm_batch["term"],
-                h_0=wm_batch["h_0"],
+            wm_output = self.wm_trainer.compute(
+                seq=wm_batch.seq,
+                h_0=wm_batch.h_0,
             )
 
             with self.buf_mtx:
-                self.val_loader.states[wm_batch["end"]] = wm_h_n
+                self.val_loader.h_0s[wm_batch.end_pos] = wm_output.h_n
 
-            val_loss += wm_loss
+            val_loss += wm_output.loss
             val_n += 1
 
         val_loss = val_loss / val_n
@@ -729,98 +713,28 @@ class Runner:
             for _ in range(n):
                 self.do_wm_opt_step()
 
+        self.wm_trainer.train()
+
         with self.buf_mtx:
             wm_batch = next(self.train_iter)
 
-        wm_batch = self._move_to_device(wm_batch)
+        wm_batch = wm_batch.to(self.device)
 
-        self.wm_trainer.train()
-        wm_loss, wm_mets, wm_states, wm_h_n = self.wm_trainer.compute(
-            obs=wm_batch["obs"],
-            act=wm_batch["act"],
-            reward=wm_batch["reward"],
-            term=wm_batch["term"],
-            h_0=wm_batch["h_0"],
+        wm_output = self.wm_trainer.compute(
+            seq=wm_batch.seq,
+            h_0=wm_batch.h_0,
         )
 
-        self.wm_trainer.opt_step(wm_loss)
+        self.wm_trainer.opt_step(wm_output.loss)
 
         with self.buf_mtx:
-            self.train_loader.states[wm_batch["end"]] = wm_h_n
+            self.train_loader.h_0s[wm_batch.end_pos] = wm_output.h_n
 
         if self.should_log_wm:
-            for k, v in wm_mets.items():
+            for k, v in wm_output.metrics.items():
                 self.exp.add_scalar(f"wm/{k}", v, step="wm_opt_step")
 
         self.wm_opt_step += 1
-
-    def train_ac(self, early_stop, val_every, val_limit=None):
-        should_stop = EarlyStopping(**early_stop)
-        should_val = cron.Every(lambda: self.ac_opt_step, val_every)
-
-        best_loss, best_state = np.inf, None
-
-        while True:
-            if should_val:
-                val_loss = self.do_ac_val_epoch(val_limit)
-                self.exp.add_scalar("ac/val_loss", val_loss, step="ac_opt_step")
-
-                if val_loss < best_loss:
-                    best_loss = val_loss
-                    best_state = {
-                        "actor": self.actor.state_dict(),
-                        "ac_trainer": self.ac_trainer.save(),
-                    }
-
-                if should_stop(val_loss, self.wm_opt_step):
-                    break
-
-            self.do_ac_opt_step()
-
-        self.actor.load_state_dict(best_state["actor"])
-        self.ac_trainer.load(best_state["ac_trainer"])
-
-    @torch.no_grad()
-    def do_ac_val_epoch(self, limit=None):
-        self.setup_val()
-
-        if len(self.val_ids) == 0:
-            return
-
-        val_loss, val_n = 0.0, 0
-
-        self.val_epoch_loader.states.clear()
-        val_iter = iter(islice(self.val_epoch_loader, 0, limit))
-
-        while True:
-            with self.buf_mtx:
-                wm_batch = next(val_iter, None)
-                if wm_batch is None:
-                    break
-
-            wm_batch = self._move_to_device(wm_batch)
-
-            self.wm.eval()
-            self.ac_trainer.eval()
-
-            wm_out, _ = self.wm.observe(
-                (wm_batch["obs"], wm_batch["act"]),
-                wm_batch["h_0"],
-            )
-            wm_states = wm_out[0]
-
-            ac_batch = self.dream(
-                initial=wm_states.flatten(),
-                term=wm_batch["term"].flatten(),
-            )
-
-            loss, _ = self.ac_trainer.compute(**ac_batch)
-
-            val_loss += loss
-            val_n += 1
-
-        val_loss = val_loss / val_n
-        return val_loss
 
     def do_ac_opt_step(self, n=1):
         if n > 1:
@@ -830,29 +744,18 @@ class Runner:
         with self.buf_mtx:
             wm_batch = next(self.train_iter)
 
-        wm_batch = self._move_to_device(wm_batch)
+        wm_batch = wm_batch.to(self.device)
 
-        self.wm.eval()
         self.ac_trainer.train()
 
-        with torch.no_grad():
-            wm_out, _ = self.wm.observe(
-                (wm_batch["obs"], wm_batch["act"]),
-                wm_batch["h_0"],
-            )
-            wm_states = wm_out[0]
+        ac_batch = next(self.dream_iter)
 
-        ac_batch = self.dream(
-            initial=wm_states.flatten(),
-            term=wm_batch["term"].flatten(),
-        )
+        ac_output = self.ac_trainer.compute(ac_batch)
 
-        ac_loss, ac_mets = self.ac_trainer.compute(**ac_batch)
-
-        self.ac_trainer.opt_step(ac_loss)
+        self.ac_trainer.opt_step(ac_output.loss)
 
         if self.should_log_ac:
-            for k, v in ac_mets.items():
+            for k, v in ac_output.metrics.items():
                 self.exp.add_scalar(f"ac/{k}", v, step="ac_opt_step")
 
         self.ac_opt_step += 1
@@ -863,11 +766,3 @@ class Runner:
         new_wm = self._make_wm()
         polyak.sync(new_wm, self.wm)
         self.wm_trainer.setup(self.wm)
-
-    def _move_to_device(self, batch: dict):
-        res = {}
-        for k, v in batch.items():
-            if hasattr(v, "to"):
-                v = v.to(device=self.device)
-            res[k] = v
-        return res

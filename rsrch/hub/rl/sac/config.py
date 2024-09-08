@@ -1,4 +1,4 @@
-from rsrch.utils.config import *
+from dataclasses import dataclass
 
 from .. import alpha, env
 from ..utils import Optim

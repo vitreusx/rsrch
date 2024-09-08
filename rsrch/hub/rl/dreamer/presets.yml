@@ -32,6 +32,20 @@ atari:
               every: ${_freq}
             - do_env_step
 
+  debug:
+    stages:
+      - env_rollout:
+          until: 25e3
+          mode: rand
+      - train_loop:
+          until: 100e3
+          tasks:
+            - do_val_epoch: ~
+              every: 10e3
+            - do_opt_step: ~
+              every: 64
+            - do_env_step
+
   train_val:
     _freq: 64
     data.val_frac: 0.1
@@ -156,4 +170,4 @@ dmc:
             - do_env_step
 
 default:
-  $extends: [atari.base, atari.train]
+  $extends: [atari.base, atari.debug]

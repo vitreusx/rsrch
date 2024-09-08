@@ -1,6 +1,6 @@
 from contextlib import contextmanager
 from functools import cached_property
-from typing import Any
+from typing import Any, Callable
 
 import torch
 from torch import Tensor, nn
@@ -14,6 +14,8 @@ from ..common.utils import autocast
 
 class WorldModel(nn.Module):
     act_enc: ActionEncoder
+    reward_dec: Callable[[Tensor], D.Distribution]
+    term_dec: Callable[[Tensor], D.Distribution]
 
     def reset(
         self,
