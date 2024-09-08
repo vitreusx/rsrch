@@ -27,7 +27,7 @@ def low_ratio_test(test_name, suffix=""):
             "run.dir": f"runs/{test_name}/{env}-seed={seed}-freq={freq}{suffix}",
             **common_opts,
         }
-        args = [*common_args, "-o", dumps(options)]
+        args = [*common_args, "-o", format_opts(options)]
         all_tests.append(args)
 
     return all_tests

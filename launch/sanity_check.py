@@ -1,7 +1,7 @@
 import argparse
 import shlex
 
-from .common import dumps
+from .common import *
 
 
 def sanity_check(test_name, suffix=""):
@@ -22,7 +22,7 @@ def sanity_check(test_name, suffix=""):
             "run.dir": f"runs/{test_name}/{env}-seed={seed}-freq={freq}{suffix}",
             **common_opts,
         }
-        args = [*common_args, "-o", dumps(opts)]
+        args = [*common_args, "-o", format_opts(opts)]
         all_tests.append(args)
 
     return all_tests

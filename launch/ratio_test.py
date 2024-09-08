@@ -25,7 +25,7 @@ def ratio_test(test_name, suffix=""):
             "run.dir": f"runs/{test_name}/{env}-seed={seed}-freq={freq}",
             **common_opts,
         }
-        all_tests.append([*common_args, "-o", dumps(options)])
+        all_tests.append([*common_args, "-o", format_opts(options)])
 
     return all_tests
 

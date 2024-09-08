@@ -12,14 +12,22 @@ def represent_str(self, s):
 
 yaml = YAML(typ="safe", pure=True)
 yaml.representer.add_representer(str, represent_str)
-yaml.default_flow_style = True
-yaml.width = int(2**10)
 
 
-def dumps(data):
-    stream = io.StringIO()
-    yaml.dump(data, stream)
-    return stream.getvalue().rstrip()
+class OneLineYaml:
+    yaml = YAML(typ="safe", pure=True)
+    yaml.default_flow_style = True
+    yaml.width = int(2**10)
+    yaml.representer.add_representer(str, represent_str)
+
+    @classmethod
+    def dumps(cls, data):
+        stream = io.StringIO()
+        cls.yaml.dump(data, stream)
+        return stream.getvalue().rstrip()
+
+
+format_opts = OneLineYaml.dumps
 
 
 # Subsets of Atari-100k env set which are best predictors of overall performance.
