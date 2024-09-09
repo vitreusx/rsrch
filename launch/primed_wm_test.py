@@ -23,7 +23,7 @@ def primed_wm_test(test_name, suffix=""):
         options = {
             "env": {"type": "atari", "atari.env_id": env},
             "repro.seed": seed,
-            "run.dir": f"runs/{test_name}/{env}-seed={seed}-freq={wm_freq}x{ac_freq}{suffix}",
+            "run.dir": f"runs/{test_name}/{env}-seed={seed}-wm_freq={wm_freq}-ac_freq={ac_freq}{suffix}",
             "_wm_freq": wm_freq,
             "_ac_freq": ac_freq,
             **common_opts,
