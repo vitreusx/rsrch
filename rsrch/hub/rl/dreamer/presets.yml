@@ -29,7 +29,9 @@ atari:
             - do_val_epoch: ~
               every: ${5e3 * _freq}
             - do_opt_step: ~
-              every: ${_freq}
+              every:
+                n: ${_freq}
+                accumulate: true
             - do_env_step
 
   debug:
@@ -61,7 +63,9 @@ atari:
             - do_val_step: ~
               every: { n: 16, of: wm_opt_step }
             - do_opt_step: ~
-              every: ${_freq}
+              every:
+                n: ${_freq}
+                accumulate: true
             - do_env_step
 
   primed_wm:
@@ -80,16 +84,22 @@ atari:
               every: 40e3
             - do_val_step: ~
               every: { n: 16, of: wm_opt_step }
-            - train_wm:
-                stop_criteria: { patience: 2048 }
-                val_every: 512
-                max_val_batches: 64
-                reset: true
+            - do_wm_opt_step: { n: 512 }
               every: 80e3
+            # - train_wm:
+            #     stop_criteria: { patience: 2048 }
+            #     val_every: 512
+            #     max_val_batches: 64
+            #     reset: true
+            #   every: 80e3
             - do_wm_opt_step: ~
-              every: ${_wm_freq}
+              every:
+                n: ${_wm_freq}
+                accumulate: true
             - do_ac_opt_step: ~
-              every: ${_ac_freq}
+              every:
+                n: ${_ac_freq}
+                accumulate: true
             - do_env_step
 
   ac_conv_test:

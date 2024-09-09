@@ -215,7 +215,9 @@ class DreamLoaderRL(data.IterableDataset):
         self.slice_len = slice_len
         self.device = device
         self.compute_dtype = compute_dtype
-        self.to_reuse = None
+
+        self.to_recycle = None
+        """A pair of (h_0, term) to recycle on next iteration. Such a pair may come from a world model opt step."""
 
     def dream_from(self, h_0: Tensor, term: Tensor):
         self.wm.requires_grad_(False)
@@ -249,15 +251,15 @@ class DreamLoaderRL(data.IterableDataset):
         while True:
             chunks, remaining = [], self.batch_size
 
-            if self.to_reuse is not None:
-                h_0, term = self.to_reuse
+            if self.to_recycle is not None:
+                h_0, term = self.to_recycle
                 if len(term) > remaining:
                     chunks.append((h_0[:remaining], term[:remaining]))
-                    self.to_reuse[0] = h_0[remaining:], term[remaining:]
+                    self.to_recycle[0] = h_0[remaining:], term[remaining:]
                     remaining = 0
                 else:
                     chunks.append((h_0, term))
-                    self.to_reuse = None
+                    self.to_recycle = None
                     remaining -= len(term)
 
             with torch.no_grad():
@@ -280,7 +282,10 @@ class DreamLoaderRL(data.IterableDataset):
                             remaining -= len(term)
                         chunks.append((h_0, term))
 
-            h_0 = torch.cat([h_0 for h_0, term in chunks], 0)
-            term = torch.cat([term for h_0, term in chunks], 0)
+            if len(chunks) > 0:
+                h_0 = torch.cat([h_0 for h_0, term in chunks], 0)
+                term = torch.cat([term for h_0, term in chunks], 0)
+            else:
+                h_0, term = chunks
 
             yield self.dream_from(h_0, term)

@@ -6,7 +6,7 @@ from .common import *
 from .sanity_check import sanity_check
 
 
-def primed_wm_test(test_name, suffix=""):
+def primed_wm_test(test_name, suffix="", fast=False):
     all_tests = []
 
     common_args = ["-p", "atari.base", "atari.primed_wm"]
@@ -15,9 +15,14 @@ def primed_wm_test(test_name, suffix=""):
         "run.create_commit": False,
     }
 
-    seeds = [0]
-    envs = A100k_MONO[:3]
-    freq = [2, 4, 8]
+    if fast:
+        seeds = [0]
+        envs = A100k_MONO[:1]
+        freq = [4, 8]
+    else:
+        seeds = [0]
+        envs = A100k_MONO[:3]
+        freq = [2, 4, 8]
 
     for seed, env, wm_freq, ac_freq in product(seeds, envs, freq, freq):
         options = {
@@ -37,9 +42,10 @@ def primed_wm_test(test_name, suffix=""):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--name", default="primed-wm-test")
+    p.add_argument("--fast", action="store_true")
     args = p.parse_args()
 
-    all_tests = primed_wm_test(args.name)
+    all_tests = primed_wm_test(args.name, fast=args.fast)
 
     prefix = ["python", "-m", "rsrch.hub.rl.dreamer"]
     for test in all_tests:

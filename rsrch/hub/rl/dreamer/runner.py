@@ -211,9 +211,21 @@ class Runner:
             iters = 1
         return every, of, iters
 
-    def _make_every(self, cfg):
-        every, of, iters = self._get_every_params(cfg)
-        return cron.Every(lambda of=of: getattr(self, of), every, iters)
+    def _make_every(self, spec):
+        if not isinstance(spec, dict):
+            spec = {"n": spec}
+
+        args = {**spec}
+        args["period"] = args["n"]
+        del args["n"]
+        of = args.get("of", self.cfg.def_step)
+        if "of" in args:
+            del args["of"]
+        args["step_fn"] = lambda of=of: getattr(self, of)
+        if "iters" not in args:
+            args["iters"] = 1
+
+        return cron.Every(**args)
 
     @exec_once
     def setup_train(self):
@@ -280,12 +292,12 @@ class Runner:
 
         self.should_log_wm = cron.Every(
             lambda: self.wm_opt_step,
-            every=self.cfg.run.log_every,
+            period=self.cfg.run.log_every,
             iters=None,
         )
         self.should_log_ac = cron.Every(
             lambda: self.ac_opt_step,
-            every=self.cfg.run.log_every,
+            period=self.cfg.run.log_every,
             iters=None,
         )
 
@@ -536,44 +548,9 @@ class Runner:
                 self._update_pbar(pbar, should_loop)
 
     def do_opt_step(self, n=1):
-        if n > 1:
-            for _ in range(n):
-                self.do_opt_step()
-
-        with self.buf_mtx:
-            wm_batch = next(self.train_iter)
-
-        wm_batch = wm_batch.to(self.device)
-
-        self.wm_trainer.train()
-        self.ac_trainer.train()
-
-        wm_output = self.wm_trainer.compute(
-            seq=wm_batch.seq,
-            h_0=wm_batch.h_0,
-        )
-        self.wm_trainer.opt_step(wm_output.loss)
-
-        ac_batch = self.dream_loader.dream_from(
-            h_0=wm_output.states.flatten(),
-            term=wm_batch.seq.term.flatten(),
-        )
-        ac_output = self.ac_trainer.compute(ac_batch)
-        self.ac_trainer.opt_step(ac_output.loss)
-
-        with self.buf_mtx:
-            self.train_loader.h_0s[wm_batch.end_pos] = wm_output.h_n
-
-        if self.should_log_wm:
-            for k, v in wm_output.metrics.items():
-                self.exp.add_scalar(f"wm/{k}", v, step="wm_opt_step")
-
-        if self.should_log_ac:
-            for k, v in ac_output.metrics.items():
-                self.exp.add_scalar(f"ac/{k}", v, step="ac_opt_step")
-
-        self.wm_opt_step += 1
-        self.ac_opt_step += 1
+        for _ in range(n):
+            self.do_wm_opt_step()
+            self.do_ac_opt_step()
 
     def do_val_step(self):
         if len(self.val_ids) == 0:
@@ -727,7 +704,7 @@ class Runner:
 
         self.wm_trainer.opt_step(wm_output.loss)
 
-        self.dream_loader.to_reuse = (
+        self.dream_loader.to_recycle = (
             wm_output.states.flatten(),
             wm_batch.seq.term.flatten(),
         )
@@ -738,6 +715,7 @@ class Runner:
         if self.should_log_wm:
             for k, v in wm_output.metrics.items():
                 self.exp.add_scalar(f"wm/{k}", v, step="wm_opt_step")
+            self.exp.add_scalar(f"wm/env_step", self.env_step, step="wm_opt_step")
 
         self.wm_opt_step += 1
 
@@ -762,6 +740,7 @@ class Runner:
         if self.should_log_ac:
             for k, v in ac_output.metrics.items():
                 self.exp.add_scalar(f"ac/{k}", v, step="ac_opt_step")
+            self.exp.add_scalar(f"ac/env_step", self.env_step, step="ac_opt_step")
 
         self.ac_opt_step += 1
 

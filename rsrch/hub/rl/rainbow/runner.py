@@ -211,7 +211,7 @@ class Runner:
 
         return cron.Every(
             step_fn=lambda: getattr(self, unit),
-            every=every,
+            period=every,
             iters=cfg.get("iters", 1),
             never=cfg.get("never", False),
         )
