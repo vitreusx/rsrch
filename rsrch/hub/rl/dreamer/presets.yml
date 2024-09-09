@@ -84,14 +84,12 @@ atari:
               every: 40e3
             - do_val_step: ~
               every: { n: 16, of: wm_opt_step }
-            - do_wm_opt_step: { n: 512 }
+            - train_wm:
+                stop_criteria: { patience: 2048 }
+                val_every: 512
+                max_val_batches: 64
+                reset: true
               every: 80e3
-            # - train_wm:
-            #     stop_criteria: { patience: 2048 }
-            #     val_every: 512
-            #     max_val_batches: 64
-            #     reset: true
-            #   every: 80e3
             - do_wm_opt_step: ~
               every:
                 n: ${_wm_freq}
