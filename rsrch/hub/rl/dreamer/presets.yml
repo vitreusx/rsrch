@@ -168,5 +168,4 @@ dmc:
               every: { n: 5, of: agent_step }
             - do_env_step
 
-default:
-  $extends: [atari.base, atari.primed_wm]
+default: {}

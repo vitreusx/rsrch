@@ -1,4 +1,5 @@
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -85,6 +86,8 @@ class Experiment:
             filename = time if prefix is None else f"{prefix}__{time}"
             self.dir = Path("runs") / sanitize(project) / day / filename
 
+        if self.dir.exists():
+            shutil.rmtree(self.dir)
         self.dir.mkdir(parents=True, exist_ok=True)
 
         if not self.interactive:

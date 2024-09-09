@@ -4772,6 +4772,24 @@ files = [
 ]
 
 [[package]]
+name = "tbparse"
+version = "0.0.9"
+description = "Load tensorboard event logs as pandas DataFrames; Read, parse, and plot tensorboard event logs with ease!"
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "tbparse-0.0.9-py3-none-any.whl", hash = "sha256:51a001728bc539a1efed9f03450b1e0151ad14011c8c52f156cf55dc1fbaa884"},
+    {file = "tbparse-0.0.9.tar.gz", hash = "sha256:528e7da6929148b612a517adb5fbdee709224cb7e2420489a9b6b174f2f808bc"},
+]
+
+[package.dependencies]
+pandas = ">=1.3.0"
+tensorboard = ">=2.12.0"
+
+[package.extras]
+testing = ["flake8", "mypy", "nbsphinx", "pylint", "pytest", "pytest-cov", "seaborn", "soundfile", "sphinx", "sphinx-rtd-theme", "sphinx-tabs", "tensorboardX (==2.6)", "torch"]
+
+[[package]]
 name = "tenacity"
 version = "9.0.0"
 description = "Retry code until it succeeds"
@@ -5314,4 +5332,4 @@ PyYAML = "*"
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "53162e4ddeb4e6d752d64282b039a18d8214efc238f992d34313f71da943f6b3"
+content-hash = "c654395224d3cb6adae2cde6e5cd957675310b1eba71bf9087690c45aacca9bf"
