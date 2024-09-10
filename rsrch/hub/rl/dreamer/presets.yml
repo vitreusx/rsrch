@@ -69,14 +69,19 @@ atari:
             - do_env_step
 
   primed_wm:
-    _wm_freq: 8
-    _ac_freq: 8
+    _freq: 8
     data:
-      val_frac: 0.1
+      val_frac: 0.15
     stages:
       - env_rollout:
           until: 40e3
           mode: rand
+      - train_wm:
+          stop_criteria: { rel_patience: 0.5, min_steps: 1024 }
+          val_every: 1024
+          val_on_loss_improv: 0.2
+          max_val_batches: 128
+          reset: true
       - train_loop:
           until: 400e3
           tasks:
@@ -84,38 +89,11 @@ atari:
               every: 40e3
             - do_val_step: ~
               every: { n: 16, of: wm_opt_step }
-            - train_wm:
-                stop_criteria: { patience: 2048 }
-                val_every: 512
-                max_val_batches: 64
-                reset: true
-              every: 80e3
-            - do_wm_opt_step: ~
+            - do_opt_step: ~
               every:
-                n: ${_wm_freq}
-                accumulate: true
-            - do_ac_opt_step: ~
-              every:
-                n: ${_ac_freq}
+                n: ${_freq}
                 accumulate: true
             - do_env_step
-
-  ac_conv_test:
-    data:
-      val_frac: 0.1
-    stages:
-      - env_rollout:
-          until: 100e3
-          mode: rand
-      - train_wm:
-          stop_criteria: { patience: 2048 }
-          val_every: 512
-          max_val_batches: 64
-          reset: true
-      - train_loop:
-          until: { n: 100e3, of: ac_opt_step }
-          tasks:
-            - do_ac_opt_step
 
 dmc:
   base:
@@ -176,4 +154,12 @@ dmc:
               every: { n: 5, of: agent_step }
             - do_env_step
 
-default: {}
+default:
+  {
+    $extends: [atari.base, atari.primed_wm],
+    _freq: 2,
+    env: { atari.env_id: Pong, type: atari },
+    repro.seed: 0,
+    run.create_commit: false,
+    run.dir: runs/primed-wm-test/Pong-seed=0-freq=2,
+  }

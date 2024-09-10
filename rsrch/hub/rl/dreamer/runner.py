@@ -607,6 +607,7 @@ class Runner:
         self,
         stop_criteria: dict,
         val_every: int,
+        val_on_loss_improv: float | None = None,
         max_val_batches: int | None = None,
         reset: bool = True,
     ):
@@ -615,20 +616,31 @@ class Runner:
         should_stop = EarlyStopping(**stop_criteria)
         should_val = cron.Every(lambda: self.wm_opt_step, val_every)
 
-        best_loss = np.inf
+        best_val_loss = np.inf
         best_ckpt = tempfile.mktemp(suffix=".pth")
+
+        best_train_loss, prev_loss_val = None, None
 
         if reset:
             self.reset_wm()
 
         pbar = self._make_pbar("Train WM", of="wm_opt_step")
         while True:
-            if should_val:
+            should_val_ = bool(should_val)
+            if val_on_loss_improv is not None:
+                if best_train_loss is not None and (
+                    prev_loss_val is None
+                    or prev_loss_val / best_train_loss > 1.0 + val_on_loss_improv
+                ):
+                    should_val_ = True
+                    prev_loss_val = best_train_loss
+
+            if should_val_:
                 val_loss = self.do_wm_val_epoch(max_val_batches)
                 self.exp.add_scalar("wm/val_loss", val_loss, step="wm_opt_step")
 
-                if val_loss < best_loss:
-                    best_loss = val_loss
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
                     torch.save(
                         {
                             "wm": self.wm.state_dict(),
@@ -640,7 +652,11 @@ class Runner:
                 if should_stop(val_loss, self.wm_opt_step):
                     break
 
-            self.do_wm_opt_step()
+            train_loss = self.do_wm_opt_step()
+            if val_on_loss_improv is not None:
+                if best_train_loss is None or train_loss < best_train_loss:
+                    best_train_loss = train_loss
+
             pbar.update()
 
         with open(best_ckpt, "rb") as f:
@@ -718,6 +734,7 @@ class Runner:
             self.exp.add_scalar(f"wm/env_step", self.env_step, step="wm_opt_step")
 
         self.wm_opt_step += 1
+        return wm_output.loss
 
     def do_ac_opt_step(self, n=1):
         if n > 1:

@@ -18,19 +18,17 @@ def primed_wm_test(test_name, suffix="", fast=False):
     if fast:
         seeds = [0]
         envs = A100k_MONO[:1]
-        freq = [4, 8]
     else:
-        seeds = [0]
+        seeds = [0, 1]
         envs = A100k_MONO[:3]
-        freq = [2, 4, 8]
+    freq = [4, 8, 16]
 
-    for seed, env, wm_freq, ac_freq in product(seeds, envs, freq, freq):
+    for seed, env, freq in product(seeds, envs, freq):
         options = {
             "env": {"type": "atari", "atari.env_id": env},
             "repro.seed": seed,
-            "run.dir": f"runs/{test_name}/{env}-seed={seed}-wm_freq={wm_freq}-ac_freq={ac_freq}{suffix}",
-            "_wm_freq": wm_freq,
-            "_ac_freq": ac_freq,
+            "run.dir": f"runs/{test_name}/{env}-seed={seed}-freq={freq}{suffix}",
+            "_freq": freq,
             **common_opts,
         }
         args = [*common_args, "-o", format_opts(options)]
