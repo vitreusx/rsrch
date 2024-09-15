@@ -1,15 +1,18 @@
 import math
+from dataclasses import dataclass
 from functools import partial
 from typing import Literal
 
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
+from torch.nn.utils.parametrizations import _SpectralNorm, spectral_norm
 
 import rsrch.distributions as D
 from rsrch import spaces
 
 from . import dh
+from .dist_q import ValueDist
 from .utils import to_camel_case
 
 ActType = Literal["relu", "elu", "tanh"]
@@ -245,16 +248,6 @@ def AutoEncoder(space: spaces.torch.Tensor, **args):
         raise ValueError(type(space))
 
 
-def make_encoder(space: spaces.torch.Tensor, **kwargs):
-    cls_type = kwargs["type"]
-    cls = globals()[to_camel_case(f"{cls_type}_encoder")]
-    del kwargs["type"]
-    if cls_type == "auto":
-        return cls(space, **kwargs)
-    else:
-        return cls(space, **kwargs.get(cls_type, {}))
-
-
 class ImageDecoder(nn.Sequential):
     def __init__(
         self,
@@ -376,50 +369,13 @@ def AutoDecoder(in_features: int, space: spaces.torch.Tensor, **args):
         raise ValueError(type(space))
 
 
-def make_decoder(in_features: int, space: spaces.torch.Tensor, **kwargs):
-    cls_type = kwargs["type"]
-    cls = globals()[to_camel_case(f"{cls_type}_decoder")]
-    del kwargs["type"]
-    if cls_type == "auto":
-        return cls(in_features, space, **kwargs)
-    else:
-        return cls(in_features, space, **kwargs.get(cls_type, {}))
-
-
-class ActionEncoder(nn.Module):
-    """An action encoder. We cannot use a regular encoder, because:
-    - the output of the actor needs to be in the same format as the
-      output of the action encoder, in particular differentiable
-    - we need to be able to get the un-encoded action from this output, for use
-      in the env interaction."""
-
-    def __init__(self, act_space: spaces.torch.Tensor):
-        super().__init__()
-        self.act_space = act_space
-
-    def forward(self, act: Tensor):
-        if isinstance(self.act_space, spaces.torch.Discrete):
-            act = F.one_hot(act, self.act_space.n)
-        elif isinstance(self.act_space, spaces.torch.TokenSeq):
-            act = F.one_hot(act, self.act_space.vocab_size)
-        return act.flatten(1).float()
-
-    def inverse(self, act: Tensor):
-        if isinstance(self.act_space, spaces.torch.Discrete):
-            act = act.argmax(-1)
-        elif isinstance(self.act_space, spaces.torch.TokenSeq):
-            act = act.reshape(-1, self.act_space.num_tokens, self.act_space.vocab_size)
-            act = act.argmax(-1)
-        else:
-            act = act.reshape(-1, *self.act_space.shape)
-        return act
-
-
-def ActorHead(in_features: int, act_space: spaces.torch.Tensor, **kwargs):
+def ActorHead(
+    in_features: int,
+    act_space: spaces.torch.Tensor,
+    **kwargs,
+):
     layer_ctor = partial(nn.Linear, in_features)
     dist_layer = dh.make(layer_ctor, act_space, **kwargs)
-    if not act_space.dtype.is_floating_point:
-        dist_layer = dh.OneHotWrapper(dist_layer)
     return dist_layer
 
 
@@ -456,3 +412,189 @@ class StreamNorm(nn.Module):
         mag = input.abs().mean(0).to(torch.float64)
         value = self.momentum * self._mag + (1.0 - self.momentum) * mag
         self._mag.copy_(value)
+
+
+class NatureEncoder(nn.Sequential):
+    def __init__(self, space: spaces.torch.Image):
+        super().__init__(
+            nn.Conv2d(space.num_channels, 32, 8, 4),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, 4, 2),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, 3, 1),
+            nn.ReLU(),
+            nn.Flatten(),
+        )
+
+
+class DerEncoder(nn.Sequential):
+    def __init__(self, space: spaces.torch.Image):
+        super().__init__(
+            nn.Conv2d(space.num_channels, 32, 5, 5),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, 5, 5),
+            nn.ReLU(),
+            nn.Flatten(),
+        )
+
+
+class ImpalaSmall(nn.Sequential):
+    def __init__(self, space: spaces.torch.Image):
+        super().__init__(
+            nn.Conv2d(space.num_channels, 16, 8, 4),
+            nn.ReLU(),
+            nn.Conv2d(16, 32, 4, 2),
+            nn.ReLU(),
+            nn.AdaptiveMaxPool2d((6, 6)),
+            nn.Flatten(),
+        )
+
+
+class SpectralConv2d(nn.Conv2d):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._spec_hook = _SpectralNorm(self.weight)
+
+    def forward(self, input: Tensor) -> Tensor:
+        weight = self._spec_hook(self.weight)
+        return F.conv2d(
+            input,
+            weight,
+            self.bias,
+            self.stride,
+            self.padding,
+            self.dilation,
+            self.groups,
+        )
+
+
+class ImpalaResidual(nn.Module):
+    def __init__(self, channels: int, use_spectral_norm=False):
+        super().__init__()
+        Conv2d = SpectralConv2d if use_spectral_norm else nn.Conv2d
+        self.main = nn.Sequential(
+            nn.ReLU(),
+            Conv2d(channels, channels, 3, 1, 1),
+            nn.ReLU(),
+            Conv2d(channels, channels, 3, 1, 1),
+        )
+
+    def forward(self, x):
+        return x + self.main(x)
+
+
+class ImpalaBlock(nn.Sequential):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        use_spectral_norm: bool,
+    ):
+        super().__init__(
+            nn.Conv2d(in_channels, out_channels, 3, 1, 1),
+            nn.MaxPool2d(3, 2, 1),
+            ImpalaResidual(out_channels, use_spectral_norm),
+            ImpalaResidual(out_channels, use_spectral_norm),
+        )
+
+
+class ImpalaLarge(nn.Sequential):
+    def __init__(
+        self,
+        space: spaces.torch.Image,
+        model_size: int = 1,
+        use_spectral_norm: Literal["none", "last", "all"] = "none",
+    ):
+        super().__init__(
+            ImpalaBlock(
+                space.num_channels, 16 * model_size, use_spectral_norm == "all"
+            ),
+            ImpalaBlock(16 * model_size, 32 * model_size, use_spectral_norm == "all"),
+            ImpalaBlock(32 * model_size, 32 * model_size, use_spectral_norm != "none"),
+            nn.ReLU(),
+            nn.AdaptiveMaxPool2d((8, 8)),
+            nn.Flatten(),
+        )
+
+
+def ImpalaEncoder(
+    space: spaces.torch.Image,
+    type: Literal["small", "large"],
+    model_size: int = 1,
+    use_spectral_norm: Literal["none", "last", "all"] = "none",
+):
+    if type == "small":
+        return ImpalaSmall(space)
+    elif type == "large":
+        return ImpalaLarge(space, model_size, use_spectral_norm)
+
+
+def make_encoder(space: spaces.torch.Tensor, **kwargs):
+    cls_type = kwargs["type"]
+    cls = globals()[to_camel_case(f"{cls_type}_encoder")]
+    del kwargs["type"]
+    if cls_type == "auto":
+        return cls(space, **kwargs)
+    else:
+        return cls(space, **kwargs.get(cls_type, {}))
+
+
+def make_decoder(in_features: int, space: spaces.torch.Tensor, **kwargs):
+    cls_type = kwargs["type"]
+    cls = globals()[to_camel_case(f"{cls_type}_decoder")]
+    del kwargs["type"]
+    if cls_type == "auto":
+        return cls(in_features, space, **kwargs)
+    else:
+        return cls(in_features, space, **kwargs.get(cls_type, {}))
+
+
+@dataclass
+class DistConfig:
+    enabled: bool
+    v_min: float
+    v_max: float
+    num_atoms: int
+
+
+class QHead(nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        act_space: spaces.torch.Discrete,
+        hidden_dim: int,
+        dist: DistConfig,
+    ):
+        super().__init__()
+        self.in_features = in_features
+        self.act_space = act_space
+        self.hidden_dim = hidden_dim
+        self.dist = dist
+
+        mult = dist.num_atoms if dist.enabled else 1
+        self.v_head = self._make_head(mult)
+        self.adv_head = self._make_head(mult * act_space.n)
+
+    def _make_head(self, out_features: int):
+        return nn.Sequential(
+            nn.Linear(self.in_features, self.hidden_dim),
+            nn.ReLU(),
+            nn.Linear(self.hidden_dim, out_features),
+        )
+
+    def forward(self, input: Tensor):
+        if self.dist.enabled:
+            v: Tensor = self.v_head(input)
+            v = v.reshape(len(v), 1, self.dist.num_atoms)
+            adv: Tensor = self.adv_head(input)
+            adv = adv.reshape(len(adv), self.act_space.n, self.dist.num_atoms)
+            logits = v + adv - adv.mean(-2, keepdim=True)
+            return ValueDist(
+                ind_rv=D.Categorical(logits=logits),
+                v_min=self.dist.v_min,
+                v_max=self.dist.v_max,
+            )
+        else:
+            adv: Tensor = self.adv_head(input)
+            v: Tensor = self.v_head(input)
+            return v.flatten(1) + adv - adv.mean(-1, keepdim=True)

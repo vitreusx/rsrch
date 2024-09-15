@@ -61,6 +61,7 @@ data:
     batch_size: ${data.buffer.batch_size * data.buffer.slice_len}
     horizon: 15
   val_frac: 0.0
+  rl_source: dream
 
 train:
   num_envs: 1
@@ -119,17 +120,23 @@ wm:
         type: discrete
         discrete: *mlp
 
-ac:
+rl:
   type: ref
   ref:
-    actor: *mlp
-    actor_dist:
-      type: auto
-      beta:
-        min_std: 0.1
+    actor:
+      encoder:
+        type: box
+        box: *mlp
+      dist:
+        type: auto
+        beta:
+          min_std: 0.1
     critic:
-      <<: [*mlp]
-      dist: { type: mse }
+      encoder:
+        type: box
+        box: *mlp
+      dist:
+        type: mse
     target_critic: { every: 100 }
     gamma: 0.99
     gae_lambda: 0.95
@@ -158,6 +165,3 @@ stages:
         - do_opt_step: ~
           every: 5
         - do_env_step
-
-extras:
-  discrete_actions: ~

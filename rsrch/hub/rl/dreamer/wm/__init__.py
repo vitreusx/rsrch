@@ -8,12 +8,10 @@ from torch import Tensor, nn
 import rsrch.distributions as D
 from rsrch.rl import gym
 
-from ..common.nets import ActionEncoder
 from ..common.utils import autocast
 
 
 class WorldModel(nn.Module):
-    act_enc: ActionEncoder
     reward_dec: Callable[[Tensor], D.Distribution]
     term_dec: Callable[[Tensor], D.Distribution]
 
@@ -83,9 +81,7 @@ class Agent(gym.VecAgentWrapper):
             self._state[idxes] = state.type_as(self._state)
 
     def policy(self, idxes):
-        enc_act = super().policy(idxes)
-        act = self.wm.act_enc.inverse(enc_act)
-        return act
+        return super().policy(idxes)
 
     def step(self, idxes, act: Tensor, next_obs: Tensor):
         act, next_obs = act.to(self.device), next_obs.to(self.device)

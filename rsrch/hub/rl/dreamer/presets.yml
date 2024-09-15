@@ -10,12 +10,16 @@ atari:
         stoch: { num_tokens: 32, vocab_size: 32 }
       opt.lr: 2e-4
       coef: { kl: 0.1, term: 5.0 }
-    ac.ref:
+    rl.ref:
       gamma: 0.999
       actor_ent: 1e-3
       actor_grad: reinforce
       opt.actor.lr: 4e-5
       opt.critic.lr: 1e-4
+
+  base_100k:
+    $extends: [base]
+    env.atari.sticky: false
 
   train:
     _freq: 64
@@ -50,7 +54,7 @@ atari:
 
   train_val:
     _freq: 64
-    data.val_frac: 0.1
+    data.val_frac: 0.15
     stages:
       - env_rollout:
           until: ${max(3e3 * _freq, 20e3)}
@@ -67,6 +71,8 @@ atari:
                 n: ${_freq}
                 accumulate: true
             - do_env_step
+      - save_ckpt:
+          tag: final
 
   primed_wm:
     _freq: 8
@@ -114,7 +120,7 @@ dmc:
         term:
           type: const
           const.value: false
-    ac.ref:
+    rl.ref:
       opt.actor.lr: 8e-5
       opt.critic.lr: 8e-5
       actor_ent: 1e-4
@@ -153,13 +159,3 @@ dmc:
             - do_opt_step: ~
               every: { n: 5, of: agent_step }
             - do_env_step
-
-default:
-  {
-    $extends: [atari.base, atari.primed_wm],
-    _freq: 2,
-    env: { atari.env_id: Pong, type: atari },
-    repro.seed: 0,
-    run.create_commit: false,
-    run.dir: runs/primed-wm-test/Pong-seed=0-freq=2,
-  }

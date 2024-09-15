@@ -230,6 +230,8 @@ def make(
             type = "bern" if space.n <= 2 else "cat"
         elif isinstance(space, spaces.torch.Image):
             type = "mse"
+        elif isinstance(space, spaces.torch.OneHot):
+            type = "one_hot"
         elif isinstance(space, spaces.torch.Box):
             type = "trunc_normal" if space.bounded.all() else "normal"
         elif isinstance(space, spaces.torch.TokenSeq):

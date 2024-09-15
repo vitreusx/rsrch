@@ -13,9 +13,9 @@ from torch.utils.data import DataLoader
 from rsrch import rl, spaces
 from rsrch.nn.utils import over_seq
 
-from .actor import Actor
 from .common.types import Slices
 from .common.utils import autocast
+from .rl import Actor
 from .wm import WorldModel
 
 
@@ -196,6 +196,16 @@ def make_async(iterator: Iterator):
         yield batches.get()
 
 
+class RealLoaderRL(data.IterableDataset):
+    def __init__(self, real_slices: RealLoaderWM):
+        super().__init__()
+        self.real_slices = real_slices
+
+    def __iter__(self):
+        for batch in self.real_slices:
+            yield batch.seq
+
+
 class DreamLoaderRL(data.IterableDataset):
     def __init__(
         self,
@@ -235,7 +245,7 @@ class DreamLoaderRL(data.IterableDataset):
             actions = torch.stack(actions)
 
             reward_dist = over_seq(self.wm.reward_dec)(states)
-            reward = reward_dist.mode
+            reward = reward_dist.mode[1:]
 
             term_dist = over_seq(self.wm.term_dec)(states)
             term_ = term_dist.mean.contiguous()

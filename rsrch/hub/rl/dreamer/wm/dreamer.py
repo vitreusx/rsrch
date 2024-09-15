@@ -46,8 +46,8 @@ class WorldModel(nn.Module):
         self,
         cfg: Config,
         obs_space: spaces.torch.Tensor,
-        act_space: spaces.torch.Tensor,
-        rew_space: spaces.torch.Tensor,
+        act_space: spaces.torch.Box,
+        rew_space: spaces.torch.Box,
     ):
         super().__init__()
         self.cfg = cfg
@@ -56,7 +56,7 @@ class WorldModel(nn.Module):
         self.rew_space = rew_space
 
         self.obs_enc = nets.make_encoder(self.obs_space, **cfg.encoder)
-        self.act_enc = nets.ActionEncoder(self.act_space)
+        self.act_enc = nn.Identity()
 
         with safe_mode(self):
             obs: Tensor = self.obs_space.sample([1])
@@ -82,6 +82,9 @@ class WorldModel(nn.Module):
             **self.cfg.decoders["term"],
         )
 
+        self.reset_parameters()
+
+    def reset_parameters(self):
         self.apply(tf_init)
 
     def _make_decoder(self, space: spaces.torch.Tensor, **kwargs):
@@ -102,8 +105,8 @@ class WorldModel(nn.Module):
         next_obs = self.obs_enc(next_obs)
         return self.rssm.obs_step(state, act, next_obs)
 
-    def img_step(self, state, enc_act):
-        return self.rssm.img_step(state, enc_act)
+    def img_step(self, state, act):
+        return self.rssm.img_step(state, act)
 
     def observe(
         self,
@@ -150,16 +153,15 @@ class Trainer(TrainerBase):
             self.reward_space = spaces.torch.Tensor((), dtype=torch.float32)
             self._reward_fn = lambda r: r
 
-    def setup(self, wm: WorldModel):
+    def setup(self, wm: WorldModel | nn.Sequential):
         self.wm = wm
-        self.parameters = [*self.wm.parameters()]
         self.opt = self._make_opt()
 
     def _make_opt(self):
         cfg = {**self.cfg.opt}
         cls = find_class(torch.optim, cfg["type"])
         del cfg["type"]
-        return cls(self.parameters, **cfg)
+        return cls(self.wm.parameters(), **cfg)
 
     def compute(
         self,
@@ -242,6 +244,13 @@ class Trainer(TrainerBase):
                 loss_rhs = value_rhs.clamp_min(free).mean()
             loss = mix * loss_lhs + (1.0 - mix) * loss_rhs
         return loss, value
+
+    def reset(self):
+        def _reset(module):
+            if isinstance(module, WorldModel):
+                module.reset_parameters()
+
+        self.wm.apply(_reset)
 
 
 AsTensor = rssm.AsTensor

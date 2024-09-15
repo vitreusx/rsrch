@@ -131,16 +131,16 @@ class Node(MutableMapping):
 
     def __init__(self, value, parent=None):
         if isinstance(value, Node):
-            value = value.unwrapped
-        self.unwrapped = value
+            value = value.value
+        self.value = value
         self.parent = parent
 
     @property
     def scope(self):
         stack, cur = [], self
         while cur is not None:
-            if isinstance(cur.unwrapped, dict):
-                stack.append(cur.unwrapped)
+            if isinstance(cur.value, dict):
+                stack.append(cur.value)
             cur = cur.parent
         stack.reverse()
         scope = {k: v for scope in stack for k, v in scope.items()}
@@ -169,11 +169,11 @@ class Node(MutableMapping):
 
     def __getitem__(self, key):
         with node_attr_mode():
-            if isinstance(self.unwrapped, dict):
+            if isinstance(self.value, dict):
                 if key not in self:
                     self[key] = {}
 
-            child = self.unwrapped[key]
+            child = self.value[key]
 
             if isinstance(child, str):
                 child = Template(child).render(self.scope)
@@ -184,33 +184,33 @@ class Node(MutableMapping):
             return child
 
     def __contains__(self, key):
-        return key in self.unwrapped
+        return key in self.value
 
     def __setitem__(self, key, value):
         with node_attr_mode():
             if isinstance(value, Node):
-                value = value.unwrapped
-            self.unwrapped[key] = value
+                value = value.value
+            self.value[key] = value
 
     def __delitem__(self, key):
-        del self.unwrapped[key]
+        del self.value[key]
 
     def __len__(self):
-        return len(self.unwrapped)
+        return len(self.value)
 
     def __iter__(self):
-        if isinstance(self.unwrapped, dict):
-            return iter(self.unwrapped)
+        if isinstance(self.value, dict):
+            return iter(self.value)
         else:
             return (self[i] for i in range(len(self)))
 
     def __repr__(self):
-        return repr(self.unwrapped)
+        return repr(self.value)
 
 
 def _render_all(value):
     if isinstance(value, Node):
-        unwrapped = value.unwrapped
+        unwrapped = value.value
         if isinstance(unwrapped, dict):
             return {k: _render_all(v) for k, v in value.items()}
         elif isinstance(unwrapped, list):
@@ -225,70 +225,55 @@ def render_all(cfg):
     return cfg
 
 
-def _use_preset(node_b, preset, node_p):
-    with node_attr_mode():
-        if not (
-            isinstance(node_b, Node)
-            and isinstance(node_b.unwrapped, dict)
-            and isinstance(node_p, Node)
-            and isinstance(node_p.unwrapped, dict)
-            and isinstance(preset, dict)
-        ):
-            return preset
+def _apply_preset(base, preset):
+    if not (
+        isinstance(base, Node)
+        and isinstance(base.value, dict)
+        and isinstance(preset, Node)
+        and isinstance(preset.value, dict)
+    ):
+        return preset
 
-        if preset.get("$replace"):
-            # Usually, we recursively merge dicts. Sometimes, however, it's necessary to replace the target node entirely. We can indicate this via `$replace` key.
-            preset = {**preset}
-            del preset["$replace"]
-            return preset
+    if "$replace" in preset:
+        return preset
 
-        for k, v in preset.items():
-            k2 = Template(k).render({**node_b.scope, **node_p.scope})
-            with node_item_mode():
-                exec(f"node_b.{k2} = _use_preset(node_b.{k2}, v, node_p[k])")
+    for key, value in preset.items():
+        if key.startswith("$"):
+            continue
+        with node_item_mode():
+            exec(f"base.{key} = _apply_preset(base.{key}, value)")
 
-    return node_b
-
-
-def use_preset(base: dict, preset):
-    node_b, node_p = Node(base), Node(preset)
-    _use_preset(node_b, preset, node_p)
-
-
-def compose(base: dict, presets: list[dict]):
-    base = {**base}
-    for preset in presets:
-        use_preset(base, preset)
-    base = render_all(base)
-    base = _hide_private(base)
     return base
 
 
-def find_by_path(d, key):
-    node = Node(d)
-    with node_item_mode():
-        r = eval(f"node.{key}")
-    if isinstance(r, Node):
-        r = r.unwrapped
-    return r
+def apply_preset(base, preset):
+    return _apply_preset(Node(base), Node(preset))
 
 
-def get_presets(all_presets: dict, names: list[str]):
-    r = []
-    for name in names:
-        preset = find_by_path(all_presets, name)
+def apply_presets(base: dict, all_presets: dict, presets: list[str]):
+    base, all_presets = Node(base), Node(all_presets)
+
+    for name in presets:
+        with node_item_mode():
+            preset: Node = eval(f"all_presets.{name}")
+
+        assert isinstance(preset.value, dict)
         if "$extends" in preset:
-            r.extend(get_presets(all_presets, preset["$extends"]))
-            del preset["$extends"]
-        r.append(preset)
-    return r
+            extends = preset["$extends"]
+            if not isinstance(extends, list):
+                extends = [extends]
+            for ext_name in extends:
+                ext: Node = Template(f"${{{ext_name}}}").render(preset.scope)
+                _apply_preset(base, ext)
+
+        _apply_preset(base, preset)
 
 
 def _hide_private(x):
     if isinstance(x, dict):
         r = {}
         for k, v in x.items():
-            if isinstance(k, str) and k.startswith("_"):
+            if isinstance(k, str) and (k.startswith("_") or k.startswith("$")):
                 continue
             r[k] = _hide_private(v)
         return r
@@ -340,16 +325,16 @@ def cli(
 
     base = open(args.config_file)
 
-    presets = []
     if presets_yml is not None:
         all_presets = open(args.presets_file)
-        presets.extend(get_presets(all_presets, args.presets))
+        apply_presets(base, all_presets, args.presets)
 
     if args.options is not None:
-        options = load(args.options)
-        presets.append(options)
+        apply_preset(base, load(args.options))
 
-    return compose(base, presets)
+    base = render_all(base)
+    base = _hide_private(base)
+    return base
 
 
 __all__ = ["compose", "cast", "cli"]

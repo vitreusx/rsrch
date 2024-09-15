@@ -6,6 +6,13 @@
       "request": "launch",
       "module": "rsrch.hub.rl.dreamer",
       "justMyCode": false,
+      "args": [
+        "-p",
+        "atari.base",
+        "atari.primed_wm",
+        "-o",
+        "{_freq: 2, env: { atari.env_id: Pong, type: atari }, repro.seed: 0, run.create_commit: false, run.dir: runs/primed-wm-test/Pong-seed=0-freq=2}"
+      ]
     }
   ],
   "inputs": []

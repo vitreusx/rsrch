@@ -1,7 +1,7 @@
 from collections import namedtuple
 from contextlib import contextmanager
 from dataclasses import dataclass
-from functools import cached_property
+from functools import cached_property, partial
 from multiprocessing.synchronize import Lock
 from typing import Any, Callable, Literal
 
@@ -10,7 +10,8 @@ from torch import Tensor, nn
 
 import rsrch.distributions as D
 from rsrch import spaces
-from rsrch.nn.utils import over_seq
+from rsrch.hub.rl.dreamer.common import dh
+from rsrch.nn.utils import over_seq, safe_mode
 from rsrch.rl import gym
 from rsrch.rl.utils import polyak
 from rsrch.utils import sched
@@ -23,9 +24,18 @@ from ..common.utils import autocast, find_class, null_ctx, tf_init
 
 @dataclass
 class Config:
-    actor: dict
-    actor_dist: dict
-    critic: dict
+    @dataclass
+    class Actor:
+        encoder: dict
+        dist: dict
+
+    @dataclass
+    class Critic:
+        encoder: dict
+        dist: dict
+
+    actor: Actor
+    critic: Critic
     opt: dict
     coef: dict
     target_critic: dict | None
@@ -38,34 +48,70 @@ class Config:
     actor_ent: float | dict
 
 
-class Actor(nn.Sequential):
+class Actor(nn.Module):
     def __init__(
         self,
-        cfg: Config,
-        state_size: int,
+        cfg: Config.Actor,
+        obs_space: spaces.torch.Tensor,
         act_space: spaces.torch.Tensor,
     ):
         super().__init__()
         self.cfg = cfg
+        self.obs_space = obs_space
+        self.act_space = act_space
 
-        mlp = nets.MLP(state_size, None, **cfg.actor)
-        head = nets.ActorHead(mlp.out_features, act_space, **cfg.actor_dist)
-        super().__init__(mlp, head)
+        self.enc = nets.make_encoder(obs_space, **cfg.encoder)
+        with safe_mode(self):
+            obs: Tensor = self.obs_space.sample([1])
+            enc_size: int = self.enc(obs).shape[1]
+
+        layer_ctor = partial(nn.Linear, enc_size)
+        self.head = dh.make(layer_ctor, act_space, **cfg.dist)
 
         self.apply(tf_init)
 
+    def forward(self, obs):
+        if not isinstance(obs, Tensor):
+            obs = obs.as_tensor()
+        return self.head(self.enc(obs))
 
-class Critic(nets.BoxDecoder):
-    def __init__(self, cfg: Config, state_size: int):
+
+class Critic(nn.Module):
+    def __init__(
+        self,
+        cfg: Config.Critic,
+        obs_space: spaces.torch.Tensor,
+    ):
+        super().__init__()
+        self.cfg = cfg
+        self.obs_space = obs_space
+
+        self.enc = nets.make_encoder(obs_space, **cfg.encoder)
+        with safe_mode(self):
+            obs: Tensor = self.obs_space.sample([1])
+            enc_size: int = self.enc(obs).shape[1]
+
+        layer_ctor = partial(nn.Linear, enc_size)
         vf_space = spaces.torch.Box((), dtype=torch.float32)
-        super().__init__(state_size, vf_space, **cfg.critic)
+        self.head = dh.make(layer_ctor, vf_space, **cfg.dist)
 
         self.apply(tf_init)
 
+    def forward(self, obs):
+        if not isinstance(obs, Tensor):
+            obs = obs.as_tensor()
+        return self.head(self.enc(obs))
 
-def gae_lambda(rew, val, gamma, bootstrap, lambda_):
+
+def gae_lambda(
+    reward: Tensor,
+    val: Tensor,
+    gamma: Tensor,
+    bootstrap: Tensor,
+    lambda_: float,
+):
     next_values = torch.cat((val[1:], bootstrap[None]), 0)
-    inputs = rew + (1.0 - lambda_) * gamma * next_values
+    inputs = reward + (1.0 - lambda_) * gamma * next_values
 
     returns, cur = [], val[-1]
     for t in reversed(range(len(inputs))):
@@ -99,7 +145,6 @@ class Trainer(TrainerBase):
         self,
         actor: Actor,
         make_critic: Callable[[], nn.Module],
-        act_space: spaces.torch.Tensor,
     ):
         self.actor = actor
 
@@ -117,7 +162,7 @@ class Trainer(TrainerBase):
             self.target_critic = self.critic
 
         if self.cfg.actor_grad == "auto":
-            discrete = isinstance(act_space, spaces.torch.Discrete)
+            discrete = isinstance(actor.act_space, spaces.torch.OneHot)
             self.actor_grad = "reinforce" if discrete else "dynamics"
         else:
             self.actor_grad = self.cfg.actor_grad
@@ -173,10 +218,11 @@ class Trainer(TrainerBase):
         with no_grad():
             with self.autocast():
                 gamma = self.cfg.gamma * (1.0 - seq.term.float())
-
                 vt = over_seq(self.target_critic)(seq.obs).mode
+                reward = torch.cat([torch.zeros_like(seq.reward[:1]), seq.reward])
+
                 target = gae_lambda(
-                    rew=seq.reward[:-1],
+                    reward=reward[:-1],
                     val=vt[:-1],
                     gamma=gamma[:-1],
                     bootstrap=vt[-1],

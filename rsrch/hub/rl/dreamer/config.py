@@ -4,8 +4,7 @@ from typing import Literal
 
 from rsrch import rl
 
-from . import agent
-from .actor import ref
+from .rl import ref
 from .wm import dreamer
 
 
@@ -66,6 +65,7 @@ class Config:
 
         dream: Dream
         val_frac: float
+        rl_source: Literal["dream", "real"]
 
     data: Data
 
@@ -91,16 +91,10 @@ class Config:
     wm: WM
 
     @dataclass
-    class Actor:
+    class RL:
         type: Literal["ref"]
         ref: ref.Config | None
 
-    ac: Actor
+    rl: RL
 
     stages: list[dict | str]
-
-    @dataclass
-    class Extras:
-        discrete_actions: int | None = None
-
-    extras: Extras

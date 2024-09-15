@@ -48,9 +48,6 @@ def partial_typed(f: Callable[P, R], *args, **kwargs) -> Callable[P, R]:
     return partial(f, *args, **kwargs)
 
 
-LevelStr = Literal["INFO", "WARN", "ERROR", "DEBUG"]
-
-
 class Tee:
     def __init__(self, stream, path: str | Path):
         self.path = Path(path)
@@ -63,7 +60,7 @@ class Tee:
         os.dup2(self.tee.stdin.fileno(), stream.fileno())
 
 
-class Experiment:
+class Experiment(logging.LogMixin):
     def __init__(
         self,
         *,
@@ -102,7 +99,7 @@ class Experiment:
         )
         self.logger = logging.getLogger(project)
 
-        self.log("INFO", f"Exp dir: {self.dir}")
+        self.info(f"Exp dir: {self.dir}")
 
         info = {
             "project": self.project,
@@ -112,7 +109,7 @@ class Experiment:
         if config is not None:
             with open(self.dir / "config.yml", "w") as f:
                 yaml.dump(config, f)
-            self.log("INFO", f"Saved config to: {self.dir / 'config.yml'}")
+            self.info(f"Saved config to: {self.dir / 'config.yml'}")
 
         if create_commit:
             commit = create_exp_commit(str(self.dir))
@@ -124,7 +121,7 @@ class Experiment:
 
         with open(self.dir / "info.yml", "w") as f:
             yaml.dump(info, f)
-            self.log("INFO", f"Saved extra info to: {self.dir / 'info.yml'}")
+            self.info(f"Saved extra info to: {self.dir / 'info.yml'}")
 
     def pbar(self, iterable=None, **kwargs):
         args = dict(
@@ -147,9 +144,7 @@ class Experiment:
         for board in self.boards:
             board.set_as_default(step)
 
-    def log(self, level: int | LevelStr, message):
-        if isinstance(level, str):
-            level = getattr(logging, level.upper())
+    def log(self, level: int, message):
         self.logger.log(level, message)
         for board in self.boards:
             board.log(level, message)

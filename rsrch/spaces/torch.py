@@ -29,7 +29,12 @@ class Tensor:
         shape: tuple[int, ...] = (),
         gen: torch.Generator | None = None,
     ):
-        raise NotImplementedError()
+        return torch.rand(
+            (*shape, *self.shape),
+            device=self.device,
+            dtype=self.dtype,
+            generator=gen,
+        )
 
     def __repr__(self):
         return f"Space({self.shape!r}, {self.dtype}, {self.device})"
@@ -133,6 +138,11 @@ class Box(Tensor):
             dtype=self.dtype,
             device=self.device,
         )
+
+
+class OneHot(Box):
+    def __init__(self, n: int):
+        super().__init__(shape=(n,), low=0.0, high=1.0)
 
 
 class Discrete(Tensor):

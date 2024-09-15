@@ -40,7 +40,8 @@ class StackSeq(Sequence):
             else:
                 xs = self.seq[idx - self.stack_num + 1 : idx + 1]
 
-            return {**self.seq[idx], "obs": tuple(xs)}
+            obs = tuple(x["obs"] for x in xs)
+            return {**self.seq[idx], "obs": obs}
 
 
 class MapSeq(Sequence):

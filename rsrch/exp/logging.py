@@ -1,4 +1,6 @@
+from abc import ABC, abstractmethod
 from logging import *
+from typing import Literal
 
 from colorama import Fore, Style, just_fix_windows_console
 
@@ -52,3 +54,27 @@ def setup(
             fmt = "%(asctime)s - %(name)-13s - %(levelname)-8s - %(message)s"
             formatter = Formatter(fmt)
         handler.setFormatter(formatter)
+
+
+class LogMixin(ABC):
+    @abstractmethod
+    def log(self, level: int, msg):
+        ...
+
+    def fatal(self, msg):
+        return self.log(FATAL, msg)
+
+    def critical(self, msg):
+        return self.log(CRITICAL, msg)
+
+    def error(self, msg):
+        return self.log(ERROR, msg)
+
+    def warn(self, msg):
+        return self.log(WARN, msg)
+
+    def info(self, msg):
+        return self.log(INFO, msg)
+
+    def debug(self, msg):
+        return self.log(DEBUG, msg)

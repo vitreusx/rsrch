@@ -17,7 +17,7 @@ import torch
 from torch import Tensor, nn
 from tqdm import tqdm
 
-from rsrch import rl
+from rsrch import rl, spaces
 from rsrch.exp import Experiment
 from rsrch.exp.board.tensorboard import Tensorboard
 from rsrch.exp.profile import Profiler
@@ -27,8 +27,8 @@ from rsrch.utils.early_stop import EarlyStopping
 
 from . import agent, data
 from . import wm as wm_
-from .actor import ref
 from .config import Config
+from .rl import ref
 from .wm import dreamer
 
 
@@ -65,6 +65,7 @@ class Runner:
 
             func()
 
+    @exec_once
     def _setup_common(self):
         repro.seed_all(self.cfg.repro.seed)
         repro.set_fully_deterministic(self.cfg.repro.determinism == "full")
@@ -76,11 +77,6 @@ class Runner:
             torch.autograd.set_detect_anomaly(True)
 
         self.sdk = rl.sdk.make(self.cfg.env)
-
-        if not self.sdk.act_space.dtype.is_floating_point:
-            n = self.cfg.extras.discrete_actions
-            if n is not None:
-                self.sdk = rl.sdk.wrappers.DiscreteActions(self.sdk, n=n)
 
         self.exp = Experiment(
             project="dreamer",
@@ -95,8 +91,36 @@ class Runner:
         self.exp.boards.append(board)
         self.exp.set_as_default(self.cfg.def_step)
 
-        self.wm = self._make_wm()
-        self.actor = self._make_ac(self.wm)
+        wm_type = self.cfg.wm.type
+        if wm_type == "dreamer":
+            wm_cfg = self.cfg.wm.dreamer
+
+            if isinstance(self.sdk.act_space, spaces.torch.Discrete):
+                self.sdk = rl.sdk.wrappers.OneHotActions(self.sdk)
+
+            # We need the trainer to deduce the reward space, even if we don't
+            # run the training.
+            wm_trainer = dreamer.Trainer(wm_cfg, self.compute_dtype)
+            rew_space = wm_trainer.reward_space
+
+            obs_space, act_space = self.sdk.obs_space, self.sdk.act_space
+            self.wm = dreamer.WorldModel(wm_cfg, obs_space, act_space, rew_space)
+
+            rl_obs_space = spaces.torch.Tensor((self.wm.state_size,))
+        else:
+            raise ValueError(wm_type)
+
+        rl_act_space = self.sdk.act_space
+
+        ac_type = self.cfg.rl.type
+        if ac_type == "ref":
+            ac_cfg = self.cfg.rl.ref
+            self.actor = ref.Actor(ac_cfg.actor, rl_obs_space, rl_act_space)
+        else:
+            raise ValueError(ac_type)
+
+        self.wm = self.wm.to(self.device)
+        self.actor = self.actor.to(self.device)
 
         if self.cfg.profile.enabled:
             cfg = self.cfg.profile
@@ -129,42 +153,6 @@ class Runner:
         self.exp.register_step("env_step", lambda: self.env_step)
         self.agent_step = 0
         self.exp.register_step("agent_step", lambda: self.agent_step)
-
-    def _make_wm(self):
-        wm_type = self.cfg.wm.type
-        if wm_type == "dreamer":
-            wm_cfg = self.cfg.wm.dreamer
-
-            # We need the trainer to deduce the reward space, even if we don't
-            # run the training.
-            wm_trainer = dreamer.Trainer(wm_cfg, self.compute_dtype)
-            rew_space = wm_trainer.reward_space
-
-            obs_space, act_space = self.sdk.obs_space, self.sdk.act_space
-            wm = dreamer.WorldModel(wm_cfg, obs_space, act_space, rew_space)
-        else:
-            raise ValueError(wm_type)
-
-        wm = wm.to(self.device)
-        return wm
-
-    def _make_ac(self, wm: dreamer.WorldModel):
-        wm_type = self.cfg.wm.type
-        if wm_type == "dreamer":
-            Encoder = dreamer.AsTensor
-
-        ac_type = self.cfg.ac.type
-        if ac_type == "ref":
-            ac_cfg = self.cfg.ac.ref
-            actor = nn.Sequential(
-                Encoder(),
-                ref.Actor(ac_cfg, wm.state_size, wm.act_space),
-            )
-        else:
-            raise ValueError(ac_type)
-
-        actor = actor.to(self.device)
-        return actor
 
     def _make_agent(self, mode: Literal["train", "val"]):
         agent_ = ref.Agent(
@@ -281,58 +269,45 @@ class Runner:
         if self.cfg.repro.determinism != "full":
             self.train_iter = data.make_async(self.train_iter)
 
-        self.wm_trainer = self._make_wm_trainer(self.wm)
-        self.ac_trainer = self._make_ac_trainer(self.actor)
+        wm_type = self.cfg.wm.type
+        if wm_type == "dreamer":
+            wm_cfg = self.cfg.wm.dreamer
+
+            self.wm_trainer = dreamer.Trainer(wm_cfg, self.compute_dtype)
+            self.wm_trainer.setup(self.wm)
+        else:
+            raise ValueError(wm_type)
+
+        rl_type = self.cfg.rl.type
+        if rl_type == "ref":
+            rl_cfg = self.cfg.rl.ref
+
+            def make_critic():
+                critic = ref.Critic(rl_cfg.critic, self.actor.obs_space)
+                critic = critic.to(self.device)
+                return critic
+
+            self.rl_trainer = ref.Trainer(rl_cfg, self.compute_dtype)
+            self.rl_trainer.setup(self.actor, make_critic)
+        else:
+            raise ValueError(rl_type)
 
         self.wm_opt_step = 0
         self.exp.register_step("wm_opt_step", lambda: self.wm_opt_step)
 
-        self.ac_opt_step = 0
-        self.exp.register_step("ac_opt_step", lambda: self.ac_opt_step)
+        self.rl_opt_step = 0
+        self.exp.register_step("rl_opt_step", lambda: self.rl_opt_step)
 
         self.should_log_wm = cron.Every(
             lambda: self.wm_opt_step,
             period=self.cfg.run.log_every,
             iters=None,
         )
-        self.should_log_ac = cron.Every(
-            lambda: self.ac_opt_step,
+        self.should_log_rl = cron.Every(
+            lambda: self.rl_opt_step,
             period=self.cfg.run.log_every,
             iters=None,
         )
-
-    def _make_wm_trainer(self, wm):
-        wm_type = self.cfg.wm.type
-        if wm_type == "dreamer":
-            wm_cfg = self.cfg.wm.dreamer
-            wm_trainer = dreamer.Trainer(wm_cfg, self.compute_dtype)
-            wm_trainer.setup(wm)
-        else:
-            raise ValueError(wm_type)
-
-        return wm_trainer
-
-    def _make_ac_trainer(self, actor):
-        wm_type = self.cfg.wm.type
-        if wm_type == "dreamer":
-            Encoder = dreamer.AsTensor
-
-        ac_type = self.cfg.ac.type
-        if ac_type == "ref":
-            ac_cfg = self.cfg.ac.ref
-            ac_trainer = ref.Trainer(ac_cfg, self.compute_dtype)
-
-            def make_critic():
-                critic = nn.Sequential(
-                    Encoder(),
-                    ref.Critic(ac_cfg, self.wm.state_size),
-                )
-                critic = critic.to(self.device)
-                return critic
-
-            ac_trainer.setup(actor, make_critic, self.sdk.act_space)
-
-        return ac_trainer
 
     @exec_once
     def setup_val(self):
@@ -371,7 +346,7 @@ class Runner:
 
         self.val_agent = self._make_agent(mode="val")
 
-    def save_data(self, tag: str | None = None):
+    def save_buf(self, tag: str | None = None):
         if tag is None:
             cur_step = getattr(self, self.cfg.def_step)
             tag = f"{self.cfg.def_step}={cur_step:g}"
@@ -392,7 +367,11 @@ class Runner:
 
         self.exp.log(logging.INFO, f"Loaded buffer data from: {str(path)}")
 
-    def save_ckpt(self, full: bool = False):
+    def save_ckpt(
+        self,
+        full: bool = False,
+        tag: str | None = None,
+    ):
         state = {
             "wm": self.wm.state_dict(),
             "actor": self.actor.state_dict(),
@@ -401,13 +380,15 @@ class Runner:
             state = {
                 **state,
                 "wm_trainer": self.wm_trainer.save(),
-                "ac_trainer": self.ac_trainer.save(),
+                "rl_trainer": self.rl_trainer.save(),
                 "buf": self.buf.save(),
                 "repro": repro.state.save(),
             }
 
-        cur_step = getattr(self, self.cfg.def_step)
-        tag = f"ckpt.{self.cfg.def_step}={cur_step:g}"
+        if tag is None:
+            cur_step = getattr(self, self.cfg.def_step)
+            tag = f"ckpt.{self.cfg.def_step}={cur_step:g}"
+
         dst = self.exp.dir / "ckpts" / f"{tag}.pth"
         dst.parent.mkdir(parents=True, exist_ok=True)
 
@@ -427,7 +408,7 @@ class Runner:
 
         if "buf" in state:
             self.wm_trainer.load(state["wm_trainer"])
-            self.ac_trainer.load(state["ac_trainer"])
+            self.rl_trainer.load(state["rl_trainer"])
             self.buf.load(state["buf"])
             repro.state.load(state["repro"])
 
@@ -550,14 +531,14 @@ class Runner:
     def do_opt_step(self, n=1):
         for _ in range(n):
             self.do_wm_opt_step()
-            self.do_ac_opt_step()
+            self.do_rl_opt_step()
 
     def do_val_step(self):
         if len(self.val_ids) == 0:
             return
 
         self.wm_trainer.eval()
-        self.ac_trainer.eval()
+        self.rl_trainer.eval()
 
         with self.buf_mtx:
             wm_batch = next(self.val_iter)
@@ -569,18 +550,18 @@ class Runner:
             h_0=wm_batch.h_0,
         )
 
-        ac_batch = self.dream_loader.dream_from(
+        rl_batch = self.dream_loader.dream_from(
             wm_output.states.flatten(),
             wm_batch.seq.term.flatten(),
         )
 
-        ac_output = self.ac_trainer.compute(ac_batch)
+        rl_output = self.rl_trainer.compute(rl_batch)
 
         with self.buf_mtx:
             self.val_loader.h_0s[wm_batch.end_pos] = wm_output.h_n
 
         self.exp.add_scalar(f"wm/val_loss", wm_output.loss, step="wm_opt_step")
-        self.exp.add_scalar(f"ac/val_loss", ac_output.loss, step="ac_opt_step")
+        self.exp.add_scalar(f"rl/val_loss", rl_output.loss, step="rl_opt_step")
 
     def do_val_epoch(self, max_batches=None):
         self.setup_val()
@@ -710,14 +691,12 @@ class Runner:
 
         with self.buf_mtx:
             wm_batch = next(self.train_iter)
-
         wm_batch = wm_batch.to(self.device)
 
         wm_output = self.wm_trainer.compute(
             seq=wm_batch.seq,
             h_0=wm_batch.h_0,
         )
-
         self.wm_trainer.opt_step(wm_output.loss)
 
         self.dream_loader.to_recycle = (
@@ -736,34 +715,26 @@ class Runner:
         self.wm_opt_step += 1
         return wm_output.loss
 
-    def do_ac_opt_step(self, n=1):
+    def do_rl_opt_step(self, n=1):
         if n > 1:
             for _ in range(n):
-                self.do_ac_opt_step()
+                self.do_rl_opt_step()
+
+        self.rl_trainer.train()
 
         with self.buf_mtx:
-            wm_batch = next(self.train_iter)
+            rl_batch = next(self.dream_iter)
+        rl_batch = rl_batch.to(self.device)
 
-        wm_batch = wm_batch.to(self.device)
+        rl_output = self.rl_trainer.compute(rl_batch)
+        self.rl_trainer.opt_step(rl_output.loss)
 
-        self.ac_trainer.train()
+        if self.should_log_rl:
+            for k, v in rl_output.metrics.items():
+                self.exp.add_scalar(f"rl/{k}", v, step="rl_opt_step")
+            self.exp.add_scalar(f"rl/env_step", self.env_step, step="rl_opt_step")
 
-        ac_batch = next(self.dream_iter)
-
-        ac_output = self.ac_trainer.compute(ac_batch)
-
-        self.ac_trainer.opt_step(ac_output.loss)
-
-        if self.should_log_ac:
-            for k, v in ac_output.metrics.items():
-                self.exp.add_scalar(f"ac/{k}", v, step="ac_opt_step")
-            self.exp.add_scalar(f"ac/env_step", self.env_step, step="ac_opt_step")
-
-        self.ac_opt_step += 1
+        self.rl_opt_step += 1
 
     def reset_wm(self):
-        # We create a new WM and copy the parameters, so that the
-        # references in other objects (e.g. the agent) stay the same.
-        new_wm = self._make_wm()
-        polyak.sync(new_wm, self.wm)
-        self.wm_trainer.setup(self.wm)
+        self.wm_trainer.reset()
