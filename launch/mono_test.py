@@ -1,28 +1,33 @@
 import argparse
 import shlex
+from itertools import product
 
 from .common import *
+from .sanity_check import sanity_check
 
 
-def sanity_check(test_name, suffix=""):
+def mono_test(test_name, suffix=""):
     all_tests = []
 
-    common_args = ["-p", "atari.base", "atari.train"]
+    common_args = ["-p", "atari.base", "atari.train_val"]
     common_opts = {
         "run.interactive": False,
         "run.create_commit": False,
     }
 
-    env, freq = A100k_MONO[0], 64
-    for seed in range(3):
-        opts = {
+    seeds = [*range(5)]
+    envs = A100k_MONO[:3]
+    freqs = [64]
+
+    for seed, env, freq in product(seeds, envs, freqs):
+        options = {
             "env": {"type": "atari", "atari.env_id": env},
             "repro.seed": seed,
             "_freq": freq,
-            "run.dir": f"runs/{test_name}/{env}-seed={seed}-freq={freq}{suffix}",
+            "run.dir": f"runs/{test_name}/{env}-seed={seed}{suffix}",
             **common_opts,
         }
-        args = [*common_args, "-o", format_opts(opts)]
+        args = [*common_args, "-o", format_opts(options)]
         all_tests.append(args)
 
     return all_tests
@@ -30,10 +35,13 @@ def sanity_check(test_name, suffix=""):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--name", default="sanity-check")
+    p.add_argument("--name", default="mono-test")
     args = p.parse_args()
 
-    all_tests = sanity_check(args.name)
+    all_tests = [
+        *sanity_check(args.name, "-sanity"),
+        *mono_test(args.name),
+    ]
 
     prefix = ["python", "-m", "rsrch.hub.rl.dreamer"]
     for test in all_tests:

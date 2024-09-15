@@ -16,8 +16,8 @@ def ratio_val_test(test_name, suffix=""):
     }
 
     seeds = [0]
-    envs = ATARI_100k_3
-    freqs = [64, 32, 16, 8, 4]
+    envs = A100k_MONO[:3]
+    freqs = [64, 32, 16, 8, 4, 2]
 
     for seed, env, freq in product(seeds, envs, freqs):
         options = {
