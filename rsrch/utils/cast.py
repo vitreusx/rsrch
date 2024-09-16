@@ -3,10 +3,12 @@ import types
 import typing
 from dataclasses import dataclass, fields, is_dataclass
 from functools import partial
-from typing import Any, Callable, Type, get_args, get_origin
+from typing import Any, Callable, Type, TypeVar, get_args, get_origin
+
+T = TypeVar("T")
 
 
-def cast(x: Any, t: Type):
+def cast(x: Any, t: Type[T]) -> T:
     t_args = get_args(t)
     t = get_origin(t) or t
 

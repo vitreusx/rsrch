@@ -112,7 +112,7 @@ class Categorical(Distribution, Tensorlike):
         # value = value[..., :1]
         # logp = log_pmf.gather(-1, value).squeeze(-1)
         # return sum_rightmost(logp, len(self.event_shape))
-        logits = self.logits.expand(*value.shape[:-1], self.num_events)
+        logits = self.logits.expand(*value.shape, self.num_events)
         ce = F.cross_entropy(
             logits.reshape(-1, self.num_events),
             value.ravel(),

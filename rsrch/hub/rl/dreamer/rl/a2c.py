@@ -17,7 +17,7 @@ from rsrch.rl.utils import polyak
 from rsrch.utils import sched
 
 from ..common import nets
-from ..common.trainer import TrainerBase
+from ..common.trainer import ScaledOptimizer, TrainerBase
 from ..common.types import Slices
 from ..common.utils import autocast, find_class, null_ctx, tf_init
 
@@ -52,7 +52,7 @@ class Actor(nn.Module):
     def __init__(
         self,
         cfg: Config.Actor,
-        obs_space: spaces.torch.Tensor,
+        obs_space: spaces.torch.Tensor | spaces.torch.Tensorlike,
         act_space: spaces.torch.Tensor,
     ):
         super().__init__()
@@ -60,9 +60,12 @@ class Actor(nn.Module):
         self.obs_space = obs_space
         self.act_space = act_space
 
+        if isinstance(obs_space, spaces.torch.Tensorlike):
+            obs_space = obs_space.as_tensor
+
         self.enc = nets.make_encoder(obs_space, **cfg.encoder)
         with safe_mode(self):
-            obs: Tensor = self.obs_space.sample([1])
+            obs: Tensor = obs_space.sample([1])
             enc_size: int = self.enc(obs).shape[1]
 
         layer_ctor = partial(nn.Linear, enc_size)
@@ -80,15 +83,18 @@ class Critic(nn.Module):
     def __init__(
         self,
         cfg: Config.Critic,
-        obs_space: spaces.torch.Tensor,
+        obs_space: spaces.torch.Tensor | spaces.torch.Tensorlike,
     ):
         super().__init__()
         self.cfg = cfg
         self.obs_space = obs_space
 
+        if isinstance(obs_space, spaces.torch.Tensorlike):
+            obs_space = obs_space.as_tensor
+
         self.enc = nets.make_encoder(obs_space, **cfg.encoder)
         with safe_mode(self):
-            obs: Tensor = self.obs_space.sample([1])
+            obs: Tensor = obs_space.sample([1])
             enc_size: int = self.enc(obs).shape[1]
 
         layer_ctor = partial(nn.Linear, enc_size)
@@ -126,28 +132,19 @@ TrainerOutput = namedtuple("TrainerOutput", ("loss", "metrics"))
 
 
 class Trainer(TrainerBase):
+    ON_POLICY = False
+
     def __init__(
         self,
         cfg: Config,
-        compute_dtype: torch.dtype | None,
-    ):
-        super().__init__(
-            clip_grad=cfg.clip_grad,
-            compute_dtype=compute_dtype,
-        )
-        self.cfg = cfg
-
-        self.rew_norm = nets.StreamNorm(**cfg.rew_norm)
-        self.actor_grad_mix = self._make_sched(cfg.actor_grad_mix)
-        self.actor_ent = self._make_sched(cfg.actor_ent)
-
-    def setup(
-        self,
         actor: Actor,
         make_critic: Callable[[], nn.Module],
+        compute_dtype: torch.dtype | None,
     ):
-        self.actor = actor
+        super().__init__(compute_dtype)
+        self.cfg = cfg
 
+        self.actor = actor
         self.critic = make_critic()
 
         if self.cfg.target_critic is not None:
@@ -168,8 +165,11 @@ class Trainer(TrainerBase):
             self.actor_grad = self.cfg.actor_grad
 
         self.opt = self._make_opt()
-        self.parameters = [*self.actor.parameters(), *self.critic.parameters()]
         self.opt_iter = 0
+
+        self.rew_norm = nets.StreamNorm(**cfg.rew_norm)
+        self.actor_grad_mix = self._make_sched(cfg.actor_grad_mix)
+        self.actor_ent = self._make_sched(cfg.actor_ent)
 
     def save(self):
         state = super().save()
@@ -190,15 +190,14 @@ class Trainer(TrainerBase):
         del cfg["actor"]
         del cfg["critic"]
 
-        common = cfg
-
-        return cls(
+        opt = cls(
             [
                 {"params": self.actor.parameters(), **actor},
                 {"params": self.critic.parameters(), **critic},
             ],
-            **common,
+            **cfg,
         )
+        return ScaledOptimizer(opt)
 
     def _make_sched(self, cfg: float | dict):
         if isinstance(cfg, float):
@@ -281,8 +280,8 @@ class Trainer(TrainerBase):
 
         return TrainerOutput(loss, mets)
 
-    def opt_step(self, loss: Tensor, lock: Lock | None = None):
-        super().opt_step(loss, lock)
+    def opt_step(self, loss: Tensor):
+        self.opt.step(loss, self.cfg.clip_grad)
         self.opt_iter += 1
         if self.update_target is not None:
             self.update_target.step()

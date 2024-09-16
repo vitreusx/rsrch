@@ -1,8 +1,8 @@
 import threading
-from collections import deque, namedtuple
+from collections import defaultdict, deque, namedtuple
 from dataclasses import dataclass
 from queue import Queue
-from typing import Any, Iterator, Literal
+from typing import Any, Callable, Iterator, Literal
 
 import numpy as np
 import torch
@@ -299,3 +299,44 @@ class DreamLoaderRL(data.IterableDataset):
                 h_0, term = chunks
 
             yield self.dream_from(h_0, term)
+
+
+class OnPolicyLoaderRL(data.IterableDataset):
+    def __init__(
+        self,
+        do_env_step: Callable[[], tuple[int, tuple[dict, bool]]],
+        buf: rl.data.Buffer,
+        batch_size: int,
+    ):
+        super().__init__()
+        self.do_env_step = do_env_step
+        self.buf = buf
+        self.batch_size = batch_size
+
+    def __iter__(self):
+        while True:
+            self.buf.clear()
+
+            ep_ids = defaultdict(lambda: None)
+            for _ in range(self.batch_size):
+                env_idx, (step, final) = self.do_env_step()
+                ep_ids[env_idx] = self.buf.push(ep_ids[env_idx], step, final)
+                if final:
+                    del ep_ids[env_idx]
+
+            batch = []
+            for seq in self.buf.values():
+                batch.append(
+                    Slices(
+                        obs=torch.stack([step["obs"] for step in seq]),
+                        act=torch.stack([step["act"] for step in seq[1:]]),
+                        reward=torch.tensor(
+                            np.array([step["reward"] for step in seq[1:]])
+                        ),
+                        term=torch.tensor(
+                            np.array([step.get("term", False) for step in seq])
+                        ),
+                    )
+                )
+
+            yield batch

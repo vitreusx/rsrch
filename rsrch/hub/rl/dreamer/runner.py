@@ -28,7 +28,7 @@ from rsrch.utils.early_stop import EarlyStopping
 from . import agent, data
 from . import wm as wm_
 from .config import Config
-from .rl import ref
+from .rl import a2c, ppo
 from .wm import dreamer
 
 
@@ -98,26 +98,22 @@ class Runner:
             if isinstance(self.sdk.act_space, spaces.torch.Discrete):
                 self.sdk = rl.sdk.wrappers.OneHotActions(self.sdk)
 
-            # We need the trainer to deduce the reward space, even if we don't
-            # run the training.
-            wm_trainer = dreamer.Trainer(wm_cfg, self.compute_dtype)
-            rew_space = wm_trainer.reward_space
-
             obs_space, act_space = self.sdk.obs_space, self.sdk.act_space
-            self.wm = dreamer.WorldModel(wm_cfg, obs_space, act_space, rew_space)
-
-            rl_obs_space = spaces.torch.Tensor((self.wm.state_size,))
+            self.wm = dreamer.WorldModel(wm_cfg, obs_space, act_space)
         else:
             raise ValueError(wm_type)
 
         rl_act_space = self.sdk.act_space
 
-        ac_type = self.cfg.rl.type
-        if ac_type == "ref":
-            ac_cfg = self.cfg.rl.ref
-            self.actor = ref.Actor(ac_cfg.actor, rl_obs_space, rl_act_space)
+        rl_type = self.cfg.rl.type
+        if rl_type == "a2c":
+            rl_cfg = self.cfg.rl.a2c
+            self.actor = a2c.Actor(rl_cfg.actor, self.wm.obs_space, rl_act_space)
+        elif rl_type == "ppo":
+            rl_cfg = self.cfg.rl.ppo
+            self.actor = ppo.ActorCritic(rl_cfg, self.wm.obs_space, rl_act_space)
         else:
-            raise ValueError(ac_type)
+            raise ValueError(rl_type)
 
         self.wm = self.wm.to(self.device)
         self.actor = self.actor.to(self.device)
@@ -155,7 +151,7 @@ class Runner:
         self.exp.register_step("agent_step", lambda: self.agent_step)
 
     def _make_agent(self, mode: Literal["train", "val"]):
-        agent_ = ref.Agent(
+        agent_ = a2c.Agent(
             self.actor,
             sample=(mode == "train"),
             compute_dtype=self.compute_dtype,
@@ -273,22 +269,25 @@ class Runner:
         if wm_type == "dreamer":
             wm_cfg = self.cfg.wm.dreamer
 
-            self.wm_trainer = dreamer.Trainer(wm_cfg, self.compute_dtype)
-            self.wm_trainer.setup(self.wm)
+            self.wm_trainer = dreamer.Trainer(wm_cfg, self.wm, self.compute_dtype)
         else:
             raise ValueError(wm_type)
 
         rl_type = self.cfg.rl.type
-        if rl_type == "ref":
-            rl_cfg = self.cfg.rl.ref
+        if rl_type == "a2c":
+            rl_cfg = self.cfg.rl.a2c
 
             def make_critic():
-                critic = ref.Critic(rl_cfg.critic, self.actor.obs_space)
+                critic = a2c.Critic(rl_cfg.critic, self.actor.obs_space)
                 critic = critic.to(self.device)
                 return critic
 
-            self.rl_trainer = ref.Trainer(rl_cfg, self.compute_dtype)
-            self.rl_trainer.setup(self.actor, make_critic)
+            self.rl_trainer = a2c.Trainer(
+                rl_cfg,
+                self.actor,
+                make_critic,
+                self.compute_dtype,
+            )
         else:
             raise ValueError(rl_type)
 
@@ -468,6 +467,8 @@ class Runner:
             self._env_steps[env_idx] = step["total_steps"]
         else:
             self.env_step += 1
+
+        return env_idx, (step, final)
 
     def train_loop(
         self,

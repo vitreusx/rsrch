@@ -1,14 +1,13 @@
 from dataclasses import dataclass
 from typing import Optional
 
+from rsrch import rl
 from rsrch.utils.config import *
-
-from .. import env
 
 
 @dataclass
 class Config:
-    env: env.Config
+    env: rl.sdk.Config
     env_workers: int
     val_episodes: int
     val_every: int
@@ -34,3 +33,5 @@ class Config:
     custom_init: bool
     seed: int
     save_ckpt_every: int
+    device: str
+    compute_dtype: str

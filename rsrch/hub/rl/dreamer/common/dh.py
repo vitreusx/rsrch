@@ -112,11 +112,11 @@ class OneHot(nn.Module):
     def __init__(
         self,
         layer_ctor: Callable[[int], nn.Module],
-        space: spaces.torch.Discrete,
+        space: spaces.torch.OneHot,
     ):
         super().__init__()
         self.space = space
-        self.vocab_size = int(space.n)
+        self.vocab_size = int(space.shape[0])
         self.layer = layer_ctor(self.vocab_size)
 
     def forward(self, input: Tensor):

@@ -25,7 +25,7 @@ class OneHot:
             return y.reshape(*shape, self.space.n)
 
     def codomain(self, X):
-        return spaces.torch.Box((self.space.n,), low=0.0, high=1.0)
+        return spaces.torch.OneHot(self.space.n)
 
 
 class Argmax:

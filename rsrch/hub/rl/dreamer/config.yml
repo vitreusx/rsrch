@@ -121,8 +121,8 @@ wm:
         discrete: *mlp
 
 rl:
-  type: ref
-  ref:
+  type: a2c
+  a2c:
     actor:
       encoder:
         type: box
@@ -154,6 +154,26 @@ rl:
       momentum: 1.0
       scale: 1.0
       eps: 1e-8
+  ppo:
+    actor_dist:
+      type: auto
+      beta:
+        min_std: 0.1
+    update_epochs: 4
+    update_batch: 256
+    adv_norm: true
+    clip_coeff: 0.1
+    clip_vloss: true
+    ent_coeff: 1e-2
+    vf_coeff: 0.5
+    clip_grad: 0.5
+    gamma: 0.99
+    gae_lambda: 0.95
+    opt:
+      type: adam_w
+      lr: 2.5e-4
+      eps: 1e-5
+    share_encoder: false
 
 stages:
   - env_rollout:

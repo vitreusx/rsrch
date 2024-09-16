@@ -10,7 +10,7 @@ atari:
         stoch: { num_tokens: 32, vocab_size: 32 }
       opt.lr: 2e-4
       coef: { kl: 0.1, term: 5.0 }
-    rl.ref:
+    rl.a2c:
       gamma: 0.999
       actor_ent: 1e-3
       actor_grad: reinforce
@@ -120,7 +120,7 @@ dmc:
         term:
           type: const
           const.value: false
-    rl.ref:
+    rl.a2c:
       opt.actor.lr: 8e-5
       opt.critic.lr: 8e-5
       actor_ent: 1e-4

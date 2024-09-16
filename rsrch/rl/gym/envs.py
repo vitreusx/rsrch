@@ -158,10 +158,11 @@ class Envpool(VecEnv):
                 if not next_reset[env_id]:
                     policy_ids.append(env_id)
 
-            policy_ids = np.array(policy_ids)
-            actions = agent.policy(policy_ids)
-            for env_id, action in zip(policy_ids, actions):
-                self._actions[env_id] = action
+            if len(policy_ids) > 0:
+                policy_ids = np.array(policy_ids)
+                actions = agent.policy(policy_ids)
+                for env_id, action in zip(policy_ids, actions):
+                    self._actions[env_id] = action
 
             self.pool.send({"action": self._actions[env_ids], "env_id": env_ids})
 

@@ -4,7 +4,6 @@ from torch import Tensor, nn
 
 import rsrch.nn.dist_head as dh
 from rsrch import spaces
-from rsrch.rl import gym
 
 
 class Encoder(nn.Sequential):

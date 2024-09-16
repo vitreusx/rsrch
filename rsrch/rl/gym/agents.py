@@ -72,3 +72,25 @@ class RandomAgent(Agent):
 
     def policy(self):
         return self.env.act_space.sample()
+
+
+class Memoryless(VecAgent, ABC):
+    def __init__(self):
+        super().__init__()
+        self._last_obs = None
+
+    def reset(self, idxes: np.ndarray, obs_seq):
+        if self._last_obs is None:
+            self._last_obs = obs_seq.clone()
+        else:
+            self._last_obs[idxes] = obs_seq
+
+    def policy(self, idxes: np.ndarray):
+        return self._policy(self._last_obs[idxes])
+
+    @abstractmethod
+    def _policy(self, last_obs):
+        raise NotImplementedError()
+
+    def step(self, idxes: np.ndarray, act_seq, next_obs_seq):
+        self._last_obs[idxes] = next_obs_seq

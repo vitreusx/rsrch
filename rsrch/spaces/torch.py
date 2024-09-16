@@ -37,7 +37,7 @@ class Tensor:
         )
 
     def __repr__(self):
-        return f"Space({self.shape!r}, {self.dtype}, {self.device})"
+        return f"{self.__class__.__name__}({self.shape!r}, {self.dtype}, {self.device})"
 
 
 def to_tensor(x, dtype=None, device=None):
@@ -125,9 +125,7 @@ class Box(Tensor):
         low_r = low_x if torch.all(self.low == low_x) else self.low
         high_x = self.high.ravel()[0].item()
         high_r = high_x if torch.all(self.high == high_x) else self.high
-        return (
-            f"Box({low_r!r}, {high_r!r}, {self.shape!r}, {self.dtype}, {self.device})"
-        )
+        return f"{self.__class__.__name__}({low_r!r}, {high_r!r}, {self.shape!r}, {self.dtype}, {self.device})"
 
     def __getitem__(self, index):
         low, high = self.low[index], self.high[index]
@@ -172,7 +170,7 @@ class Discrete(Tensor):
         )
 
     def __repr__(self):
-        return f"Discrete({self.n!r}, {self.dtype}, {self.device})"
+        return f"{self.__class__.__name__}({self.n!r}, {self.dtype}, {self.device})"
 
 
 class TokenSeq(Tensor):
@@ -236,7 +234,7 @@ class Image(Box):
         self.size = self.width, self.height
 
     def __repr__(self):
-        return f"Image({self.shape!r}, {self.dtype}, {self.device})"
+        return f"{self.__class__.__name__}({self.shape!r}, {self.dtype}, {self.device})"
 
     def __getitem__(self, index):
         shape = self.low[index].shape
@@ -297,3 +295,10 @@ def as_tensor(space, device: torch.device | None = None):
         )
     else:
         raise RuntimeError()
+
+
+class Tensorlike:
+    """A space denoting tensor-like objects, which can be cast to regular tensors via `as_tensor` method."""
+
+    def __init__(self, as_tensor: Tensor):
+        self.as_tensor = as_tensor

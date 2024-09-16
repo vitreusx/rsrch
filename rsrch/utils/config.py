@@ -335,6 +335,3 @@ def cli(
     base = render_all(base)
     base = _hide_private(base)
     return base
-
-
-__all__ = ["compose", "cast", "cli"]

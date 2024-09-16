@@ -15,10 +15,10 @@ from rsrch.nn.utils import over_seq, safe_mode
 from rsrch.rl import gym
 
 from ..common import nets
-from ..common.trainer import TrainerBase
+from ..common.trainer import ScaledOptimizer, TrainerBase
 from ..common.types import Slices
 from ..common.utils import autocast, find_class, tf_init
-from . import rssm
+from . import _rssm as rssm
 
 
 @dataclass
@@ -41,25 +41,36 @@ class Config:
     kl: KL
 
 
+def get_reward_scheme(cfg: Config):
+    if cfg.reward_fn == "clip":
+        clip_low, clip_high = cfg.clip_rew
+        reward_space = spaces.torch.Box((), low=clip_low, high=clip_high)
+        reward_fn = lambda r: torch.clamp(r, *cfg.clip_rew)
+    elif cfg.reward_fn in ("sign", "tanh"):
+        reward_space = spaces.torch.Box((), low=-1.0, high=1.0)
+        reward_fn = torch.sign if cfg.reward_fn == "sign" else torch.tanh
+    elif cfg.reward_fn == "id":
+        reward_space = spaces.torch.Tensor((), dtype=torch.float32)
+        reward_fn = lambda r: r
+    return reward_fn, reward_space
+
+
 class WorldModel(nn.Module):
     def __init__(
         self,
         cfg: Config,
         obs_space: spaces.torch.Tensor,
-        act_space: spaces.torch.Box,
-        rew_space: spaces.torch.Box,
+        act_space: spaces.torch.Box | spaces.torch.OneHot,
     ):
         super().__init__()
         self.cfg = cfg
-        self.obs_space = obs_space
         self.act_space = act_space
-        self.rew_space = rew_space
 
-        self.obs_enc = nets.make_encoder(self.obs_space, **cfg.encoder)
+        self.obs_enc = nets.make_encoder(obs_space, **cfg.encoder)
         self.act_enc = nn.Identity()
 
         with safe_mode(self):
-            obs: Tensor = self.obs_space.sample([1])
+            obs: Tensor = obs_space.sample([1])
             obs_size: int = self.obs_enc(obs).shape[1]
 
             act: Tensor = self.act_space.sample([1])
@@ -68,15 +79,20 @@ class WorldModel(nn.Module):
         self.rssm = rssm.RSSM(cfg.rssm, obs_size, self.act_size)
 
         self.state_size = self.rssm.stoch_size + self.rssm.deter_size
+        self.obs_space = spaces.torch.Tensor((self.state_size,))
+        self.obs_space = spaces.torch.Tensorlike(self.obs_space)
 
         self.obs_dec = self._make_decoder(
             space=obs_space,
             **self.cfg.decoders["obs"],
         )
+
+        _, reward_space = get_reward_scheme(cfg)
         self.reward_dec = self._make_decoder(
-            space=rew_space,
+            space=reward_space,
             **self.cfg.decoders["reward"],
         )
+
         self.term_dec = self._make_decoder(
             space=spaces.torch.Discrete(2, dtype=torch.bool),
             **self.cfg.decoders["term"],
@@ -134,24 +150,14 @@ class Trainer(TrainerBase):
     def __init__(
         self,
         cfg: Config,
-        compute_dtype=None,
+        wm: WorldModel,
+        compute_dtype: torch.dtype | None = None,
     ):
-        super().__init__(
-            clip_grad=cfg.clip_grad,
-            compute_dtype=compute_dtype,
-        )
+        super().__init__(compute_dtype=compute_dtype)
         self.cfg = cfg
-
-        if cfg.reward_fn == "clip":
-            clip_low, clip_high = cfg.clip_rew
-            self.reward_space = spaces.torch.Box((), low=clip_low, high=clip_high)
-            self._reward_fn = lambda r: torch.clamp(r, *cfg.clip_rew)
-        elif cfg.reward_fn in ("sign", "tanh"):
-            self.reward_space = spaces.torch.Box((), low=-1.0, high=1.0)
-            self._reward_fn = torch.sign if cfg.reward_fn == "sign" else torch.tanh
-        elif cfg.reward_fn == "id":
-            self.reward_space = spaces.torch.Tensor((), dtype=torch.float32)
-            self._reward_fn = lambda r: r
+        self.wm = wm
+        self.opt = self._make_opt()
+        self.reward_fn, _ = get_reward_scheme(cfg)
 
     def setup(self, wm: WorldModel | nn.Sequential):
         self.wm = wm
@@ -161,7 +167,8 @@ class Trainer(TrainerBase):
         cfg = {**self.cfg.opt}
         cls = find_class(torch.optim, cfg["type"])
         del cfg["type"]
-        return cls(self.wm.parameters(), **cfg)
+        opt = cls(self.wm.parameters(), **cfg)
+        return ScaledOptimizer(opt)
 
     def compute(
         self,
@@ -171,7 +178,7 @@ class Trainer(TrainerBase):
         mets, losses = {}, {}
 
         with self.autocast():
-            reward = self._reward_fn(seq.reward)
+            reward = self.reward_fn(seq.reward)
 
             out, h_n = self.wm.observe((seq.obs, seq.act), h_0)
             states, post, prior = out
@@ -244,6 +251,9 @@ class Trainer(TrainerBase):
                 loss_rhs = value_rhs.clamp_min(free).mean()
             loss = mix * loss_lhs + (1.0 - mix) * loss_rhs
         return loss, value
+
+    def opt_step(self, loss: Tensor):
+        self.opt.step(loss, self.cfg.clip_grad)
 
     def reset(self):
         def _reset(module):
