@@ -159,9 +159,7 @@ class Trainer(TrainerBase):
         self.opt = self._make_opt()
         self.reward_fn, _ = get_reward_scheme(cfg)
 
-    def setup(self, wm: WorldModel | nn.Sequential):
-        self.wm = wm
-        self.opt = self._make_opt()
+        self._p0 = [p.data.clone() for p in self.opt.parameters]
 
     def _make_opt(self):
         cfg = {**self.cfg.opt}
@@ -255,12 +253,27 @@ class Trainer(TrainerBase):
     def opt_step(self, loss: Tensor):
         self.opt.step(loss, self.cfg.clip_grad)
 
-    def reset(self):
-        def _reset(module):
-            if isinstance(module, WorldModel):
-                module.reset_parameters()
+    @torch.no_grad()
+    def compute_stats(self):
+        p_norms, rel_p_norms, dp_norms, rel_dp_norms = [], [], [], []
+        for p0, p in zip(self._p0, self.opt.parameters):
+            p_norm = torch.linalg.norm(p.data)
+            p_norms.append(p_norm)
+            dp_norm = torch.linalg.norm(p.data - p0)
+            dp_norms.append(dp_norm)
+            p0_norm = torch.linalg.norm(p0)
+            if p0_norm != 0.0:
+                rel_p_norms.append(p_norm / p0_norm)
+                rel_dp_norms.append(dp_norm / p0_norm)
 
-        self.wm.apply(_reset)
+        stats = {}
+        stats["p_norm"] = torch.mean(torch.stack(p_norms))
+        stats["dp_norm"] = torch.mean(torch.stack(dp_norms))
+        if len(rel_p_norms) > 0:
+            stats["rel_p_norm"] = torch.mean(torch.stack(rel_p_norms))
+            stats["rel_dp_norm"] = torch.mean(torch.stack(rel_dp_norms))
+
+        return stats
 
 
 AsTensor = rssm.AsTensor

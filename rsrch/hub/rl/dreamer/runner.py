@@ -564,6 +564,12 @@ class Runner:
         self.exp.add_scalar(f"wm/val_loss", wm_output.loss, step="wm_opt_step")
         self.exp.add_scalar(f"rl/val_loss", rl_output.loss, step="rl_opt_step")
 
+        for k, v in self.wm_trainer.compute_stats().items():
+            self.exp.add_scalar(f"wm/stats/{k}", v)
+
+        for k, v in self.rl_trainer.compute_stats().items():
+            self.exp.add_scalar(f"rl/stats/{k}", v)
+
     def do_val_epoch(self, max_batches=None):
         self.setup_val()
 

@@ -171,6 +171,8 @@ class Trainer(TrainerBase):
         self.actor_grad_mix = self._make_sched(cfg.actor_grad_mix)
         self.actor_ent = self._make_sched(cfg.actor_ent)
 
+        self._p0 = [p.data.clone() for p in self.opt.parameters]
+
     def save(self):
         state = super().save()
         state["opt_iter"] = self.opt_iter
@@ -285,6 +287,28 @@ class Trainer(TrainerBase):
         self.opt_iter += 1
         if self.update_target is not None:
             self.update_target.step()
+
+    @torch.no_grad()
+    def compute_stats(self):
+        p_norms, rel_p_norms, dp_norms, rel_dp_norms = [], [], [], []
+        for p0, p in zip(self._p0, self.opt.parameters):
+            p_norm = torch.linalg.norm(p.data)
+            p_norms.append(p_norm)
+            dp_norm = torch.linalg.norm(p.data - p0)
+            dp_norms.append(dp_norm)
+            p0_norm = torch.linalg.norm(p0)
+            if p0_norm != 0.0:
+                rel_p_norms.append(p_norm / p0_norm)
+                rel_dp_norms.append(dp_norm / p0_norm)
+
+        stats = {}
+        stats["p_norm"] = torch.mean(torch.stack(p_norms))
+        stats["dp_norm"] = torch.mean(torch.stack(dp_norms))
+        if len(rel_p_norms) > 0:
+            stats["rel_p_norm"] = torch.mean(torch.stack(rel_p_norms))
+            stats["rel_dp_norm"] = torch.mean(torch.stack(rel_dp_norms))
+
+        return stats
 
 
 class Agent(gym.VecAgent):

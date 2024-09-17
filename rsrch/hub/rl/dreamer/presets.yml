@@ -71,8 +71,6 @@ atari:
                 n: ${_freq}
                 accumulate: true
             - do_env_step
-      - save_ckpt:
-          tag: final
 
   primed_wm:
     _freq: 8
