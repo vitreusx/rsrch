@@ -81,11 +81,10 @@ atari:
           until: 40e3
           mode: rand
       - train_wm:
-          stop_criteria: { rel_patience: 0.5, min_steps: 1024 }
+          stop_criteria: { rel_patience: 0.5, min_steps: 10e3 }
           val_every: 1024
           val_on_loss_improv: 0.2
           max_val_batches: 128
-          reset: true
       - train_loop:
           until: 400e3
           tasks:
@@ -98,6 +97,28 @@ atari:
                 n: ${_freq}
                 accumulate: true
             - do_env_step
+
+  rl_conv_test:
+    data:
+      val_frac: 0.15
+    stages:
+      - env_rollout:
+          until: 200e3
+          mode: rand
+      - train_wm:
+          stop_criteria: { rel_patience: 0.5, min_steps: 10e3 }
+          val_every: 1024
+          val_on_loss_improv: 0.2
+          max_val_batches: 128
+      - train_loop:
+          until: { n: 100e3, of: rl_opt_step }
+          tasks:
+            - do_val_epoch:
+                step: rl_opt_step
+              every: 5e3
+            - do_val_step: ~
+              every: { n: 16, of: rl_opt_step }
+            - do_rl_opt_step
 
 dmc:
   base:

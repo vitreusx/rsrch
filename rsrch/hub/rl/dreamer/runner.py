@@ -565,13 +565,18 @@ class Runner:
         self.exp.add_scalar(f"rl/val_loss", rl_output.loss, step="rl_opt_step")
 
         for k, v in self.wm_trainer.compute_stats().items():
-            self.exp.add_scalar(f"wm/stats/{k}", v)
+            self.exp.add_scalar(f"wm/stats/{k}", v, step="wm_opt_step")
 
         for k, v in self.rl_trainer.compute_stats().items():
-            self.exp.add_scalar(f"rl/stats/{k}", v)
+            self.exp.add_scalar(f"rl/stats/{k}", v, step="rl_opt_step")
 
-    def do_val_epoch(self, max_batches=None):
+    def do_val_epoch(
+        self,
+        max_batches: int | None = None,
+        step: str | None = None,
+    ):
         self.setup_val()
+        _step = step
 
         wm_loss = self.do_wm_val_epoch(max_batches)
         if wm_loss is not None:
@@ -589,7 +594,7 @@ class Runner:
                 if len(all_rets) >= 32:
                     break
 
-        self.exp.add_scalar("val/mean_ep_ret", np.mean(all_rets))
+        self.exp.add_scalar("val/mean_ep_ret", np.mean(all_rets), step=_step)
 
     def train_wm(
         self,
@@ -597,7 +602,6 @@ class Runner:
         val_every: int,
         val_on_loss_improv: float | None = None,
         max_val_batches: int | None = None,
-        reset: bool = True,
     ):
         self.setup_train()
 
@@ -608,9 +612,6 @@ class Runner:
         best_ckpt = tempfile.mktemp(suffix=".pth")
 
         best_train_loss, prev_loss_val = None, None
-
-        if reset:
-            self.reset_wm()
 
         pbar = self._make_pbar("Train WM", of="wm_opt_step")
         while True:
@@ -742,6 +743,3 @@ class Runner:
             self.exp.add_scalar(f"rl/env_step", self.env_step, step="rl_opt_step")
 
         self.rl_opt_step += 1
-
-    def reset_wm(self):
-        self.wm_trainer.reset()

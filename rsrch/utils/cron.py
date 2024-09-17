@@ -7,7 +7,7 @@ class Every:
     `__bool__` returns `True` on first call, and whenever the step value (given by `step_fn()`) has increased by at least `every` since the last time `__bool__` returned `True`. When calling `__bool__` multiple times when the step value hasn't changed:
 
     - if `iters` is None, always return `True`;
-    - otherwise, if `accumulate`, return `True` for as long as the ratio of the total # of `True`s returned and the step value is lower than `iters`/`every`. So we accumulate unused iterations from the past.
+    - otherwise, if `accumulate`, return `True` for as long as the ratio of the total # of `True`s returned and the step value increase since first call to `__bool__` is lower than `iters`/`every`. So we accumulate unused iterations from the past (but only up to when the flag was first used).
     - otherwise, if not `accumulate`, return `True` at most `iters` times - in other words, previous unused iterations are lost.
     """
 

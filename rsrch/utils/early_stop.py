@@ -25,14 +25,10 @@ class EarlyStopping:
             self._best_v, self._best_t = value, opt_step
             return False
         else:
-            if opt_step - self._best_t < self.min_steps:
-                return False
-
             improv = (self._best_v - value) / value
-
             if improv < self.margin:
                 patience = self.rel_patience * opt_step / (1.0 + self.rel_patience)
-                return opt_step - self._best_t > patience
+                return opt_step - self._best_t > patience and opt_step > self.min_steps
             else:
                 self._best_v, self._best_t = value, opt_step
                 return False
