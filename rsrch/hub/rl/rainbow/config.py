@@ -2,9 +2,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from rsrch import rl
 from rsrch.utils.config import *
 
-from .. import env
 from ..utils import Optim
 from . import distq
 
@@ -30,7 +30,7 @@ class Nets:
 
 @dataclass
 class Data:
-    buf_cap: int
+    capacity: int
     slice_len: int
     parallel: bool
     prefetch_factor: int
@@ -69,7 +69,7 @@ class Opt:
     batch_size: int
     optimizer: Optim
     grad_clip: float | None
-    dtype: Literal["float32", "bfloat16"]
+    dtype: str
 
 
 @dataclass
@@ -89,7 +89,7 @@ class Sample:
 class Config:
     mode: Literal["train", "sample"]
     random: Random
-    env: env.Config
+    env: rl.sdk.Config
     distq: distq.Config
     nets: Nets
     data: Data
@@ -107,3 +107,4 @@ class Config:
     ckpts: Ckpts
     resume: Path | None
     sample: Sample
+    device: str

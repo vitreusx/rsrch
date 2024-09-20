@@ -130,26 +130,25 @@ def stack(xs):
         return torch.stack(xs)
 
 
-class VecAgentWrapper(gym.VecAgent):
+class VecAgentWrapper(gym.VecAgentWrapper):
     def __init__(self, agent: gym.VecAgent, act_dtype: np.dtype):
-        super().__init__()
-        self.agent = agent
+        super().__init__(agent)
         self.act_dtype = act_dtype
 
     def reset(self, idxes, obs):
         obs = [o["obs"] for o in obs]
         obs = stack([obs_f(o) for o in obs])
-        self.agent.reset(idxes, obs)
+        super().reset(idxes, obs)
 
     def policy(self, idxes):
-        act: torch.Tensor = self.agent.policy(idxes)
+        act: torch.Tensor = super().policy(idxes)
         return act.numpy().astype(self.act_dtype)
 
     def step(self, idxes: np.ndarray, act, next_obs):
         act = stack([act_f(a) for a in act])
         next_obs = [o["obs"] for o in next_obs]
         next_obs = stack([obs_f(o) for o in next_obs])
-        self.agent.step(idxes, act, next_obs)
+        super().step(idxes, act, next_obs)
 
 
 class BufferWrapper(data.Wrapper):

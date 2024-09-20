@@ -5,6 +5,9 @@ import numpy as np
 
 
 class Agent(ABC):
+    obs_space: Any
+    act_space: Any
+
     def reset(self, obs):
         pass
 
@@ -20,12 +23,23 @@ class AgentWrapper(Agent):
     def __init__(self, agent: Agent):
         super().__init__()
         self.agent = agent
+        self.obs_space = agent.obs_space
+        self.act_space = agent.act_space
 
     def reset(self, step):
-        return self.agent.reset(step)
+        self.agent.reset(step)
+
+    def policy(self):
+        return self.agent.policy()
+
+    def step(self, act, next_obs):
+        self.agent.step(act, next_obs)
 
 
 class VecAgent(ABC):
+    obs_space: Any
+    act_space: Any
+
     def reset(self, idxes: np.ndarray, obs_seq):
         pass
 
@@ -41,6 +55,8 @@ class VecAgentWrapper(VecAgent):
     def __init__(self, agent: VecAgent):
         super().__init__()
         self.agent = agent
+        self.obs_space = agent.obs_space
+        self.act_space = agent.act_space
 
     def reset(self, idxes: np.ndarray, obs_seq):
         self.agent.reset(idxes, obs_seq)

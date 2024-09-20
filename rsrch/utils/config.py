@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import io
 import math
@@ -7,7 +9,7 @@ from collections.abc import MutableMapping
 from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import numpy as np
 import pyparsing as pp
@@ -33,6 +35,33 @@ def load(content: str):
     return yaml.load(buf)
 
 
+in_js_mode = False
+
+
+@contextmanager
+def js_mode():
+    """Enable accessing mapping items via attr access, kinda like JS."""
+    global in_js_mode
+    prev_mode = in_js_mode
+    in_js_mode = True
+    try:
+        yield
+    finally:
+        in_js_mode = prev_mode
+
+
+@contextmanager
+def py_mode():
+    """Disable accessing mapping items via attr access."""
+    global in_js_mode
+    prev_mode = in_js_mode
+    in_js_mode = False
+    try:
+        yield
+    finally:
+        in_js_mode = prev_mode
+
+
 locator = pp.Empty().setParseAction(lambda s, l, t: l)
 
 
@@ -40,172 +69,162 @@ def locatedExpr(expr):
     return pp.Group(locator("start") + expr("value") + locator("end"))
 
 
-_items_as_attrs = False
-"""Whether attribute access for `Node` objects should be treated as item access."""
+class Locals:
+    def __init__(self, node: "Node"):
+        self.node = node
+        self._pydevd = {}
+
+    def up(self):
+        return Locals(self.node.parent)
+
+    def __getitem__(self, var_name: str):
+        if var_name in self._pydevd:
+            return self._pydevd[var_name]
+
+        with py_mode():
+            cur = self.node
+            while cur is not None:
+                if var_name in cur:
+                    return cur[var_name]
+                cur = cur.parent
+
+        raise KeyError(var_name)
+
+    def __setitem__(self, name: str, value: Any):
+        self._pydevd[name] = value
 
 
-@contextmanager
-def node_item_mode():
-    """Enable accessing mapping items via attr access."""
-    global _items_as_attrs
-    prev = _items_as_attrs
-    _items_as_attrs = True
-    try:
-        yield
-    finally:
-        _items_as_attrs = prev
-
-
-@contextmanager
-def node_attr_mode():
-    """Disable accessing mapping items via attr access."""
-    global _items_as_attrs
-    prev = _items_as_attrs
-    _items_as_attrs = False
-    try:
-        yield
-    finally:
-        _items_as_attrs = prev
-
-
-class Template:
-    """A string template.
-
-    A template is a string with expressions, denoted by opening `${` and closing `}`. These expressions can be replaced by their values using `render` function.
-    """
-
+class Renderer:
     EXPR = locatedExpr(pp.nestedExpr("${", "}"))
-    EVAL_RE = r"((?P<resolver>[\w]+):)?(?P<expr>.*)"
+    EVAL_RE = r"^((?P<resolver>[\w]+):)?(?P<expr>.*)$"
+    VAR_RE = r"^((?P<up>\.*)(?P<var>[a-zA-Z0-9_\.]+))$"
 
-    def __init__(self, text: str):
-        self.text = text
-
-    def render(self, locals={}):
-        """Render a template, given a locals mapping."""
-
+    @classmethod
+    def render(self, text: str, locals: Locals):
         exprs = []
-        for m in self.EXPR.searchString(self.text).asList():
+        for m in self.EXPR.searchString(text).asList():
             beg, _, end = m[0]
             exprs.append((beg, end))
 
-        if len(exprs) == 1:
-            return self._eval_expr(self.text[2:-1], locals)
+        if len(exprs) == 1 and exprs[0] == (0, len(text)):
+            return self.eval(text[2:-1], locals)
 
         cur, res = 0, []
         for beg, end in exprs:
-            res.append(self.text[cur:beg])
-            eval_r = self._eval_expr(self.text[beg + 2 : end - 1], locals)
+            res.append(text[cur:beg])
+            eval_r = self.eval(text[beg + 2 : end - 1], locals)
             if not isinstance(eval_r, str):
                 eval_r = str(eval_r)
             res.append(eval_r)
             cur = end
-        res.append(self.text[cur:])
+        res.append(text[cur:])
         return "".join(res)
 
-    def _eval_expr(self, expr: str, locals={}):
+    @classmethod
+    def eval(self, expr: str, locals: Locals):
+        m = re.match(self.VAR_RE, expr)
+        if m is not None:
+            up_count = max(len(m["up"]) - 1, 0)
+            for _ in range(up_count):
+                locals = locals.up()
+            with js_mode():
+                return eval(m["var"], None, locals)
+
         m = re.match(self.EVAL_RE, expr)
-        if m is None:
-            raise ValueError(f"String '{expr}' is not a valid expression.")
+        if m is not None:
+            resolver = m["resolver"] or "eval"
+            if resolver == "eval":
+                with js_mode():
+                    return eval(m["expr"], None, locals)
+            elif resolver == "env":
+                return os.environ[m["expr"]]
+            else:
+                raise ValueError(f"Unsupported resolver '{resolver}'")
 
-        resolver = m["resolver"] or "eval"
-        if resolver == "eval":
-            locals_ = {"math": math, "np": np, **locals}
-            with node_item_mode():
-                return eval(m["expr"], None, locals_)
-        elif resolver == "env":
-            return os.environ[m["expr"]]
-        else:
-            raise ValueError(f"Unknown resolver '{resolver}'")
-
-    def __repr__(self):
-        return repr(self.text)
+        raise ValueError(f"String '{expr}' is not a valid expression.")
 
 
 class Node(MutableMapping):
-    """A YAML node.
-
-    A node behaves much like a list or a dict, except:
-    - One can access the subnodes via attribute access, if within `node_attr_mode` context.
-    - All the templates are automatically rendered.
-    """
-
-    def __init__(self, value, parent=None):
-        if isinstance(value, Node):
-            value = value.value
+    def __init__(self, value: Any, parent: Node | None = None):
         self.value = value
         self.parent = parent
 
-    @property
-    def scope(self):
-        stack, cur = [], self
-        while cur is not None:
-            if isinstance(cur.value, dict):
-                stack.append(cur.value)
-            cur = cur.parent
-        stack.reverse()
-        scope = {k: v for scope in stack for k, v in scope.items()}
-        for k, v in scope.items():
-            if isinstance(v, (dict, list)):
-                scope[k] = Node(v)
-        return scope
-
     def __getattr__(self, name: str):
-        if _items_as_attrs and not name.startswith("__"):
+        if in_js_mode:
             return self[name]
         else:
             return super().__getattribute__(name)
 
-    def __setattr__(self, name: str, value):
-        if _items_as_attrs and not name.startswith("__"):
+    def __setattr__(self, name: str, value: Any):
+        if in_js_mode:
             self[name] = value
         else:
             super().__setattr__(name, value)
 
-    def __delattr__(self, name: str):
-        if _items_as_attrs and not name.startswith("__"):
-            del self[name]
-        else:
-            super().__delattr__(name)
-
     def __getitem__(self, key):
-        with node_attr_mode():
+        with py_mode():
             if isinstance(self.value, dict):
-                if key not in self:
+                if key not in self.value:
                     self[key] = {}
 
-            child = self.value[key]
+            value = self.value[key]
 
-            if isinstance(child, str):
-                child = Template(child).render(self.scope)
+            if isinstance(value, str):
+                value = self.render(value)
 
-            if isinstance(child, (list, dict)):
-                child = Node(child, parent=self)
+            if isinstance(value, (list, dict)):
+                value = Node(value, self)
 
-            return child
+            return value
 
     def __contains__(self, key):
-        return key in self.value
+        if isinstance(self.value, (dict, list)):
+            return key in self.value
+        else:
+            return False
+
+    def render(self, value):
+        return Renderer.render(value, Locals(self))
 
     def __setitem__(self, key, value):
-        with node_attr_mode():
+        with py_mode():
             if isinstance(value, Node):
                 value = value.value
             self.value[key] = value
 
     def __delitem__(self, key):
-        del self.value[key]
+        with py_mode():
+            del self.value[key]
 
     def __len__(self):
         return len(self.value)
 
     def __iter__(self):
-        if isinstance(self.value, dict):
-            return iter(self.value)
-        else:
-            return (self[i] for i in range(len(self)))
+        return iter(self.value)
 
     def __repr__(self):
-        return repr(self.value)
+        return f"node({self.value!r})"
+
+
+def _apply_preset(base, preset):
+    if not (
+        isinstance(base, Node)
+        and isinstance(base.value, dict)
+        and isinstance(preset, Node)
+        and isinstance(preset.value, dict)
+    ):
+        return preset
+
+    if "$replace" in preset:
+        return preset
+
+    for key, value in preset.items():
+        if key.startswith("$"):
+            continue
+        with js_mode():
+            exec(f"base.{key} = _apply_preset(base.{key}, value)")
+
+    return base
 
 
 def _render_all(value):
@@ -225,65 +244,50 @@ def render_all(cfg):
     return cfg
 
 
-def _apply_preset(base, preset):
-    if not (
-        isinstance(base, Node)
-        and isinstance(base.value, dict)
-        and isinstance(preset, Node)
-        and isinstance(preset.value, dict)
-    ):
-        return preset
-
-    if "$replace" in preset:
-        return preset
-
-    for key, value in preset.items():
-        if key.startswith("$"):
-            continue
-        with node_item_mode():
-            exec(f"base.{key} = _apply_preset(base.{key}, value)")
-
-    return base
-
-
 def apply_preset(base, preset):
-    return _apply_preset(Node(base), Node(preset))
+    _apply_preset(Node(base), Node(preset))
 
 
 def apply_presets(base: dict, all_presets: dict, presets: list[str]):
     base, all_presets = Node(base), Node(all_presets)
 
     for name in presets:
-        with node_item_mode():
+        with js_mode():
             preset: Node = eval(f"all_presets.{name}")
 
         assert isinstance(preset.value, dict)
         if "$extends" in preset:
             extends = preset["$extends"]
-            if not isinstance(extends, list):
+            if isinstance(extends, str):
                 extends = [extends]
             for ext_name in extends:
-                ext: Node = Template(f"${{{ext_name}}}").render(preset.scope)
+                ext = preset.render("${" + ext_name + "}")
                 _apply_preset(base, ext)
 
         _apply_preset(base, preset)
 
 
-def _hide_private(x):
+def hide_private(x):
     if isinstance(x, dict):
         r = {}
         for k, v in x.items():
             if isinstance(k, str) and (k.startswith("_") or k.startswith("$")):
                 continue
-            r[k] = _hide_private(v)
+            r[k] = hide_private(v)
         return r
     elif isinstance(x, list):
-        return [_hide_private(xi) for xi in x]
+        return [hide_private(xi) for xi in x]
     else:
         return x
 
 
 T = TypeVar("T")
+
+
+def eval_vars(data: dict):
+    data = render_all(data)
+    data = hide_private(data)
+    return data
 
 
 def cli(
@@ -323,15 +327,15 @@ def cli(
 
     args = p.parse_args()
 
-    base = open(args.config_file)
+    cfg = open(args.config_file)
 
     if presets_yml is not None:
         all_presets = open(args.presets_file)
-        apply_presets(base, all_presets, args.presets)
+        apply_presets(cfg, all_presets, args.presets)
 
     if args.options is not None:
-        apply_preset(base, load(args.options))
+        apply_preset(cfg, load(args.options))
 
-    base = render_all(base)
-    base = _hide_private(base)
-    return base
+    cfg = eval_vars(cfg)
+
+    return cfg

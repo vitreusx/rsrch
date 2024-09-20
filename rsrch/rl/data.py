@@ -1,5 +1,5 @@
 from collections.abc import Mapping
-from typing import MutableMapping
+from typing import Any, MutableMapping
 
 import numpy as np
 
@@ -139,8 +139,44 @@ class SizeLimited(Wrapper):
 
 
 class Sampler:
+    def __init__(self):
+        self._key_to_idx, self._next_idx = {}, 0
+        self._idx_to_key = []
+
+    def add(self, key):
+        index = self._next_idx
+        self._next_idx += 1
+        self._key_to_idx[key] = index
+        self._idx_to_key.append(key)
+
+    def __delitem__(self, key):
+        index = self._key_to_idx[key]
+        del self._key_to_idx[key]
+        self._idx_to_key[index] = None
+        if len(self._key_to_idx) / len(self._idx_to_key) < 0.5:
+            self._prune()
+
+    def _prune(self):
+        keys = [*self._key_to_idx]
+        self._key_to_idx, self._next_idx = {}, 0
+        for key in keys:
+            self.add(key)
+
+    def sample(self):
+        while True:
+            index = np.random.randint(len(self._idx_to_key))
+            if self._idx_to_key[index] is not None:
+                return self._idx_to_key[index]
+
+    def __iter__(self):
+        while True:
+            yield self.sample()
+
+
+class PSampler:
     def __init__(self, init_size: int = 1024):
         self.prio_tree = rq_tree(init_size)
+        self.max_tree = rq_tree(init_size, max)
         self._key_to_idx, self._next_idx = {}, 0
         self._idx_to_key = []
 
@@ -149,24 +185,32 @@ class Sampler:
             if self._next_idx >= self.prio_tree.size:
                 new_size = 2 * self.prio_tree.size
                 self.prio_tree = self.prio_tree.expand(new_size)
+                self.max_tree = self.max_tree.expand(new_size)
             self._key_to_idx[key] = self._next_idx
             self._idx_to_key.append(key)
             self._next_idx += 1
 
         key_idx = self._key_to_idx[key]
         self.prio_tree[key_idx] = prio_value
+        self.max_tree[key_idx] = prio_value
 
     def add(self, key):
-        self[key] = 1.0
+        if len(self._key_to_idx) == 0:
+            prio = 1.0
+        else:
+            prio = self.max_tree.total
+        self[key] = prio
 
     def __getitem__(self, key):
         key_idx = self._key_to_idx[key]
         return self.prio_tree[key_idx]
 
     def __delitem__(self, key):
-        key_idx = self._key_to_idx[key]
-        self.prio_tree[key_idx] = 0.0
+        index = self._key_to_idx[key]
+        del self.prio_tree[index]
+        del self.max_tree[index]
         del self._key_to_idx[key]
+        self._idx_to_key[index] = None
 
     def sample(self):
         unif = np.random.rand() * self.prio_tree.total
@@ -199,7 +243,7 @@ class Observable(Wrapper):
         self._hooks: list[Hook] = []
 
     def attach(self, hook: Hook, replay: bool = False):
-        """Attach a hook. If `replay`, execute actions for each of the sequences in the buffer."""
+        """Attach a hook. If `replay` is true, execute actions for each of the sequences in the buffer."""
 
         if hook.buf is not None:
             raise ValueError("Cannot re-attach a hook.")
@@ -225,50 +269,34 @@ class Observable(Wrapper):
             hook.on_update(seq_id, seq_len - 1)
 
     def __delitem__(self, seq_id):
-        seq = self[seq_id]
         for hook in self._hooks:
             hook.on_delete(seq_id)
         super().__delitem__(seq_id)
 
 
-class StepView(Hook):
-    def __init__(self):
-        super().__init__()
-        self._sampler = Sampler()
-
-    def on_update(self, seq_id, seq):
-        offset = len(seq) - 1
-        self._sampler[(seq_id, offset)] = 1.0
-
-    def on_delete(self, seq_id, seq):
-        for offset in range(len(seq) - 1):
-            del self._sampler[(seq_id, offset)]
-
-    def sample(self):
-        seq_id, offset = self._sampler.sample()
-        seq = self.buf[seq_id]
-        res = {**seq[offset + 1]}
-        obs = res["obs"]
-        res["obs"] = seq[offset]["obs"]
-        res["next_obs"] = obs
-        return res
-
-
 class SliceView(Hook):
-    def __init__(self, slice_len: int):
+    def __init__(self, slice_len: int, sampler: Sampler | PSampler):
         super().__init__()
         self.slice_len = slice_len
-        self._sampler = Sampler()
+        self.sampler = sampler
 
-    def on_update(self, seq_id, seq):
-        offset = len(seq) - self.slice_len
+    def __iter__(self):
+        while True:
+            yield self.sample()
+
+    def on_update(self, seq_id, time):
+        offset = time - (self.slice_len - 1)
         if offset >= 0:
-            self._sampler[(seq_id, offset)] = 1.0
+            self.sampler.add((seq_id, offset))
 
-    def on_delete(self, seq_id, seq):
-        num_slices = max(len(seq) - self.slice_len + 1, 0)
-        for offset in range(num_slices):
-            del self._sampler[(seq_id, offset)]
+    def on_delete(self, seq_id):
+        seq = self.buf[seq_id]
+        for time in range(1, len(seq)):
+            offset = time - (self.slice_len - 1)
+            if offset >= 0:
+                del self.sampler[(seq_id, offset)]
 
     def sample(self):
-        raise NotImplementedError()
+        seq_id, offset = self.sampler.sample()
+        seq = self.buf[seq_id]
+        return seq[offset : offset + self.slice_len], (seq_id, offset)

@@ -1,17 +1,21 @@
 no_repro:
   random.deterministic: false
+
 no_noisy:
   expl:
     noisy: false
     eps: { desc: "linear(1.0, 0.1, ${total.n})", of: "${total.of}" }
+
 alien:
   env:
     type: atari
-    atari.env_id: ALE/Alien-v5
+    atari.env_id: Alien
+
 pong:
   env:
     type: atari
-    atari.env_id: ALE/Pong-v5
+    atari.env_id: Pong
+
 dominik:
   $extends: [no_repro, no_noisy]
   num_envs: 64
@@ -27,8 +31,10 @@ dominik:
   distq.enabled: false
   total: { n: 40e6, of: env_step }
   # data.parallel: true
+
 quick:
   total: { n: 4e6, of: env_step }
+
 der:
   $extends: [no_repro]
   distq.enabled: true
@@ -60,11 +66,16 @@ der:
     hidden_dim: 256
     dueling: true
     polyak.every: { n: 4e3, of: opt_step }
+
 sample:
   resume: runs/rainbow/ALE-Alien-v5__2024-06-10_17-46-32/ckpts/env_step=400004-val_ret=740.00.pth
   mode: sample
   total: { n: 400e3, of: env_step }
+
 sample_pong:
   resume: "runs/rainbow/ALE-Pong-v5__2024-04-17_06-20-00/ckpts/env_step=6224128-val_ret=16.97.pth"
   mode: sample
   total: { n: 1e6, of: agent_step }
+
+default:
+  $extends: [alien]

@@ -168,15 +168,14 @@ class RecordTotalSteps(gymnasium.Wrapper):
         return next_obs, reward, term, trunc, info
 
 
-class VecAgentWrapper(gym.VecAgent):
+class VecAgentWrapper(gym.VecAgentWrapper):
     def __init__(
         self,
         agent: gym.VecAgent,
         stack_num: int | None,
         obs_type: ObsType,
     ):
-        super().__init__()
-        self.agent = agent
+        super().__init__(agent)
         self.stack_num = stack_num
         self.obs_type = obs_type
 
@@ -186,10 +185,10 @@ class VecAgentWrapper(gym.VecAgent):
             obs = obs / 255.0
         else:
             obs = obs.long()
-        self.agent.reset(idxes, obs)
+        super().reset(idxes, obs)
 
     def policy(self, idxes):
-        act: torch.Tensor = self.agent.policy(idxes)
+        act: torch.Tensor = super().policy(idxes)
         return act.cpu().numpy()
 
     def step(self, idxes, act, next_obs):
@@ -199,13 +198,12 @@ class VecAgentWrapper(gym.VecAgent):
             next_obs = next_obs / 255.0
         else:
             next_obs = next_obs.long()
-        self.agent.step(idxes, act, next_obs)
+        super().step(idxes, act, next_obs)
 
 
-class AgentWrapper(gym.Agent):
+class AgentWrapper(gym.AgentWrapper):
     def __init__(self, agent: gym.Agent, stack_num: int | None):
-        super().__init__()
-        self.agent = agent
+        super().__init__(agent)
         self.stack_num = stack_num
         if stack_num is not None:
             self._stack = deque(maxlen=stack_num)
@@ -217,17 +215,14 @@ class AgentWrapper(gym.Agent):
             for _ in range(self.stack_num):
                 self._stack.append(obs)
             obs = np.concatenate(self._stack)
-        self.agent.reset(obs)
-
-    def policy(self):
-        return self.agent.policy()
+        super().reset(obs)
 
     def step(self, act, next_x):
         next_obs = next_x["obs"]
         if self.stack_num is not None:
             self._stack.append(next_obs)
             next_obs = np.concatenate(self._stack)
-        self.agent.step(act, next_obs)
+        super().step(act, next_obs)
 
 
 class BufferWrapper(data.Wrapper):

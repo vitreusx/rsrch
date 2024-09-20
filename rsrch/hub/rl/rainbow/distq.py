@@ -9,7 +9,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 import rsrch.distributions as D
-from rsrch.nn.utils import straight_through
+from rsrch.nn.utils import pass_gradient
 from rsrch.types import Tensorlike
 
 
@@ -62,7 +62,7 @@ class ValueDist(Tensorlike, D.Distribution):
         grad_target = self.ind_rv._param  # [*B, N]
         grad_target = grad_target[None].expand(num_samples, *self.batch_shape, self.N)
         grad_target = grad_target.gather(-1, indices[..., None]).squeeze(-1)
-        indices = straight_through(indices.float(), grad_target)
+        indices = pass_gradient(indices.float(), grad_target)
 
         t = indices / (self.N - 1)
         values = self.v_min[None] * (1.0 - t) + self.v_max[None] * t
@@ -77,7 +77,6 @@ class ValueDist(Tensorlike, D.Distribution):
         return self + other
 
     def __mul__(self, other):
-        assert isinstance(other, Number) and other > 0
         return ValueDist(self.ind_rv, self.v_min * other, self.v_max * other)
 
     def __rmul__(self, other):

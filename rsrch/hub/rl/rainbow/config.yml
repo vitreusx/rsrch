@@ -5,16 +5,16 @@ random:
 env:
   type: atari
   atari:
-    env_id: ALE/Alien-v5
+    env_id: Alien
     screen_size: 84
     frame_skip: 4
     obs_type: grayscale
     noop_max: 30
     fire_reset: true
     term_on_life_loss: true
+    sticky: true
     time_limit: 108e3
-    stack: 4
-    use_envpool: true
+    stack_num: 4
 distq:
   enabled: true
   num_atoms: 51
@@ -27,12 +27,12 @@ nets:
   polyak: { every: { n: 32e3, of: env_step }, tau: 0.0 }
   spectral_norm: none
 data:
-  buf_cap: 1e6
-  slice_len: 3
+  capacity: 50e3
+  slice_len: 4
   prefetch_factor: 2
   parallel: false
 total: { n: 250e6, of: env_step }
-num_envs: 1
+num_envs: 4
 expl:
   noisy: true
   sigma0: 0.5
@@ -48,9 +48,9 @@ warmup: 80e3
 val:
   sched: { every: { n: 128e3, of: env_step } }
   episodes: 32
-  envs: ${.episodes}
+  envs: ${episodes}
 opt:
-  dtype: float32
+  dtype: float16
   sched: { every: { n: 4, of: agent_step } }
   batch_size: 32
   optimizer:
@@ -69,3 +69,4 @@ sample:
   num_envs: ${..num_envs}
   env_mode: train
   dest: ./samples.pkl
+device: cuda

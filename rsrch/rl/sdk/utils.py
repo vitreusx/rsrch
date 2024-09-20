@@ -24,7 +24,7 @@ class StackSeq(Sequence):
         self.span = span
 
     def __len__(self):
-        return len(self.seq)
+        return len(self.span)
 
     def __getitem__(self, idx):
         if isinstance(idx, slice):

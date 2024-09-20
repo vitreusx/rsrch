@@ -213,8 +213,8 @@ class Runner:
 
     @exec_once
     def setup_train(self):
-        self.train_sampler = rl.data.Sampler()
-        self.val_sampler = rl.data.Sampler()
+        self.train_sampler = rl.data.PSampler()
+        self.val_sampler = rl.data.PSampler()
         self.val_ids = set()
 
         class SplitHook(rl.data.Hook):

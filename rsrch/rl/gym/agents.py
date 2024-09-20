@@ -20,6 +20,8 @@ class Pointwise(VecAgentWrapper):
         def __init__(self, parent: "Pointwise", env_idx: int):
             super().__init__()
             self.parent = parent
+            self.obs_space = parent.obs_space
+            self.act_space = parent.act_space
             self.env_idx = env_idx
 
         def reset(self, obs):
@@ -68,15 +70,18 @@ class Pointwise(VecAgentWrapper):
 class RandomAgent(Agent):
     def __init__(self, env: Env):
         super().__init__()
-        self.env = env
+        self.obs_space = env.obs_space
+        self.act_space = env.act_space
 
     def policy(self):
-        return self.env.act_space.sample()
+        return self.act_space.sample()
 
 
 class Memoryless(VecAgent, ABC):
-    def __init__(self):
+    def __init__(self, obs_space, act_space):
         super().__init__()
+        self.obs_space = obs_space
+        self.act_space = act_space
         self._last_obs = None
 
     def reset(self, idxes: np.ndarray, obs_seq):
@@ -94,3 +99,11 @@ class Memoryless(VecAgent, ABC):
 
     def step(self, idxes: np.ndarray, act_seq, next_obs_seq):
         self._last_obs[idxes] = next_obs_seq
+
+
+class RandomVecAgent(Memoryless):
+    def __init__(self, envs: VecEnv):
+        super().__init__(envs.obs_space, envs.act_space)
+
+    def _policy(self, last_obs):
+        return self.act_space.sample((last_obs.shape[0],))
