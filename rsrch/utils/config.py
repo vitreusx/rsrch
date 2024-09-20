@@ -200,7 +200,10 @@ class Node(MutableMapping):
         return len(self.value)
 
     def __iter__(self):
-        return iter(self.value)
+        if isinstance(self.value, dict):
+            return iter(self.value)
+        elif isinstance(self.value, list):
+            return (self[i] for i in range(len(self)))
 
     def __repr__(self):
         return f"node({self.value!r})"

@@ -320,6 +320,8 @@ class Agent(gym.VecAgent):
     ):
         super().__init__()
         self.actor = actor
+        self.obs_space = actor.obs_space
+        self.act_space = actor.act_space
         self.sample = sample
         self.compute_dtype = compute_dtype
         self._obs = None

@@ -64,13 +64,14 @@ class WorldModel(nn.Module):
     ):
         super().__init__()
         self.cfg = cfg
+        self.obs_space = obs_space
         self.act_space = act_space
 
-        self.obs_enc = nets.make_encoder(obs_space, **cfg.encoder)
+        self.obs_enc = nets.make_encoder(self.obs_space, **cfg.encoder)
         self.act_enc = nn.Identity()
 
         with safe_mode(self):
-            obs: Tensor = obs_space.sample([1])
+            obs: Tensor = self.obs_space.sample([1])
             obs_size: int = self.obs_enc(obs).shape[1]
 
             act: Tensor = self.act_space.sample([1])
@@ -79,11 +80,12 @@ class WorldModel(nn.Module):
         self.rssm = rssm.RSSM(cfg.rssm, obs_size, self.act_size)
 
         self.state_size = self.rssm.stoch_size + self.rssm.deter_size
-        self.obs_space = spaces.torch.Tensor((self.state_size,))
-        self.obs_space = spaces.torch.Tensorlike(self.obs_space)
+        self.state_space = spaces.torch.Tensorlike(
+            as_tensor=spaces.torch.Tensor((self.state_size,)),
+        )
 
         self.obs_dec = self._make_decoder(
-            space=obs_space,
+            space=self.obs_space,
             **self.cfg.decoders["obs"],
         )
 

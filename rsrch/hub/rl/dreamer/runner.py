@@ -103,15 +103,20 @@ class Runner:
         else:
             raise ValueError(wm_type)
 
-        rl_act_space = self.sdk.act_space
+        if self.cfg.data.rl_source == "dream":
+            rl_obs_space = self.wm.state_space
+            rl_act_space = self.wm.act_space
+        elif self.cfg.data.rl_source == "real":
+            rl_obs_space = self.sdk.obs_space
+            rl_act_space = self.sdk.act_space
 
         rl_type = self.cfg.rl.type
         if rl_type == "a2c":
             rl_cfg = self.cfg.rl.a2c
-            self.actor = a2c.Actor(rl_cfg.actor, self.wm.obs_space, rl_act_space)
+            self.actor = a2c.Actor(rl_cfg.actor, rl_obs_space, rl_act_space)
         elif rl_type == "ppo":
             rl_cfg = self.cfg.rl.ppo
-            self.actor = ppo.ActorCritic(rl_cfg, self.wm.obs_space, rl_act_space)
+            self.actor = ppo.ActorCritic(rl_cfg, rl_obs_space, rl_act_space)
         else:
             raise ValueError(rl_type)
 
@@ -213,8 +218,8 @@ class Runner:
 
     @exec_once
     def setup_train(self):
-        self.train_sampler = rl.data.PSampler()
-        self.val_sampler = rl.data.PSampler()
+        self.train_sampler = rl.data.Sampler()
+        self.val_sampler = rl.data.Sampler()
         self.val_ids = set()
 
         class SplitHook(rl.data.Hook):

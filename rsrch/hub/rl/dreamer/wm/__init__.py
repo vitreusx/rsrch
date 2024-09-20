@@ -12,6 +12,10 @@ from ..common.utils import autocast
 
 
 class WorldModel(nn.Module):
+    obs_space: Any
+    act_space: Any
+    state_space: Any
+
     reward_dec: Callable[[Tensor], D.Distribution]
     term_dec: Callable[[Tensor], D.Distribution]
 
@@ -53,6 +57,8 @@ class Agent(gym.VecAgentWrapper):
     ):
         super().__init__(agent)
         self.wm = wm
+        self.obs_space = self.wm.obs_space
+        self.act_space = self.wm.act_space
         self.compute_dtype = compute_dtype
         self._state = None
 

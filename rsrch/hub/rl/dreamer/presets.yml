@@ -72,6 +72,27 @@ atari:
                 accumulate: true
             - do_env_step
 
+  at_400k:
+    _freq: 64
+    _prefill: 20e3
+    data.val_frac: 0.15
+    stages:
+      - env_rollout:
+          until: ${_prefill}
+          mode: rand
+      - train_loop:
+          until: 400e3
+          tasks:
+            - do_val_epoch: ~
+              every: 20e3
+            - do_val_step: ~
+              every: { n: 16, of: wm_opt_step }
+            - do_opt_step: ~
+              every:
+                n: ${_freq}
+                accumulate: true
+            - do_env_step
+
   primed_wm:
     _freq: 8
     data:
