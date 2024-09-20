@@ -19,7 +19,7 @@ def ratio_val_test(test_name, suffix=""):
     envs = A100k_MONO[:3]
     freqs = [64, 32, 16, 8]
 
-    for env, freq, seed in product(envs, freqs, seeds):
+    for env, seed, freq in product(envs, seeds, freqs):
         options = {
             "env": {"type": "atari", "atari.env_id": env},
             "repro.seed": seed,
