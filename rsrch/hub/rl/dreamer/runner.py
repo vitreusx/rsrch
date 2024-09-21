@@ -519,6 +519,10 @@ class Runner:
         should_loop = self._make_until(until)
         pbar = self._make_pbar("Train loop", until=until)
 
+        while self.train_loader.empty():
+            self.do_env_step()
+            self._update_pbar(pbar, should_loop)
+
         while should_loop:
             for task_idx in range(len(tasks)):
                 flag = should_run[task_idx]
@@ -591,12 +595,16 @@ class Runner:
         env_rets = defaultdict(lambda: 0.0)
         all_rets = []
 
+        total_eps = 32
+        pbar = self.exp.pbar(desc="Val epoch", total=total_eps)
+
         for env_idx, (step, final) in val_iter:
             env_rets[env_idx] += step["reward"]
             if final:
                 all_rets.append(env_rets[env_idx])
                 del env_rets[env_idx]
-                if len(all_rets) >= 32:
+                pbar.update()
+                if len(all_rets) >= total_eps:
                     break
 
         self.exp.add_scalar("val/mean_ep_ret", np.mean(all_rets), step=_step)

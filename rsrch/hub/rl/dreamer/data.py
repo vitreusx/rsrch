@@ -89,6 +89,22 @@ class RealLoaderWM(data.IterableDataset):
 
         self.h_0s = StateMap(self.batch_size)
 
+    def empty(self):
+        found = set()
+        for seq_id in self.sampler:
+            if seq_id in found:
+                continue
+
+            seq = self.buf[seq_id]
+            if len(seq) >= self.minlen and (self.ongoing or seq[-1].get("term")):
+                return False
+
+            found.add(seq_id)
+            if len(found) == len(self.sampler):
+                break
+
+        return True
+
     def __iter__(self):
         cur_eps = {}
         next_idx = 0

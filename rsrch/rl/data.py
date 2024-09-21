@@ -168,6 +168,9 @@ class Sampler:
             if self._idx_to_key[index] is not None:
                 return self._idx_to_key[index]
 
+    def __len__(self):
+        return len(self._idx_to_key)
+
     def __iter__(self):
         while True:
             yield self.sample()
@@ -216,6 +219,9 @@ class PSampler:
         unif = np.random.rand() * self.prio_tree.total
         key_idx = self.prio_tree.searchsorted(unif)
         return self._idx_to_key[key_idx]
+
+    def __len__(self):
+        return len(self._idx_to_key)
 
     def __iter__(self):
         while True:

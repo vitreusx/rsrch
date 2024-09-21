@@ -101,9 +101,11 @@ class Memoryless(VecAgent, ABC):
         self._last_obs[idxes] = next_obs_seq
 
 
-class RandomVecAgent(Memoryless):
+class RandomVecAgent(VecAgent):
     def __init__(self, envs: VecEnv):
-        super().__init__(envs.obs_space, envs.act_space)
+        super().__init__()
+        self.obs_space = envs.obs_space
+        self.act_space = envs.act_space
 
-    def _policy(self, last_obs):
-        return self.act_space.sample((last_obs.shape[0],))
+    def policy(self, idxes: np.ndarray):
+        return self.act_space.sample((len(idxes),))
