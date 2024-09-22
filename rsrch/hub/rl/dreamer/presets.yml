@@ -38,6 +38,26 @@ atari:
                 accumulate: true
             - do_env_step
 
+  export:
+    _freq: 64
+    stages:
+      - env_rollout:
+          until: ${3e3 * _freq}
+          mode: rand
+      - train_loop:
+          until: ${1e5 * _freq}
+          tasks:
+            - do_val_epoch: ~
+              every: ${5e3 * _freq}
+            - do_opt_step: ~
+              every:
+                n: ${_freq}
+                accumulate: true
+            - do_env_step
+      - save_ckpt:
+          full: false
+          tag: final
+
   debug:
     stages:
       - env_rollout:
