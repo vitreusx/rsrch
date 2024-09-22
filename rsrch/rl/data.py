@@ -172,8 +172,11 @@ class Sampler:
         return len(self._idx_to_key)
 
     def __iter__(self):
-        while True:
-            yield self.sample()
+        if len(self._idx_to_key) == 0:
+            return
+        else:
+            while True:
+                yield self.sample()
 
 
 class PSampler:
@@ -224,8 +227,11 @@ class PSampler:
         return len(self._idx_to_key)
 
     def __iter__(self):
-        while True:
-            yield self.sample()
+        if len(self._idx_to_key) == 0:
+            return
+        else:
+            while True:
+                yield self.sample()
 
 
 class Hook:
