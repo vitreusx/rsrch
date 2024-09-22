@@ -1,4 +1,5 @@
 import argparse
+from datetime import datetime
 import inspect
 import io
 import logging
@@ -26,7 +27,7 @@ def remote_dump(host: str, text: str, prefix: str):
     with open(host_file, "w") as f:
         f.write(text)
 
-    msg = "File contents:\n" + textwrap.indent(text, " " * 4)
+    msg = "File contents:\n" + textwrap.indent(text, "> ")
     logging.info(msg)
 
     CMD = ["ssh", host, "mktemp", f"{prefix}.XXXXXXXX", "-p", "/tmp"]
@@ -40,6 +41,22 @@ def remote_dump(host: str, text: str, prefix: str):
     Path(host_file).unlink()
 
     return remote_file
+
+
+def remote_exec(host: str, script: str):
+    msg = "Script:\n" + textwrap.indent(script, "> ")
+    logging.info(msg)
+
+    CMD = ["ssh", host, "bash", "-i", "-s"]
+    logging.info(shlex.join(CMD))
+
+    proc = subprocess.Popen(
+        ["ssh", host, "bash", "-i", "-s"],
+        stdin=subprocess.PIPE,
+    )
+    proc.communicate((script + "\n").encode("utf-8"))
+    if proc.returncode:
+        raise RuntimeError("Process retuned non-0 return code.")
 
 
 def main():
@@ -73,44 +90,39 @@ def main():
         help="Git commit ref (e.g. branch, or SHA). If not provided, use current branch.",
     )
 
-    grid_p = sp.add_parser(
-        "grid",
+    launch_p = sp.add_parser(
+        "launch",
         help="Distribute a list of commands over a number of hosts.",
     )
-    grid_p.add_argument(
+    launch_p.add_argument(
         "--hosts",
         nargs="+",
         type=str,
         help="A list of ssh hosts to deploy the commands to",
     )
-    grid_p.add_argument(
+    launch_p.add_argument(
         "--git-ref",
         help="Git commit ref (e.g. branch, or SHA). If not provided, use current branch.",
     )
-    grid_p.add_argument(
+    launch_p.add_argument(
         "-s",
         "--session",
         type=str,
         required=True,
         help="tmux session name",
     )
-    grid_p.add_argument(
+    launch_p.add_argument(
         "-j",
         "--tasks-per-host",
         default=1,
         type=int,
     )
-    grid_p.add_argument(
+    launch_p.add_argument(
         "--unsafe",
         action="store_true",
         help="Allow launch even if the repo is dirty",
     )
-    grid_p.add_argument(
-        "--dump-info",
-        type=Path,
-        help="(Optional) Path for the yaml file with info about the launch",
-    )
-    grid_p.add_argument(
+    launch_p.add_argument(
         "commands",
         type=argparse.FileType("r"),
         default=sys.stdin,
@@ -122,33 +134,63 @@ def main():
         help="Kill running grid launch.",
     )
     kill_p.add_argument(
-        "--hosts",
-        nargs="+",
-        type=str,
-        help="A list of ssh hosts to deploy the commands to",
-    )
-    kill_p.add_argument(
-        "-s",
-        "--session",
-        type=str,
+        "-i",
+        "--info-yml",
+        type=Path,
         required=True,
-        help="tmux session name",
+        help="Path to info.yml file for the run",
+    )
+
+    status_p = sp.add_parser(
+        "status",
+        help="Get status of a run.",
+    )
+    status_p.add_argument(
+        "-i",
+        "--info-yml",
+        type=Path,
+        required=True,
+        help="Path to info.yml file for the run",
+    )
+
+    gather_p = sp.add_parser(
+        "gather",
+        help="Gather results from the tests.",
+    )
+    gather_p.add_argument(
+        "-i",
+        "--info-yml",
+        type=Path,
+        required=True,
+        help="Path to info.yml file for the run.",
+    )
+    gather_p.add_argument(
+        "--run-dir-key",
+        default="run.dir",
+        help="Location of the run exp directory in the config object.",
+    )
+    gather_p.add_argument(
+        "-o",
+        "--output-dir",
+        type=Path,
+        required=True,
+        help="Path to output directory.",
     )
 
     args = p.parse_args()
 
-    # For some reason, trying to read args.commands after sync_hosts call
-    # results in [], as though the call cleared stdin.
-    if args.mode == "grid":
-        all_cmds = [line.strip() for line in args.commands]
+    def _check_availability(hosts: list[str]):
+        for host in hosts:
+            CMD = ["ssh", host, "true"]
+            logging.info(shlex.join(CMD))
+            subprocess.run(CMD, stdout=DEVNULL).check_returncode()
 
-    hosts = args.hosts
-    for host in hosts:
-        CMD = ["ssh", host, "true"]
-        logging.info(shlex.join(CMD))
-        subprocess.run(CMD, stdout=DEVNULL).check_returncode()
+    def sync_hosts(hosts=None):
+        if hosts is None:
+            hosts = args.hosts
 
-    def sync_hosts():
+        _check_availability(hosts)
+
         repo = git.Repo(
             path=Path(__file__).parent,
             search_parent_directories=True,
@@ -172,11 +214,7 @@ def main():
         )
 
         for host in hosts:
-            script_path = remote_dump(host, sync_host, "sync_host")
-
-            CMD = ["ssh", host, "bash", "-i", script_path]
-            logging.info(shlex.join(CMD))
-            subprocess.run(CMD).check_returncode()
+            remote_exec(host, sync_host)
 
     def fail_if_dirty():
         repo = git.Repo(
@@ -188,11 +226,29 @@ def main():
             exit(1)
 
     def grid_launch():
-        nonlocal all_cmds
-        pivots = [int((i * len(all_cmds)) / len(hosts)) for i in range(len(hosts) + 1)]
-        all_cmds = [all_cmds[start:end] for start, end in zip(pivots, pivots[1:])]
+        if not args.unsafe:
+            fail_if_dirty()
 
-        for host, cmds in zip(hosts, all_cmds):
+        hosts = args.hosts
+        all_cmds = [line.strip() for line in args.commands]
+
+        if len(all_cmds) < len(hosts):
+            hosts = hosts[: len(all_cmds)]
+            cmd_map = {host: [cmd] for host, cmd in zip(hosts, all_cmds)}
+        else:
+            div_ = len(all_cmds) // len(hosts)
+            rem_ = len(all_cmds) % len(hosts)
+            pivots = [0]
+            for idx in range(len(hosts)):
+                pivots.append(pivots[-1] + div_ + (1 if idx < rem_ else 0))
+            cmd_map = {
+                host: all_cmds[start:end]
+                for host, start, end in zip(hosts, pivots, pivots[1:])
+            }
+
+        sync_hosts(hosts)
+
+        for host, cmds in cmd_map.items():
             cmd_path = remote_dump(host, "\n".join(cmds), "cmd")
 
             tmux_script = f"""
@@ -203,38 +259,97 @@ def main():
             tmux_script = inspect.cleandoc(tmux_script)
             tmux_path = remote_dump(host, tmux_script, "tmux")
 
-            exec_script = (
-                f'tmux new-session -s "{args.session}" -d "source {tmux_path}"'
+            remote_exec(
+                host,
+                f'tmux new-session -s "{args.session}" -d "source {tmux_path}"',
             )
-            exec_path = remote_dump(host, exec_script, "exec")
 
-            CMD = ["ssh", host, "bash", "-i", exec_path]
-            logging.info(shlex.join(CMD))
-            subprocess.run(CMD).check_returncode()
+        dt = datetime.now()
+        info_path = Path(f"runs/{args.session}.{dt:%Y-%m-%d_%H-%M-%S}.yml")
 
-        if args.dump_info is not None:
-            info = {
-                "session": args.session,
-                "hosts": {host: "\n".join(cmds) for host, cmds in zip(hosts, all_cmds)},
-            }
-            with open(args.dump_info, "w") as f:
-                yaml.dump(info, f)
+        info = {
+            "session": args.session,
+            "hosts": {host: cmds for host, cmds in cmd_map.items()},
+        }
+        info_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(info_path, "w") as f:
+            yaml.dump(info, f)
+
+        logging.info(f"Run info saved to: {info_path}")
 
     def kill():
-        for host in hosts:
-            CMD = ["ssh", host, "tmux", "send-key", "-t", args.session, "C-c"]
+        with open(args.info_yml) as f:
+            info = yaml.load(f)
+
+        for host in info["hosts"]:
+            CMD = ["ssh", host, "tmux", "send-key", "-t", info["session"], "C-c"]
+            logging.info(shlex.join(CMD))
+            subprocess.run(CMD)
+
+    def status():
+        with open(args.info_yml) as f:
+            info = yaml.load(f)
+
+        for host in info["hosts"]:
+            CMD = ["ssh", host, "tmux", "ls"]
+            logging.info(shlex.join(CMD))
+            subprocess.run(CMD)
+
+            CMD = ["ssh", host, "nvidia-smi"]
             logging.info(shlex.join(CMD))
             subprocess.run(CMD).check_returncode()
+
+    def gather():
+        with open(args.info_yml) as f:
+            info = yaml.load(f)
+
+        for host, cmds in info["hosts"].items():
+            for cmd in cmds:
+                argv = shlex.split(cmd)
+                CMD = [*argv, "--dump-config"]
+                logging.info(shlex.join(CMD))
+                cfg_bytes = subprocess.check_output(CMD)
+
+                cfg = yaml.load(io.BytesIO(cfg_bytes))
+
+                cur = cfg
+                for key in args.run_dir_key.split("."):
+                    cur = cur[key]
+                run_dir = cur
+
+                args.output_dir.mkdir(parents=True, exist_ok=True)
+
+                dst_dir = args.output_dir / Path(run_dir).name
+                if dst_dir.exists():
+                    idx = 0
+                    while True:
+                        old_dir = dst_dir.with_name(dst_dir.name + f".old{idx:03d}")
+                        if not old_dir.exists():
+                            break
+
+                    dst_dir.rename(old_dir)
+
+                CMD = [
+                    "rsync",
+                    "-ruz",
+                    "--delete",
+                    "--info=progress2",
+                    f"{host}:~/self/rsrch/{run_dir}/",
+                    str(dst_dir),
+                ]
+                logging.info(shlex.join(CMD))
+                subprocess.run(CMD).check_returncode()
 
     if args.mode == "sync":
         sync_hosts()
-    elif args.mode == "grid":
-        if not args.unsafe:
-            fail_if_dirty()
-        sync_hosts()
+    elif args.mode == "launch":
         grid_launch()
     elif args.mode == "kill":
         kill()
+    elif args.mode == "status":
+        status()
+    elif args.mode == "gather":
+        gather()
 
 
 if __name__ == "__main__":

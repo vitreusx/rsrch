@@ -9,6 +9,7 @@ from collections.abc import MutableMapping
 from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
+import sys
 from typing import Any, TypeVar
 
 import numpy as np
@@ -327,6 +328,11 @@ def cli(
             default=def_presets,
             help="List of presets to be used.",
         )
+    p.add_argument(
+        "--dump-config",
+        action="store_true",
+        help="Dump the config to stdout and exit.",
+    )
 
     args = p.parse_args()
 
@@ -340,5 +346,9 @@ def cli(
         apply_preset(cfg, load(args.options))
 
     cfg = eval_vars(cfg)
+
+    if args.dump_config:
+        yaml.dump(cfg, sys.stdout)
+        exit(0)
 
     return cfg

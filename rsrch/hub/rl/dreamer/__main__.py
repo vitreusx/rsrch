@@ -1,9 +1,6 @@
-import warnings
 from pathlib import Path
 
 from rsrch.utils import config
-
-from .runner import Config, Runner
 
 
 def main():
@@ -12,8 +9,10 @@ def main():
         presets_yml=Path(__file__).parent / "presets.yml",
         def_presets=["default"],
     )
-    cfg = config.cast(cfg, Config)
 
+    from .runner import Config, Runner
+
+    cfg = config.cast(cfg, Config)
     runner = Runner(cfg)
     runner.main()
 
