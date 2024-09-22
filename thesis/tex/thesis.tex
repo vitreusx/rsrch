@@ -163,7 +163,8 @@ We are interested in evaluating performance on Atari-100k benchmark. However, pe
 These considerations lead us to a choice of three Atari games: Pong, Crazy Climber and Assault. The performance curves can be seen in \autoref{fig:a100k_mono_perf}.
 
 \begin{figure}
-  \includegraphics[width=\linewidth]{assets/perf_curves.pdf}
+  \centering
+  \includegraphics[width=0.8\linewidth,height=0.8\paperheight,keepaspectratio]{assets/perf_curves.pdf}
   \caption{Performance curves for a three-game subset of Atari-100k. The dashed line denotes mean score when choosing random actions. The colored lines represent different RNG seeds chosen. We use the scores provided by the authors of DreamerV2.}
   \label{fig:a100k_mono_perf}
 \end{figure}
@@ -172,9 +173,24 @@ These considerations lead us to a choice of three Atari games: Pong, Crazy Climb
 
 Let us begin with the simplest way to speed up the learning process - increasing the frequency of optimization steps without any other changes.
 
-\paragraph{Setup} Base DreamerV2 training recipe begins with a prefill of $P = 200 \times 10^3$ and continues until the total step count is $T = 200 \times 10^6$. The latter loop consists of $E = 64$ env steps (at the frame skip value of $4$, this corresponds to $16$ agent steps) and a single optimization step. As discussed previously, we replace $T$ by $6.4 \times 10^6$. With that, we can parametrize the recipe as follows: begin with a prefill of $P = \max((3 \times 10^3)E, 20 \times 10^3)$ env steps, and continue until $\max(10^5 E, 400 \times 10^3)$ env steps, making an optimization step every $E$ env steps. Then, setting $E$ to $64$ roughly corresponds to the original training setting, and until $E \geq 4$ the number of total optimization steps is constant while the total number of env steps decreases. For $E < 4$, the number of optimization steps increases, since we keep the total number of env steps at $400 \times 10^3$.
+\paragraph{Setup} Base DreamerV2 training recipe begins with a prefill of $P = 200 \times 10^3$ and continues until the total step count is $T = 200 \times 10^6$. The latter loop consists of $E = 64$ env steps (at the frame skip value of $4$, this corresponds to $16$ agent steps) and a single optimization step.
 
+As discussed previously, we replace $T$ by $6.4 \times 10^6$. With that, we can parametrize the recipe as follows: begin with a prefill of $P = \max((3 \times 10^3)E, 20 \times 10^3)$ env steps, and continue until $\max(10^5 E, 400 \times 10^3)$ env steps, making an optimization step every $E$ env steps. Then, setting $E$ to $64$ roughly corresponds to the original training setting, and until $E \geq 4$ the number of total optimization steps is constant while the total number of env steps decreases. For $E < 4$, the number of optimization steps increases, since we keep the total number of env steps at $400 \times 10^3$.
 
+Beyond that, for testing purposes, we also add an online train-validation split mechanism: each episode in the replay buffer is assigned either to the training set or the validation set, with probability $p = 0.15$. Every $K$ optimization steps, a batch is samples from the validation set, and validation loss is computed. Because in policy gradient methods the loss value is merely a proxy for computing the gradient of the returns, we report only the world model loss.
+
+\paragraph{Results} Let us first look at performance curves (\autoref{fig:naive_perf}). For $E \geq 16$, the final score is in the order of the target scores at $E = 64$, which indicates that we are able to speed up the training procedure by a factor of $4$ without any further modifications, whilst keeping the agent performance intact. However, as we may observe for $E \in \{2, 4, 8\}$, at a certain point the training process deteriorates.
+
+To determine what the performance would be with the step count limit of $400 \times 10^3$, we have also performed tests with prefill and total step counts equivalent to the setup for $E \leq 4$ ($400 \times 10^3$ and $20 \times 10^3$ respectively), with $E > 4$. The results can be found in \autoref{fig:naive_lim}.
+
+Notably, for $E=2$ and $E=4$ the total number of environment steps is equal to $400 \times 10^3$, yet the performance for $E=4$, with smaller number of optimization steps, is superior to $E=2$. This may indicate overfitting. Our next step is to investigate whether it occurs, and if/how one may detect it.
+
+\begin{figure}
+  \centering
+  \includegraphics[width=0.8\linewidth,height=0.8\paperheight,keepaspectratio]{assets/naive_perf.pdf}
+  \caption{Performance curves for a three-game subset of Atari-100k with different environment-to-update-step ratios.}
+  \label{fig:naive_perf}
+\end{figure}
 
 \vskip 0.2in
 \bibliography{thesis}
