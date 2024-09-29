@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 
-from .. import alpha, env
-from ..utils import Optim
+from rsrch.rl import sdk
+
+from . import alpha
 
 
 @dataclass
@@ -12,20 +13,20 @@ class Random:
 
 @dataclass
 class Polyak:
-    sched: dict
+    every: int
     tau: float
 
 
 @dataclass
 class Value:
-    opt: Optim
+    opt: dict
     polyak: Polyak
     sched: dict
 
 
 @dataclass
 class Actor:
-    opt: Optim
+    opt: dict
     opt_ratio: int
 
 
@@ -40,7 +41,8 @@ class Val:
 class Config:
     random: Random
     device: str
-    env: env.Config
+    compute_dtype: str
+    env: sdk.Config
     total_steps: int
     num_envs: int
     batch_size: int

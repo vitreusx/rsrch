@@ -242,10 +242,9 @@ class BufferWrapper(data.Wrapper):
         obs = {k: obs[k] for k in self.KEYS if k in obs}
         return super().reset(obs)
 
-    def step(self, seq_id: int, act, step):
-        next_obs, final = step
+    def step(self, seq_id: int, act, next_obs):
         next_obs = {k: next_obs[k] for k in self.KEYS if k in next_obs}
-        return super().step(seq_id, act, (next_obs, final))
+        return super().step(seq_id, act, next_obs)
 
     def __getitem__(self, seq_id: int):
         seq = [*self.buf[seq_id]]
@@ -287,7 +286,8 @@ class SDK:
 
         seq_id = buf.reset(env.reset())
         act = env.act_space.sample()
-        buf.step(seq_id, act, env.step(act))
+        next_obs, _ = env.step(act)
+        buf.step(seq_id, act, next_obs)
 
         step = buf[seq_id][-1]
 
@@ -310,7 +310,6 @@ class SDK:
         mode: Literal["train", "val"] = "train",
         render: bool = False,
         seed: int | None = None,
-        **kwargs,
     ):
         if seed is None:
             seed = np.random.randint(int(2**31))
@@ -447,7 +446,7 @@ class SDK:
             stack_num=self.cfg.stack_num,
             obs_type=self.cfg.obs_type,
         )
-        agent = gym.agents.Pointwise(
+        agent = gym.vector.agents.Pointwise(
             agent=agent,
             transform=partial(AgentWrapper, stack_num=self.cfg.stack_num),
         )

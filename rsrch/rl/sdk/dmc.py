@@ -133,7 +133,6 @@ class SDK:
         num_envs: int,
         render: bool = False,
         seed: int | None = None,
-        **kwargs,
     ):
         if seed is None:
             seed = np.random.randint(int(2**31))

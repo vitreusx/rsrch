@@ -274,13 +274,13 @@ class ProcEnv(Env):
         env_fn: Callable[[], Env],
         spawn_method: Literal["spawn", "fork"] = "spawn",
     ):
-        self.recv_c, send_c = mp.Pipe(duplex=False)
-        recv_c, self.send_c = mp.Pipe(duplex=False)
+        self.recv_c, self._send_c = mp.Pipe(duplex=False)
+        self._recv_c, self.send_c = mp.Pipe(duplex=False)
 
         ctx = mp.get_context(spawn_method)
         self.proc = ctx.Process(
             target=self.target,
-            args=(cloudpickle.dumps(env_fn), recv_c, send_c),
+            args=(cloudpickle.dumps(env_fn), self._recv_c, self._send_c),
             daemon=True,
         )
         self.proc.start()

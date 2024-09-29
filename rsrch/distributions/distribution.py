@@ -8,7 +8,7 @@ class Distribution:
 
     @property
     def mean(self) -> Tensor:
-        raise NotImplementedError
+        return NotImplemented
 
     @property
     def variance(self) -> Tensor:
@@ -16,7 +16,7 @@ class Distribution:
 
     @property
     def var(self) -> Tensor:
-        raise NotImplementedError()
+        return NotImplemented
 
     @property
     def std(self) -> Tensor:
@@ -24,20 +24,20 @@ class Distribution:
 
     @property
     def mode(self) -> Tensor:
-        raise NotImplementedError()
+        return NotImplemented
 
     def sample(self, sample_shape: tuple[int, ...] = ()) -> Tensor:
         with torch.no_grad():
             return self.rsample(sample_shape)
 
     def rsample(self, sample_shape: tuple[int, ...] = ()) -> Tensor:
-        raise NotImplementedError()
+        return NotImplemented
 
     def log_prob(self, value: Tensor) -> Tensor:
-        raise NotImplementedError()
+        return NotImplemented
 
     def entropy(self) -> Tensor:
-        raise NotImplementedError()
+        return NotImplemented
 
     def cdf(self, value: Tensor) -> Tensor:
-        raise NotImplementedError()
+        return NotImplemented

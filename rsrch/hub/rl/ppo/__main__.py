@@ -86,7 +86,7 @@ def main():
     opt = torch.optim.Adam(ac.parameters(), lr=cfg.lr, eps=cfg.opt_eps)
     opt = ScaledOptimizer(opt)
 
-    class ACAgent(gym.agents.Memoryless):
+    class ACAgent(gym.agents.Markov):
         @torch.inference_mode()
         def _policy(self, obs):
             with autocast():

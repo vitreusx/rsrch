@@ -40,26 +40,25 @@ class Buffer(MutableMapping):
     def __delitem__(self, seq_id: int):
         del self.data[seq_id]
 
-    def reset(self, obs) -> int:
+    def reset(self, obs: dict) -> int:
         seq_id = self._next_id
         self._next_id += 1
         seq = [obs]
         self.data[seq_id] = seq
         return seq_id
 
-    def step(self, seq_id: int, act, step):
+    def step(self, seq_id: int, act, next_obs: dict):
         seq = self.data[seq_id]
-        next_obs, final = step
         seq.append({**next_obs, "act": act})
 
     def push(self, seq_id: int | None, step: dict, final: bool):
         if seq_id is None:
             return self.reset(step)
         else:
-            step = {**step}
             act = step["act"]
-            del step["act"]
-            self.step(seq_id, act, (step, final))
+            next_obs = {**step}
+            del next_obs["act"]
+            self.step(seq_id, act, next_obs)
             if final:
                 seq_id = None
             return seq_id
@@ -98,17 +97,17 @@ class Wrapper(MutableMapping):
     def reset(self, obs):
         return self.buf.reset(obs)
 
-    def step(self, seq_id, act, next_obs):
+    def step(self, seq_id: int, act, next_obs: dict):
         return self.buf.step(seq_id, act, next_obs)
 
-    def push(self, seq_id, step, final):
+    def push(self, seq_id: int | None, step, final):
         if seq_id is None:
             return self.reset(step)
         else:
-            step = {**step}
             act = step["act"]
-            del step["act"]
-            self.step(seq_id, act, (step, final))
+            next_obs = {**step}
+            del next_obs["act"]
+            self.step(seq_id, act, next_obs)
             if final:
                 seq_id = None
             return seq_id

@@ -17,12 +17,14 @@ class shared_ndarray(np.ndarray):
 
         arr = super().__new__(cls, shape, dtype, shm.buf)
         arr._shm = shm
+        arr._shm_created = shm_name is None
         return arr
 
     def __array_finalize__(self, obj):
         if obj is None:
             return
         self._shm: SharedMemory = getattr(obj, "_shm", None)
+        self._shm_created: bool = getattr(obj, "_shm_created", False)
 
     def __repr__(self):
         orig = super().__repr__()

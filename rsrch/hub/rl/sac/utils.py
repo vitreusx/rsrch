@@ -32,19 +32,6 @@ def over_seq(_func):
 
 
 @dataclass
-class Optim:
-    type: Literal["adam"]
-    lr: float
-    eps: float
-
-    def make(self):
-        return partial(torch.optim.Adam, lr=self.lr, eps=self.eps)
-
-    def __call__(self, *args, **kwargs):
-        return self.make()(*args, **kwargs)
-
-
-@dataclass
 class Polyak:
     period: int = 1
     tau: float = 0.0
@@ -199,3 +186,7 @@ def infer_ctx(*modules: nn.Module):
         yield
     for module, prev_ in zip(modules, prev):
         module.train(prev_)
+
+
+def to_camel_case(name: str):
+    return "".join(word.title() for word in name.split("_"))

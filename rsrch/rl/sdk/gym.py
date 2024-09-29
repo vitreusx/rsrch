@@ -4,6 +4,7 @@ from typing import Literal
 
 import cv2
 import gymnasium
+import gymnasium.wrappers.normalize
 import numpy as np
 import torch
 
@@ -38,6 +39,23 @@ class RenderEnv(gymnasium.ObservationWrapper):
         if self._size is not None:
             obs = cv2.resize(obs, self._size)
         return obs
+
+
+class NormalizeActions(gymnasium.ActionWrapper):
+    def __init__(self, env: gymnasium.Env):
+        super().__init__(env)
+        act_space: gymnasium.spaces.Box = self.env.action_space
+        self._loc = 0.5 * (act_space.high + act_space.low)
+        self._scale = act_space.high - self._loc
+        self.action_space = gymnasium.spaces.Box(
+            low=-1.0,
+            high=1.0,
+            shape=self.action_space.shape,
+            dtype=self.action_space.dtype,
+        )
+
+    def action(self, action):
+        return action * self._scale + self._loc
 
 
 class CastF:
@@ -175,6 +193,7 @@ class BufferWrapper(data.Wrapper):
         x["obs"] = obs_f(x["obs"])
         if "act" in x:
             x["act"] = act_f(x["act"])
+            x["reward"] = float(x["reward"])
         return x
 
 
@@ -193,10 +212,13 @@ class SDK:
     def make_envs(
         self,
         num_envs: int,
+        mode: Literal["train", "val"] = "train",
         render: bool = False,
         seed: int | None = None,
-        **kwargs,
     ):
+        if seed is None:
+            seed = np.random.randint(int(2**31))
+
         def env_fn(idx):
             return lambda: self._env(render=render, seed=seed + idx)
 
@@ -210,10 +232,16 @@ class SDK:
         return gym.envs.EnvSet(envs)
 
     def _env(self, render: bool, seed: int):
-        env = gym.make(
+        env = gymnasium.make(
             self.cfg.env_id,
             render_mode="rgb_array" if render else None,
         )
+
+        if (
+            isinstance(env.action_space, gymnasium.spaces.Box)
+            and env.action_space.is_bounded()
+        ):
+            env = NormalizeActions(env)
 
         if self.cfg.obs_type == "flat":
             env = gymnasium.wrappers.FlattenObservation(env)

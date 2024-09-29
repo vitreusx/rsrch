@@ -212,13 +212,9 @@ def make_async(iterator: Iterator):
         yield batches.get()
 
 
-class RealLoaderRL(data.IterableDataset):
-    def __init__(self, real_slices: RealLoaderWM):
-        super().__init__()
-        self.real_slices = real_slices
-
+class RealLoaderRL(RealLoaderWM):
     def __iter__(self):
-        for batch in self.real_slices:
+        for batch in super().__iter__():
             yield batch.seq
 
 

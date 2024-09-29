@@ -103,10 +103,10 @@ class Runner:
         else:
             raise ValueError(wm_type)
 
-        if self.cfg.data.rl_source == "dream":
+        if self.cfg.use_model:
             rl_obs_space = self.wm.state_space
             rl_act_space = self.wm.act_space
-        elif self.cfg.data.rl_source == "real":
+        else:
             rl_obs_space = self.sdk.obs_space
             rl_act_space = self.sdk.act_space
 
@@ -248,32 +248,42 @@ class Runner:
         del buf_cfg["capacity"]
         self.buf_cfg = buf_cfg
 
-        self.train_loader = data.RealLoaderWM(
-            buf=self.buf,
-            sampler=self.train_sampler,
-            **self.buf_cfg,
-        )
-        self.train_iter = iter(self.train_loader)
+        if self.cfg.use_model:
+            self.wm_loader = data.RealLoaderWM(
+                buf=self.buf,
+                sampler=self.train_sampler,
+                **self.buf_cfg,
+            )
+            self.wm_iter = iter(self.wm_loader)
 
-        cfg = self.cfg.data.dream
-        self.dream_loader = data.DreamLoaderRL(
-            real_slices=self.train_loader,
-            wm=self.wm,
-            actor=self.actor,
-            batch_size=cfg.batch_size,
-            slice_len=cfg.horizon,
-            device=self.device,
-            compute_dtype=self.compute_dtype,
-        )
-        self.dream_iter = iter(self.dream_loader)
+            if self.cfg.repro.determinism != "full":
+                self.wm_iter = data.make_async(self.wm_iter)
 
-        if self.cfg.repro.determinism != "full":
-            self.train_iter = data.make_async(self.train_iter)
+            cfg = self.cfg.data.dream
+            self.rl_loader = data.DreamLoaderRL(
+                real_slices=self.wm_loader,
+                wm=self.wm,
+                actor=self.actor,
+                batch_size=cfg.batch_size,
+                slice_len=cfg.horizon,
+                device=self.device,
+                compute_dtype=self.compute_dtype,
+            )
+            self.rl_iter = iter(self.rl_loader)
+        else:
+            self.rl_loader = data.RealLoaderRL(
+                buf=self.buf,
+                sampler=self.train_sampler,
+                **self.buf_cfg,
+            )
+            self.rl_iter = iter(self.rl_loader)
+
+            if self.cfg.repro.determinism != "full":
+                self.rl_iter = data.make_async(self.rl_iter)
 
         wm_type = self.cfg.wm.type
         if wm_type == "dreamer":
             wm_cfg = self.cfg.wm.dreamer
-
             self.wm_trainer = dreamer.Trainer(wm_cfg, self.wm, self.compute_dtype)
         else:
             raise ValueError(wm_type)
@@ -519,7 +529,7 @@ class Runner:
         should_loop = self._make_until(until)
         pbar = self._make_pbar("Train loop", until=until)
 
-        while self.train_loader.empty():
+        while self.wm_loader.empty():
             self.do_env_step()
             self._update_pbar(pbar, should_loop)
 
@@ -544,40 +554,8 @@ class Runner:
             self.do_rl_opt_step()
 
     def do_val_step(self):
-        if len(self.val_ids) == 0:
-            return
-
-        self.wm_trainer.eval()
-        self.rl_trainer.eval()
-
-        with self.buf_mtx:
-            wm_batch = next(self.val_iter)
-
-        wm_batch = wm_batch.to(self.device)
-
-        wm_output = self.wm_trainer.compute(
-            seq=wm_batch.seq,
-            h_0=wm_batch.h_0,
-        )
-
-        rl_batch = self.dream_loader.dream_from(
-            wm_output.states.flatten(),
-            wm_batch.seq.term.flatten(),
-        )
-
-        rl_output = self.rl_trainer.compute(rl_batch)
-
-        with self.buf_mtx:
-            self.val_loader.h_0s[wm_batch.end_pos] = wm_output.h_n
-
-        self.exp.add_scalar(f"wm/val_loss", wm_output.loss, step="wm_opt_step")
-        self.exp.add_scalar(f"rl/val_loss", rl_output.loss, step="rl_opt_step")
-
-        for k, v in self.wm_trainer.compute_stats().items():
-            self.exp.add_scalar(f"wm/stats/{k}", v, step="wm_opt_step")
-
-        for k, v in self.rl_trainer.compute_stats().items():
-            self.exp.add_scalar(f"rl/stats/{k}", v, step="rl_opt_step")
+        self.do_wm_val_step()
+        self.do_rl_val_step()
 
     def do_val_epoch(
         self,
@@ -711,7 +689,7 @@ class Runner:
         self.wm_trainer.train()
 
         with self.buf_mtx:
-            wm_batch = next(self.train_iter)
+            wm_batch = next(self.wm_iter)
         wm_batch = wm_batch.to(self.device)
 
         wm_output = self.wm_trainer.compute(
@@ -720,13 +698,13 @@ class Runner:
         )
         self.wm_trainer.opt_step(wm_output.loss)
 
-        self.dream_loader.to_recycle = (
+        self.rl_loader.to_recycle = (
             wm_output.states.flatten(),
             wm_batch.seq.term.flatten(),
         )
 
         with self.buf_mtx:
-            self.train_loader.h_0s[wm_batch.end_pos] = wm_output.h_n
+            self.wm_loader.h_0s[wm_batch.end_pos] = wm_output.h_n
 
         if self.should_log_wm:
             for k, v in wm_output.metrics.items():
@@ -744,7 +722,7 @@ class Runner:
         self.rl_trainer.train()
 
         with self.buf_mtx:
-            rl_batch = next(self.dream_iter)
+            rl_batch = next(self.rl_iter)
         rl_batch = rl_batch.to(self.device)
 
         rl_output = self.rl_trainer.compute(rl_batch)
@@ -756,3 +734,31 @@ class Runner:
             self.exp.add_scalar(f"rl/env_step", self.env_step, step="rl_opt_step")
 
         self.rl_opt_step += 1
+
+    def do_wm_val_step(self):
+        if len(self.val_ids) == 0:
+            return
+
+        self.wm_trainer.eval()
+
+        with self.buf_mtx:
+            wm_batch = next(self.val_iter)
+
+        wm_batch = wm_batch.to(self.device)
+
+        wm_output = self.wm_trainer.compute(
+            seq=wm_batch.seq,
+            h_0=wm_batch.h_0,
+        )
+
+        with self.buf_mtx:
+            self.val_loader.h_0s[wm_batch.end_pos] = wm_output.h_n
+
+        self.exp.add_scalar(f"wm/val_loss", wm_output.loss, step="wm_opt_step")
+
+        for k, v in self.wm_trainer.compute_stats().items():
+            self.exp.add_scalar(f"wm/stats/{k}", v, step="wm_opt_step")
+
+    def do_rl_val_step(self):
+        for k, v in self.rl_trainer.compute_stats().items():
+            self.exp.add_scalar(f"rl/stats/{k}", v, step="rl_opt_step")

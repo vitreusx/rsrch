@@ -61,7 +61,6 @@ data:
     batch_size: ${data.buffer.batch_size * data.buffer.slice_len}
     horizon: 15
   val_frac: 0.0
-  rl_source: dream
 
 train:
   num_envs: 1
@@ -185,3 +184,5 @@ stages:
         - do_opt_step: ~
           every: 5
         - do_env_step
+
+use_model: true

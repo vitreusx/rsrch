@@ -24,7 +24,7 @@ from . import config, nets
 from .distq import ValueDist
 
 
-class QAgent(gym.agents.Memoryless):
+class QAgent(gym.agents.Markov):
     def __init__(self, q: nets.Q, obs_space, act_space, val: bool = False):
         super().__init__(obs_space, act_space)
         self.q = q

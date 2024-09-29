@@ -2,15 +2,16 @@ random:
   seed: 1
   deterministic: false
 device: cuda
+compute_dtype: float16
 env:
   type: gym
   gym:
-    env_id: Ant-v4
+    env_id: Humanoid-v4
 total_steps: 1e6
 num_envs: 1
 batch_size: 256
 log_sched: { every: 32, of: opt_step }
-warmup: 50e3
+warmup: 5e3
 buf_cap: 1e6
 gamma: 0.99
 value:
@@ -21,20 +22,21 @@ value:
   polyak:
     every: 1
     tau: 0.995
-  sched: { every: 4, of: agent_step }
+  sched: { every: 1, of: agent_step }
 actor:
   opt:
     type: adam
     lr: 3e-4
     eps: 1e-5
-  opt_ratio: 1
+  opt_ratio: 2
 alpha:
   adaptive: true
-  target_ent: auto
-  value: 0.1
-  opt: ${..value.opt}
+  init_value: 1e-3
+  amp_rate: 1e-3
+  decay_rate: 1e-3
+  rel_min_ent: auto
 hidden_dim: 256
 val:
   envs: 4
-  sched: { every: [32e3, env_step] }
+  sched: { every: 32e3, of: env_step }
   episodes: 32

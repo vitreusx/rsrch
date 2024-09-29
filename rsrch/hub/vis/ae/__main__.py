@@ -15,7 +15,7 @@ from rsrch import spaces
 from rsrch.distributions.utils import sum_rightmost
 from rsrch.exp import Experiment
 from rsrch.exp.board.tensorboard import Tensorboard
-from rsrch.nn import dist_head as dh
+from rsrch.nn import dh
 from rsrch.nn.utils import safe_mode
 from rsrch.types import Tensorlike
 from rsrch.utils import config, cron, repro

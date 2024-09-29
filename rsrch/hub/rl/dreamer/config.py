@@ -65,7 +65,6 @@ class Config:
 
         dream: Dream
         val_frac: float
-        rl_source: Literal["dream", "real"]
 
     data: Data
 
@@ -99,3 +98,4 @@ class Config:
     rl: RL
 
     stages: list[dict | str]
+    use_model: bool

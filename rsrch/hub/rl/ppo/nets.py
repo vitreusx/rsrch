@@ -1,8 +1,10 @@
+from functools import partial
+
 import numpy as np
 import torch
 from torch import Tensor, nn
 
-import rsrch.nn.dist_head as dh
+import rsrch.nn.dh as dh
 from rsrch import spaces
 
 
@@ -51,12 +53,11 @@ class ActorHead(nn.Module):
     def __init__(self, act_space: spaces.torch.Tensor, enc_dim: int):
         super().__init__()
 
+        layer_ctor = partial(nn.Linear, enc_dim)
         if isinstance(act_space, spaces.torch.Discrete):
-            num_actions = int(act_space.n)
-            self.net = dh.Categorical(enc_dim, num_actions)
+            self.net = dh.Categorical(layer_ctor, act_space)
         elif isinstance(act_space, spaces.torch.Box):
-            self.net = dh.Beta(enc_dim, act_space)
-            # self.net = dh.Normal(enc_dim, act_space.shape)
+            self.net = dh.TruncNormal(layer_ctor, act_space)
         else:
             raise ValueError(type(act_space))
 
