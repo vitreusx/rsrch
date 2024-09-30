@@ -4,7 +4,7 @@ from typing import Literal
 
 from rsrch import rl
 
-from .rl import a2c, ppo
+from .rl import a2c, ppo, sac
 from .wm import dreamer
 
 
@@ -91,9 +91,10 @@ class Config:
 
     @dataclass
     class RL:
-        type: Literal["a2c", "ppo"]
+        type: Literal["a2c", "ppo", "sac"]
         a2c: a2c.Config | None
         ppo: ppo.Config | None
+        sac: sac.Config | None
 
     rl: RL
 

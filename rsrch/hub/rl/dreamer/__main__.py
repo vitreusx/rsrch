@@ -7,7 +7,6 @@ def main():
     cfg = config.cli(
         config_yml=Path(__file__).parent / "config.yml",
         presets_yml=Path(__file__).parent / "presets.yml",
-        def_presets=["default"],
     )
 
     from .runner import Config, Runner

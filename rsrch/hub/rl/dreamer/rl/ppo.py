@@ -7,9 +7,9 @@ import torch
 from torch import Tensor, nn
 
 from rsrch import spaces
-from rsrch.nn.utils import over_seq
+from rsrch.nn.utils import over_seq, safe_mode
 
-from ..common import dh
+from ..common import nets, dh
 from ..common.trainer import ScaledOptimizer, TrainerBase
 from ..common.types import Slices
 from ..common.utils import find_class
@@ -17,6 +17,7 @@ from ..common.utils import find_class
 
 @dataclass
 class Config:
+    encoder: dict
     actor_dist: dict
     update_epochs: int
     update_batch: int
@@ -48,39 +49,6 @@ def gen_adv_est(
     return adv, ret
 
 
-class Encoder(nn.Sequential):
-    def __init__(self, obs_space: spaces.torch.Tensor):
-        if isinstance(obs_space, spaces.torch.Image):
-            num_channels = obs_space.shape[0]
-            super().__init__(
-                nn.Conv2d(num_channels, 32, 8, 4),
-                nn.ReLU(),
-                nn.Conv2d(32, 64, 4, 2),
-                nn.ReLU(),
-                nn.Conv2d(64, 64, 3, 1),
-                nn.ReLU(),
-                nn.AdaptiveMaxPool2d((7, 7)),
-                nn.Flatten(),
-                nn.Linear(64 * 7 * 7, 512),
-                nn.ReLU(),
-            )
-            self.out_features = 512
-
-        elif isinstance(obs_space, spaces.torch.Box):
-            obs_dim = int(np.prod(obs_space.shape))
-            super().__init__(
-                nn.Flatten(),
-                nn.Linear(obs_dim, 64),
-                nn.Tanh(),
-                nn.Linear(64, 64),
-                nn.Tanh(),
-            )
-            self.out_features = 64
-
-        else:
-            raise ValueError(type(obs_space))
-
-
 class CriticHead(nn.Sequential):
     def __init__(self, in_features: int):
         super().__init__(
@@ -99,19 +67,24 @@ class ActorCritic(nn.Module):
         super().__init__()
         self.share_encoder = cfg.share_encoder
 
+        encoder = nets.make_encoder(obs_space, **cfg.encoder)
+        with safe_mode(encoder):
+            input = obs_space.sample((1,))
+            z_features = encoder(input).shape[1]
+
         if self.share_encoder:
-            self.enc = Encoder(obs_space)
-            layer_ctor = partial(nn.Linear, self.enc.out_features)
+            self.enc = encoder
+            layer_ctor = partial(nn.Linear, z_features)
             self.actor_head = dh.make(layer_ctor, act_space, **cfg.actor_dist)
-            self.critic_head = CriticHead(self.enc.out_features)
+            self.critic_head = CriticHead(z_features)
         else:
-            actor_enc = Encoder(obs_space)
-            layer_ctor = partial(nn.Linear, self.enc.out_features)
+            actor_enc = encoder
+            layer_ctor = partial(nn.Linear, z_features)
             actor_head = dh.make(layer_ctor, act_space)
             self.actor = nn.Sequential(actor_enc, actor_head)
 
-            critic_enc = Encoder(obs_space)
-            critic_head = CriticHead(critic_enc.out_features)
+            critic_enc = nets.make_encoder(obs_space, **cfg.encoder)
+            critic_head = CriticHead(z_features)
             self.critic = nn.Sequential(critic_enc, critic_head)
 
     def forward(self, state: Tensor, with_values: bool = True):

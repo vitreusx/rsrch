@@ -1,8 +1,99 @@
-atari:
+sac:
   base:
-    env:
-      type: atari
-      atari.env_id: Pong
+    rl.type: sac
+    rl.sac:
+      critic:
+        polyak:
+          every: 1
+          tau: 0.995
+      num_q: 2
+      gamma: 0.99
+      alpha:
+        adaptive: true
+        init_value: 1e-3
+        amp_rate: 1e-3
+        decay_rate: 1e-3
+        rel_min_ent: auto
+      clip_grad: ~
+  mujoco:
+    $extends: [base]
+    rl.sac:
+      actor:
+        opt:
+          type: adam
+          lr: 3e-4
+        opt_ratio: 2
+        encoder: &sac-encoder-1
+          type: box
+          box:
+            hidden: 256
+            layers: 2
+            act: relu
+      critic:
+        opt:
+          type: adam
+          lr: 1e-3
+        encoder: *sac-encoder-1
+  atari:
+    $extends: [base]
+    rl.sac:
+      actor:
+        opt:
+          type: adam
+          lr: 3e-4
+        opt_ratio: 1
+        encoder: &sac-encoder-2
+          type: sac_image
+      critic:
+        opt:
+          type: adam
+          lr: 3e-4
+        encoder: *sac-encoder-2
+ppo:
+  base:
+    rl.type: ppo
+    rl.ppo:
+      encoder:
+        type: ppo
+      actor_dist:
+        type: auto
+        beta:
+          min_std: 0.1
+      adv_norm: true
+      clip_vloss: true
+      vf_coeff: 0.5
+      clip_grad: 0.5
+      gamma: 0.99
+      gae_lambda: 0.95
+      share_encoder: false
+  mujoco:
+    $extends: [base]
+    rl.ppo:
+      update_epochs: 10
+      update_batch: 64
+      opt:
+        type: adam
+        lr: 3e-4
+      ent_coeff: 0.0
+      clip_coeff: 0.2
+  atari:
+    $extends: [base]
+    rl.ppo:
+      update_epochs: 4
+      update_batch: 256
+      opt:
+        type: adam
+        lr: 2.5e-4
+      ent_coeff: 1e-2
+      clip_coeff: 0.1
+
+dreamer:
+  base:
+    wm.type: dreamer
+    rl.type: a2c
+
+  atari:
+    $extends: [base]
     wm.dreamer:
       rssm:
         deter_size: 600
@@ -17,152 +108,8 @@ atari:
       opt.actor.lr: 4e-5
       opt.critic.lr: 1e-4
 
-  base_100k:
+  dmc:
     $extends: [base]
-    env.atari.sticky: false
-
-  train:
-    _freq: 64
-    stages:
-      - env_rollout:
-          until: ${3e3 * _freq}
-          mode: rand
-      - train_loop:
-          until: ${1e5 * _freq}
-          tasks:
-            - do_val_epoch: ~
-              every: ${5e3 * _freq}
-            - do_opt_step: ~
-              every:
-                n: ${_freq}
-                accumulate: true
-            - do_env_step
-
-  export:
-    _freq: 64
-    stages:
-      - env_rollout:
-          until: ${3e3 * _freq}
-          mode: rand
-      - train_loop:
-          until: ${1e5 * _freq}
-          tasks:
-            - do_val_epoch: ~
-              every: ${5e3 * _freq}
-            - do_opt_step: ~
-              every:
-                n: ${_freq}
-                accumulate: true
-            - do_env_step
-      - save_ckpt:
-          full: false
-          tag: final
-
-  debug:
-    stages:
-      - env_rollout:
-          until: 25e3
-          mode: rand
-      - train_loop:
-          until: 100e3
-          tasks:
-            - do_val_epoch: ~
-              every: 10e3
-            - do_opt_step: ~
-              every: 64
-            - do_env_step
-
-  train_val:
-    _freq: 64
-    data.val_frac: 0.15
-    stages:
-      - env_rollout:
-          until: ${max(3e3 * _freq, 20e3)}
-          mode: rand
-      - train_loop:
-          until: ${max(1e5 * _freq, 400e3)}
-          tasks:
-            - do_val_epoch: ~
-              every: ${max(5e3 * _freq, 20e3)}
-            - do_val_step: ~
-              every: { n: 16, of: wm_opt_step }
-            - do_opt_step: ~
-              every:
-                n: ${_freq}
-                accumulate: true
-            - do_env_step
-
-  at_400k:
-    _freq: 64
-    _prefill: 20e3
-    data.val_frac: 0.15
-    stages:
-      - env_rollout:
-          until: ${_prefill}
-          mode: rand
-      - train_loop:
-          until: 400e3
-          tasks:
-            - do_val_epoch: ~
-              every: 20e3
-            - do_val_step: ~
-              every: { n: 16, of: wm_opt_step }
-            - do_opt_step: ~
-              every:
-                n: ${_freq}
-                accumulate: true
-            - do_env_step
-
-  primed_wm:
-    _freq: 8
-    data:
-      val_frac: 0.15
-    stages:
-      - env_rollout:
-          until: 40e3
-          mode: rand
-      - train_wm:
-          stop_criteria: { rel_patience: 0.5, min_steps: 10e3 }
-          val_every: 1024
-          val_on_loss_improv: 0.2
-          max_val_batches: 128
-      - train_loop:
-          until: 400e3
-          tasks:
-            - do_val_epoch: ~
-              every: 40e3
-            - do_val_step: ~
-              every: { n: 16, of: wm_opt_step }
-            - do_opt_step: ~
-              every:
-                n: ${_freq}
-                accumulate: true
-            - do_env_step
-
-  rl_conv_test:
-    data:
-      val_frac: 0.15
-    stages:
-      - env_rollout:
-          until: 200e3
-          mode: rand
-      - train_wm:
-          stop_criteria: { rel_patience: 0.5, min_steps: 10e3 }
-          val_every: 1024
-          val_on_loss_improv: 0.2
-          max_val_batches: 128
-      - train_loop:
-          until: { n: 100e3, of: rl_opt_step }
-          tasks:
-            - do_val_epoch:
-                step: rl_opt_step
-              every: 5e3
-            - do_val_step: ~
-              every: { n: 16, of: rl_opt_step }
-            - do_rl_opt_step
-
-dmc:
-  base:
     wm.dreamer:
       reward_fn: id
       rssm:
@@ -184,9 +131,19 @@ dmc:
       opt.actor.lr: 8e-5
       opt.critic.lr: 8e-5
       actor_ent: 1e-4
-    data.buffer.prioritize_ends: false
 
+atari:
+  base:
+    env:
+      type: atari
+      atari.env_id: Pong
+
+  for_100k:
+    env.atari.sticky: false
+
+dmc:
   proprio:
+    data.buffer.prioritize_ends: false
     env:
       type: dmc
       dmc:
@@ -196,6 +153,7 @@ dmc:
         frame_skip: 2
 
   vision:
+    data.buffer.prioritize_ends: false
     env:
       type: dmc
       dmc:
@@ -205,17 +163,102 @@ dmc:
         frame_skip: 2
         render_size: [64, 64]
 
-  train:
+exp:
+  sanity_check:
+    $extends: [dreamer.atari, atari.base]
     stages:
       - env_rollout:
-          until: 10e3 # 2e3
+          until: 200e3
           mode: rand
       - train_loop:
-          until: { n: 100, of: wm_opt_step }
-          tasks: [do_opt_step]
-      - train_loop:
-          until: 100e6
+          until: 5e6
           tasks:
+            - do_val_epoch: ~
+              every: 1e6
             - do_opt_step: ~
-              every: { n: 5, of: agent_step }
+              every:
+                n: 64
+                accumulate: true
             - do_env_step
+
+  mono_test:
+    $extends: [dreamer.atari, atari.base]
+    _freq: 64
+    stages:
+      - env_rollout:
+          until: ${3e3 * _freq}
+          mode: rand
+      - train_loop:
+          until: ${1e5 * _freq}
+          tasks:
+            - do_val_epoch: ~
+              every: ${5e3 * _freq}
+            - do_opt_step: ~
+              every:
+                n: ${_freq}
+                accumulate: true
+            - do_env_step
+
+  mono_rv:
+    $extends: [dreamer.atari, atari.base]
+    _freq: 64
+    data.val_frac: 0.15
+    stages:
+      - env_rollout:
+          until: ${max(3e3 * _freq, 20e3)}
+          mode: rand
+      - train_loop:
+          until: ${max(1e5 * _freq, 400e3)}
+          tasks:
+            - do_val_epoch: ~
+              every: ${max(5e3 * _freq, 20e3)}
+            - do_val_step: ~
+              every: { n: 16, of: wm_opt_step }
+            - do_opt_step: ~
+              every:
+                n: ${_freq}
+                accumulate: true
+            - do_env_step
+
+  at_400k:
+    $extends: [dreamer.atari, atari.base]
+    _freq: 64
+    _prefill: 20e3
+    data.val_frac: 0.15
+    stages:
+      - env_rollout:
+          until: ${_prefill}
+          mode: rand
+      - train_loop:
+          until: 400e3
+          tasks:
+            - do_val_epoch: ~
+              every: 20e3
+            - do_val_step: ~
+              every: { n: 16, of: wm_opt_step }
+            - do_opt_step: ~
+              every:
+                n: ${_freq}
+                accumulate: true
+            - do_env_step
+
+  export:
+    $extends: [dreamer.atari, atari.base]
+    _freq: 64
+    stages:
+      - env_rollout:
+          until: ${3e3 * _freq}
+          mode: rand
+      - train_loop:
+          until: ${1e5 * _freq}
+          tasks:
+            - do_val_epoch: ~
+              every: ${5e3 * _freq}
+            - do_opt_step: ~
+              every:
+                n: ${_freq}
+                accumulate: true
+            - do_env_step
+      - save_ckpt:
+          full: false
+          tag: final

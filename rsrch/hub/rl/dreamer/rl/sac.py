@@ -9,10 +9,14 @@ from torch import Tensor, nn
 from rsrch import spaces
 from rsrch.nn import dh
 from rsrch.nn.utils import safe_mode
+import torch.nn.functional as F
 
+from rsrch.rl.utils import polyak
 from ..common import nets
-from ..common.trainer import TrainerBase
+from ..common.trainer import TrainerBase, ScaledOptimizer
 from ..common.types import Slices
+from . import _alpha as alpha
+import rsrch.distributions as D
 
 
 @dataclass
@@ -21,48 +25,69 @@ class Config:
     class Actor:
         opt: dict
         opt_ratio: int
-        hidden_dim: int
-        num_layers: int
-        norm_layer: nets.NormType
-        act_layer: nets.ActType
+        encoder: dict
 
     @dataclass
     class Q:
         opt: dict
-        hidden_dim: int
-        num_layers: int
-        norm_layer: nets.NormType
-        act_layer: nets.ActType
+        encoder: dict
+        polyak: dict
 
     actor: Actor
-    qf: Q
+    critic: Q
     num_q: int
     gamma: float
+    alpha: alpha.Config
+    clip_grad: float | None
 
 
-class Q(nn.Module):
+class ContQ(nn.Module):
     def __init__(
         self,
         cfg: Config.Q,
         obs_space: spaces.torch.Tensor,
-        act_space: spaces.torch.Tensor,
+        act_space: spaces.torch.Box,
     ):
         super().__init__()
+
         obs_dim = int(np.prod(obs_space.shape))
         act_dim = int(np.prod(act_space.shape))
+        input_space = spaces.torch.Tensor((obs_dim + act_dim,))
 
-        self.fc = nets.MLP(
-            in_features=obs_dim + act_dim,
-            out_features=1,
-            hidden=cfg.hidden_dim,
-            layers=cfg.num_layers,
-            norm=cfg.norm_layer,
-            act=cfg.act_layer,
-        )
+        self.encoder = nets.make_encoder(input_space, **cfg.encoder)
+        with safe_mode(self.encoder):
+            input = input_space.sample((1,))
+            z_features = self.encoder(input).shape[1]
 
-    def forward(self, obs: Tensor, act: Tensor):
-        x = torch.cat([obs.flatten(1), act.flatten(1)], -1)
-        return self.fc(x).flatten(1)
+        self.proj = nn.Linear(z_features, 1)
+
+    def forward(self, obs: Tensor, act: Tensor) -> Tensor:
+        input = torch.cat((obs.flatten(1), act.flatten(1)), 1)
+        q_value = self.proj(self.encoder(input))
+        return q_value.flatten(1)
+
+
+class DiscQ(nn.Module):
+    def __init__(
+        self,
+        cfg: Config.Q,
+        obs_space: spaces.torch.Tensor,
+        act_space: spaces.torch.Discrete,
+    ):
+        super().__init__()
+
+        self.encoder = nets.make_encoder(obs_space, **cfg.encoder)
+        with safe_mode(self.encoder):
+            input = obs_space.sample((1,))
+            z_features = self.encoder(input).shape[1]
+
+        self.proj = nn.Linear(z_features, act_space.n)
+
+    def forward(self, obs: Tensor, act: Tensor | None = None) -> Tensor:
+        q_values = self.proj(self.encoder(obs))
+        if act is not None:
+            q_values = q_values.gather(1, act.unsqueeze(-1)).squeeze(-1)
+        return q_values
 
 
 class Actor(nn.Sequential):
@@ -72,26 +97,17 @@ class Actor(nn.Sequential):
         obs_space: spaces.torch.Tensor,
         act_space: spaces.torch.Tensor,
     ):
-        obs_dim = int(np.prod(obs_space.shape))
-        fc = nets.MLP(
-            in_features=obs_dim,
-            out_features=None,
-            hidden=cfg.hidden_dim,
-            layers=cfg.num_layers,
-            norm=cfg.norm_layer,
-            act=cfg.act_layer,
-        )
-
-        with safe_mode(fc):
-            input = obs_space.sample((1,)).flatten(1)
-            out_features = fc(input).shape[1]
+        encoder = nets.make_encoder(obs_space, **cfg.encoder)
+        with safe_mode(encoder):
+            input = obs_space.sample((1,))
+            z_features = encoder(input).shape[1]
 
         head = dh.make(
-            layer_ctor=partial(nn.Linear, out_features),
+            layer_ctor=partial(nn.Linear, z_features),
             space=act_space,
         )
 
-        super().__init__(nn.Flatten(1), fc, head)
+        super().__init__(encoder, head)
 
 
 class Trainer(TrainerBase):
@@ -99,12 +115,14 @@ class Trainer(TrainerBase):
         self,
         cfg: Config,
         actor: Actor,
-        make_q: Callable[[], Q],
+        make_q: Callable[[], DiscQ | ContQ],
+        act_space: spaces.torch.Box | spaces.torch.Discrete,
         compute_dtype: torch.dtype | None = None,
     ):
         super().__init__(compute_dtype)
         self.cfg = cfg
         self.actor = actor
+        self._discrete = type(act_space) == spaces.torch.Discrete
 
         self.qf, self.qf_t = nn.ModuleList(), nn.ModuleList()
         for _ in range(cfg.num_q):
@@ -112,21 +130,89 @@ class Trainer(TrainerBase):
             self.qf_t.append(make_q())
 
         self.actor_opt = self._make_opt(self.actor.parameters(), cfg.actor.opt)
-        self.qf_opt = self._make_opt(self.qf.parameters(), cfg.qf.opt)
+        self.qf_opt = self._make_opt(self.qf.parameters(), cfg.critic.opt)
+        self.qf_polyak = polyak.Polyak(self.qf, self.qf_t, **cfg.critic.polyak)
+        self.alpha = alpha.Alpha(cfg.alpha, act_space)
 
         self.opt_iter = 0
 
     def _make_opt(self, parameters: list[nn.Parameter], cfg: dict):
         cls = getattr(torch.optim, cfg["type"])
         del cfg["type"]
-        return cls(parameters, **cfg)
+        return ScaledOptimizer(cls(parameters, **cfg))
 
-    def compute(self, batch: Slices):
+    def opt_step(self, batch: Slices):
+        mets = {}
+
         with torch.no_grad():
             with self.autocast():
                 next_obs = batch.obs[-1]
                 next_policy = self.actor(next_obs)
                 next_act = next_policy.sample()
-                min_q = self.qf_t[0](next_obs, next_act)
-                for idx in range(1, self.cfg.num_q):
-                    min_q = torch.min(min_q, self.qf_t[idx](next_obs, next_act))
+
+                if self._discrete:
+                    min_q = self.qf_t[0](next_obs)
+                    for idx in range(1, self.cfg.num_q):
+                        min_q = torch.min(min_q, self.qf_t[idx](next_obs))
+                    next_policy: D.Categorical
+                    targets = min_q - self.alpha.value * next_policy.log_probs
+                    target = (next_policy.probs * targets).sum(-1)
+                else:
+                    min_q = self.qf_t[0](next_obs, next_act)
+                    for idx in range(1, self.cfg.num_q):
+                        min_q = torch.min(min_q, self.qf_t[idx](next_obs, next_act))
+                    target = min_q - self.alpha.value * next_policy.log_prob(next_act)
+
+                for reward_t in reversed(batch.reward.unbind()):
+                    target = reward_t + self.cfg.gamma * target
+
+        obs = batch.obs[0]
+
+        with self.autocast():
+            q_losses = []
+            for qf in self.qf:
+                qf_pred = qf(obs, batch.act[0])
+                q_losses.append(F.mse_loss(qf_pred, target))
+            q_loss = torch.stack(q_losses).sum()
+
+        self.qf_opt.step(q_loss, self.cfg.clip_grad)
+        self.qf_polyak.step()
+
+        alpha_mets = {}
+        if self.opt_iter % self.cfg.actor.opt_ratio == 0:
+            for _ in range(self.cfg.actor.opt_ratio):
+                with self.autocast():
+                    policy = self.actor(obs)
+                    act = policy.rsample()
+
+                    if self._discrete:
+                        min_q = self.qf[0](obs)
+                        for idx in range(1, self.cfg.num_q):
+                            min_q = torch.min(min_q, self.qf[idx](obs))
+                        policy: D.Categorical
+                        actor_losses = -(min_q - self.alpha.value * policy.log_probs)
+                        actor_loss = (policy.probs * actor_losses).mean()
+                        actor_loss = actor_loss * len(obs)
+                    else:
+                        min_q = self.qf[0](obs, act)
+                        for idx in range(1, self.cfg.num_q):
+                            min_q = torch.min(min_q, self.qf[idx](obs, act))
+                        actor_loss = -(
+                            min_q - self.alpha.value * policy.log_prob(act)
+                        ).mean()
+
+                self.actor_opt.step(actor_loss, self.cfg.clip_grad)
+
+                if self.alpha.adaptive:
+                    entropy = self.actor(obs).entropy()
+                    alpha_mets = self.alpha.opt_step(entropy)
+
+        with torch.no_grad():
+            mets = {
+                "actor_loss": actor_loss,
+                "q_loss": q_loss,
+                "mean_q": qf_pred.mean(),
+                **{f"alpha/{k}": v for k, v in alpha_mets.items()},
+            }
+
+        return mets

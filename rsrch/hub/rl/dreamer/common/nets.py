@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Literal
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
@@ -10,6 +11,7 @@ from torch.nn.utils.parametrizations import _SpectralNorm, spectral_norm
 
 import rsrch.distributions as D
 from rsrch import spaces
+from rsrch.nn.utils import safe_mode
 
 from . import dh
 from .utils import to_camel_case
@@ -151,6 +153,49 @@ class MLP(nn.Sequential):
         self.layers = layers
 
 
+ENCODERS = {}
+
+
+def register_encoder(name: str):
+    def decorator(cls):
+        ENCODERS[name] = cls
+        return cls
+
+    return decorator
+
+
+def make_encoder(space: spaces.torch.Tensor, **kwargs):
+    cls_type = kwargs["type"]
+    cls = ENCODERS[kwargs["type"]]
+    del kwargs["type"]
+    if cls_type == "auto":
+        return cls(space, **kwargs)
+    else:
+        return cls(space, **kwargs.get(cls_type, {}))
+
+
+DECODERS = {}
+
+
+def register_decoder(name: str):
+    def decorator(cls):
+        DECODERS[name] = cls
+        return cls
+
+    return decorator
+
+
+def make_decoder(in_features: int, space: spaces.torch.Tensor, **kwargs):
+    cls_type = kwargs["type"]
+    cls = DECODERS[kwargs["type"]]
+    del kwargs["type"]
+    if cls_type == "auto":
+        return cls(in_features, space, **kwargs)
+    else:
+        return cls(in_features, space, **kwargs.get(cls_type, {}))
+
+
+@register_encoder("image")
 class ImageEncoder(nn.Sequential):
     def __init__(
         self,
@@ -190,6 +235,7 @@ class Flatten(nn.Module):
         return x.reshape(*x.shape[:1], -1)
 
 
+@register_encoder("box")
 class BoxEncoder(nn.Sequential):
     def __init__(self, space: spaces.torch.Box, **mlp):
         in_features = math.prod(space.shape)
@@ -200,6 +246,7 @@ class BoxEncoder(nn.Sequential):
         self.space = space
 
 
+@register_encoder("discrete")
 class DiscreteEncoder(nn.Module):
     def __init__(self, space: spaces.torch.Discrete):
         super().__init__()
@@ -213,6 +260,7 @@ class DiscreteEncoder(nn.Module):
         return input.argmax(-1)
 
 
+@register_encoder("dict")
 class DictEncoder(nn.ModuleDict):
     def __init__(
         self,
@@ -230,6 +278,7 @@ class DictEncoder(nn.ModuleDict):
         return torch.cat(outputs, dim=1)
 
 
+@register_encoder("auto")
 def AutoEncoder(space: spaces.torch.Tensor, **args):
     if isinstance(space, spaces.torch.Dict):
         return DictEncoder(
@@ -247,6 +296,7 @@ def AutoEncoder(space: spaces.torch.Tensor, **args):
         raise ValueError(type(space))
 
 
+@register_decoder("image")
 class ImageDecoder(nn.Sequential):
     def __init__(
         self,
@@ -286,6 +336,7 @@ class ImageDecoder(nn.Sequential):
         return D.Affine(dist, loc=0.5, scale=1.0)
 
 
+@register_decoder("box")
 class BoxDecoder(nn.Sequential):
     def __init__(
         self,
@@ -303,6 +354,7 @@ class BoxDecoder(nn.Sequential):
         super().__init__(body, head)
 
 
+@register_decoder("discrete")
 class DiscreteDecoder(nn.Sequential):
     def __init__(
         self,
@@ -316,6 +368,7 @@ class DiscreteDecoder(nn.Sequential):
         super().__init__(mlp, head)
 
 
+@register_decoder("const")
 class ConstDecoder(nn.Module):
     def __init__(self, in_features: int, space, value):
         super().__init__()
@@ -329,6 +382,7 @@ class ConstDecoder(nn.Module):
         return D.Dirac(value, len(self.value.shape))
 
 
+@register_decoder("dict")
 class DictDecoder(nn.ModuleDict):
     def __init__(
         self,
@@ -347,6 +401,7 @@ class DictDecoder(nn.ModuleDict):
         return {name: self[name](input) for name in self}
 
 
+@register_decoder("auto")
 def AutoDecoder(in_features: int, space: spaces.torch.Tensor, **args):
     if isinstance(space, spaces.torch.Dict):
         return DictDecoder(
@@ -413,6 +468,7 @@ class StreamNorm(nn.Module):
         self._mag.copy_(value)
 
 
+@register_decoder("nature")
 class NatureEncoder(nn.Sequential):
     def __init__(self, space: spaces.torch.Image):
         super().__init__(
@@ -426,7 +482,8 @@ class NatureEncoder(nn.Sequential):
         )
 
 
-class DerEncoder(nn.Sequential):
+@register_decoder("der")
+class DEREncoder(nn.Sequential):
     def __init__(self, space: spaces.torch.Image):
         super().__init__(
             nn.Conv2d(space.num_channels, 32, 5, 5),
@@ -516,6 +573,7 @@ class ImpalaLarge(nn.Sequential):
         )
 
 
+@register_encoder("impala")
 def ImpalaEncoder(
     space: spaces.torch.Image,
     type: Literal["small", "large"],
@@ -528,21 +586,64 @@ def ImpalaEncoder(
         return ImpalaLarge(space, model_size, use_spectral_norm)
 
 
-def make_encoder(space: spaces.torch.Tensor, **kwargs):
-    cls_type = kwargs["type"]
-    cls = globals()[to_camel_case(f"{cls_type}_encoder")]
-    del kwargs["type"]
-    if cls_type == "auto":
-        return cls(space, **kwargs)
-    else:
-        return cls(space, **kwargs.get(cls_type, {}))
+@register_encoder("ppo_image")
+class PPOImageEncoder(nn.Sequential):
+    def __init__(self, space: spaces.torch.Image):
+        super().__init__(
+            nn.Conv2d(space.num_channels, 32, 8, 4),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, 4, 2),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, 3, 1),
+            nn.ReLU(),
+            nn.AdaptiveMaxPool2d((7, 7)),
+            nn.Flatten(),
+            nn.Linear(64 * 7 * 7, 512),
+            nn.ReLU(),
+        )
 
 
-def make_decoder(in_features: int, space: spaces.torch.Tensor, **kwargs):
-    cls_type = kwargs["type"]
-    cls = globals()[to_camel_case(f"{cls_type}_decoder")]
-    del kwargs["type"]
-    if cls_type == "auto":
-        return cls(in_features, space, **kwargs)
+@register_encoder("ppo_box")
+class PPOBoxEncoder(nn.Sequential):
+    def __init__(self, space: spaces.torch.Tensor):
+        obs_dim = int(np.prod(space.shape))
+        super().__init__(
+            nn.Flatten(),
+            nn.Linear(obs_dim, 64),
+            nn.Tanh(),
+            nn.Linear(64, 64),
+            nn.Tanh(),
+        )
+
+
+@register_encoder("ppo")
+def PPOEncoder(space: spaces.torch.Tensor):
+    if isinstance(space, spaces.torch.Image):
+        return PPOImageEncoder(space)
     else:
-        return cls(in_features, space, **kwargs.get(cls_type, {}))
+        return PPOBoxEncoder(space)
+
+
+@register_encoder("sac_image")
+class SACImageEncoder(nn.Sequential):
+    def __init__(self, space: spaces.torch.Image):
+        super().__init__(
+            nn.Conv2d(space.num_channels, 32, 8, 4),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, 4, 2),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, 3, 1),
+            nn.ReLU(),
+            nn.Flatten(),
+        )
+
+        with safe_mode(self):
+            input = space.sample((1,))
+            z_features = self(input).shape[1]
+
+        self.extend(
+            [
+                nn.Linear(z_features, 512),
+                nn.ReLU(),
+            ]
+        )
