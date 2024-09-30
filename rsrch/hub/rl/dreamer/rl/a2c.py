@@ -210,7 +210,7 @@ class Trainer(TrainerBase):
             del cfg["type"]
             return cls(**cfg)
 
-    def compute(self, seq: Slices):
+    def compute(self, batch: Slices):
         losses, mets = {}, {}
 
         # For reinforce, we detach `target` variable, so requiring gradients on
@@ -218,9 +218,9 @@ class Trainer(TrainerBase):
         no_grad = torch.no_grad if self.actor_grad == "reinforce" else null_ctx
         with no_grad():
             with self.autocast():
-                gamma = self.cfg.gamma * (1.0 - seq.term.float())
-                vt = over_seq(self.target_critic)(seq.obs).mode
-                reward = torch.cat([torch.zeros_like(seq.reward[:1]), seq.reward])
+                gamma = self.cfg.gamma * (1.0 - batch.term.float())
+                vt = over_seq(self.target_critic)(batch.obs).mode
+                reward = torch.cat([torch.zeros_like(batch.reward[:1]), batch.reward])
 
                 target = gae_lambda(
                     reward=reward[:-1],
@@ -236,17 +236,17 @@ class Trainer(TrainerBase):
                 weight = weight.cumprod(0)
 
         with self.autocast():
-            policies = over_seq(self.actor)(seq.obs[:-2].detach())
+            policies = over_seq(self.actor)(batch.obs[:-2].detach())
             if self.actor_grad == "dynamics":
                 objective = target[1:]
             elif self.actor_grad == "reinforce":
-                baseline = over_seq(self.target_critic)(seq.obs[:-2]).mode
+                baseline = over_seq(self.target_critic)(batch.obs[:-2]).mode
                 adv = (target[1:] - baseline).detach()
-                objective = adv * policies.log_prob(seq.act[:-1].detach())
+                objective = adv * policies.log_prob(batch.act[:-1].detach())
             elif self.actor_grad == "both":
-                baseline = over_seq(self.target_critic)(seq.obs[:-2]).mode
+                baseline = over_seq(self.target_critic)(batch.obs[:-2]).mode
                 adv = (target[1:] - baseline).detach()
-                objective = adv * policies.log_prob(seq.act[:-1].detach())
+                objective = adv * policies.log_prob(batch.act[:-1].detach())
                 mix = self.actor_grad_mix(self.opt_iter)
                 objective = mix * target[1:] + (1.0 - mix) * objective
 
@@ -255,7 +255,7 @@ class Trainer(TrainerBase):
             objective = objective + ent_scale * policy_ent
             losses["actor"] = -(weight[:-2] * objective).mean()
 
-            value_dist = over_seq(self.critic)(seq.obs[:-1].detach())
+            value_dist = over_seq(self.critic)(batch.obs[:-1].detach())
             critic_losses = -value_dist.log_prob(target.detach())
             losses["critic"] = (weight[:-1] * critic_losses).mean()
 
@@ -266,8 +266,8 @@ class Trainer(TrainerBase):
             with self.autocast():
                 mets = {}
 
-                mets["reward_mean"] = seq.reward.mean()
-                mets["reward_std"] = seq.reward.std()
+                mets["reward_mean"] = batch.reward.mean()
+                mets["reward_std"] = batch.reward.std()
                 mets["target_mean"] = target.mean()
                 mets["target_std"] = target.std()
                 mets["ent_scale"] = ent_scale

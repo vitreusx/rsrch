@@ -67,7 +67,7 @@ class TruncStdNormal(Distribution, Tensorlike):
         return (self.low_pdf - self.high_pdf) / self.Z
 
     @property
-    def variance(self):
+    def var(self):
         return 1.0 - self.var_term - self.mean**2
 
     @property

@@ -6,6 +6,7 @@ import numpy as np
 import torch
 from torch import Tensor, nn
 
+import rsrch.distributions as D
 from rsrch import spaces
 
 from .utils import to_camel_case
@@ -17,15 +18,24 @@ class Config:
     init_value: float = 1e-8
     amp_rate: float = 0.0
     decay_rate: float = 0.0
-    rel_min_ent: float | Literal["auto"] | None = None
+    min_ent: float | Literal["auto"] = "auto"
 
 
-def max_ent(act_space: spaces.torch.Tensor) -> float:
-    """Compute maximum entropy for a policy over a given action space."""
+def auto_min_ent(act_space: spaces.torch.Tensor) -> float:
     if isinstance(act_space, spaces.torch.Discrete):
-        return np.log(act_space.n)
+        # Target: analogue of an eps-greedy policy, with eps = 0.5
+        eps, N = 0.5, act_space.n
+        q, p = eps / N, 1.0 - eps + eps / N
+        probs = torch.tensor([p, *(q for _ in range(N))])
+        dist = D.Categorical(probs=probs)
+        return dist.entropy().item()
     elif isinstance(act_space, spaces.torch.Box):
-        return torch.log(act_space.high - act_space.low).sum().item()
+        # Target: normal distribution with scale ratio of 5e-2 of the extent
+        # of the action space
+        scale = 5e-2 * (act_space.high - act_space.low)
+        dist = D.Normal(0, scale, len(act_space.shape))
+        dist = D.TruncNormal(dist, act_space.low, act_space.high)
+        return dist.entropy().item()
     else:
         raise ValueError(type(act_space))
 
@@ -40,14 +50,10 @@ class Alpha(nn.Module):
 
         if self.adaptive:
             self.value = self.cfg.init_value
-            if cfg.rel_min_ent == "auto":
-                if isinstance(act_space, spaces.torch.Box):
-                    rel_min_ent = -1.0
-                elif isinstance(act_space, spaces.torch.Discrete):
-                    rel_min_ent = 0.75
+            if cfg.min_ent == "auto":
+                self.min_ent = auto_min_ent(act_space)
             else:
-                rel_min_ent = cfg.rel_min_ent
-            self.min_ent = rel_min_ent * max_ent(act_space)
+                self.min_ent = cfg.min_ent
         else:
             self.value = cfg.init_value
 

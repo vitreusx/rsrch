@@ -18,7 +18,7 @@ class DistConfig:
     num_atoms: int
 
 
-class QFunction(nn.Module):
+class Q(nn.Module):
     def __init__(
         self,
         in_features: int,
