@@ -52,6 +52,7 @@ class Config:
             real_wm: dict
             real_rl: dict
             dream_rl: dict
+            on_policy: dict
 
         capacity: int
         val_frac: float
@@ -84,7 +85,7 @@ class Config:
     @dataclass
     class RL:
         type: Literal["a2c", "ppo", "sac"]
-        loader: Literal["real_rl", "dream_rl"] | None
+        loader: Literal["real_rl", "dream_rl", "on_policy"] | None
         a2c: a2c.Config | None
         ppo: ppo.Config | None
         sac: sac.Config | None

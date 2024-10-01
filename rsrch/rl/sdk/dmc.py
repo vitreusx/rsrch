@@ -131,6 +131,7 @@ class SDK:
     def make_envs(
         self,
         num_envs: int,
+        mode: Literal["train", "val"] = "train",
         render: bool = False,
         seed: int | None = None,
     ):
@@ -165,12 +166,16 @@ class SDK:
         if self.cfg.obs_type == "proprio_flat":
             obs_f = FlattenF()
 
-        envs = gym.envs.Envpool(
-            task_id=task_id,
-            obs_f=obs_f,
-            num_envs=num_envs,
-            seed=seed,
-        )
+        try:
+            envs = gym.envs.Envpool(
+                task_id=task_id,
+                obs_f=obs_f,
+                num_envs=num_envs,
+                seed=seed,
+            )
+        except:
+            return
+
         if self.cfg.frame_skip > 1:
             envs = RecordTotalStepsV(envs)
             envs = FrameSkipV(envs, frame_skip=self.cfg.frame_skip)

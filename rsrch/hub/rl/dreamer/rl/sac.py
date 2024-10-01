@@ -129,12 +129,17 @@ class Trainer(TrainerBase):
         self,
         cfg: Config,
         actor: Actor,
-        make_q: Callable[[], DiscQ | ContQ],
         compute_dtype: torch.dtype | None = None,
     ):
         super().__init__(compute_dtype)
         self.cfg = cfg
         self.actor = actor
+
+        def make_q():
+            q = Q(cfg.critic, self.actor.obs_space, self.actor.act_space)
+            q = q.to(self.device)
+            return q
+
         act_space = actor.act_space
         self._discrete = type(act_space) == spaces.torch.Discrete
 

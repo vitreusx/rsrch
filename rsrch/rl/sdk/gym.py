@@ -22,6 +22,7 @@ class Config:
     env_id: str
     obs_type: ObsType = "flat"
     render_size: tuple[int, int] | None = None
+    use_envpool: bool = True
 
 
 class RenderEnv(gymnasium.ObservationWrapper):
@@ -219,6 +220,11 @@ class SDK:
         if seed is None:
             seed = np.random.randint(int(2**31))
 
+        if self.cfg.use_envpool:
+            envs = self._try_envpool(num_envs, render=render, seed=seed)
+            if envs is not None:
+                return envs
+
         def env_fn(idx):
             return lambda: self._env(render=render, seed=seed + idx)
 
@@ -230,6 +236,26 @@ class SDK:
             envs = [env_fn(idx)() for idx in range(num_envs)]
 
         return gym.envs.EnvSet(envs)
+
+    def _try_envpool(
+        self,
+        num_envs: int,
+        render: bool,
+        seed: int,
+    ):
+        if render or self.cfg.obs_type == "visual":
+            return
+
+        try:
+            envs = gym.envs.Envpool(
+                task_id=self.cfg.env_id,
+                num_envs=num_envs,
+                seed=seed,
+            )
+        except:
+            return
+
+        return envs
 
     def _env(self, render: bool, seed: int):
         env = gymnasium.make(

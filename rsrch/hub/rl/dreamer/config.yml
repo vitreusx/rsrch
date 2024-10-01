@@ -59,12 +59,11 @@ data:
       subseq_len: [50, 50]
       prioritize_ends: true
       ongoing: false
-    real_rl:
-      batch_size: ${real_wm.batch_size * real_wm.slice_len}
-      slice_len: 16
     dream_rl:
       batch_size: ${real_wm.batch_size * real_wm.slice_len}
       slice_len: 16
+    real_rl: {}
+    on_policy: {}
 
 train:
   num_envs: 1

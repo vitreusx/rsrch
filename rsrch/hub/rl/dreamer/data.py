@@ -391,27 +391,34 @@ class OnPolicyLoaderRL(data.IterableDataset):
     def __init__(
         self,
         do_env_step: Callable[[], tuple[int, tuple[dict, bool]]],
-        buf: rl.data.Buffer,
-        batch_size: int,
+        temp_buf: rl.data.Buffer,
+        steps_per_batch: int,
+        min_seq_len: int,
     ):
         super().__init__()
         self.do_env_step = do_env_step
-        self.buf = buf
-        self.batch_size = batch_size
+        self.temp_buf = temp_buf
+        self.steps_per_batch = steps_per_batch
+        self.min_seq_len = min_seq_len
+
+    def empty(self):
+        return False
 
     def __iter__(self):
         while True:
-            self.buf.clear()
+            self.temp_buf.clear()
 
             ep_ids = defaultdict(lambda: None)
-            for _ in range(self.batch_size):
+            for _ in range(self.steps_per_batch):
                 env_idx, (step, final) = self.do_env_step()
-                ep_ids[env_idx] = self.buf.push(ep_ids[env_idx], step, final)
+                ep_ids[env_idx] = self.temp_buf.push(ep_ids[env_idx], step, final)
                 if final:
                     del ep_ids[env_idx]
 
             batch = []
-            for seq in self.buf.values():
+            for seq in self.temp_buf.values():
+                if len(seq) < self.min_seq_len:
+                    continue
                 batch.append(
                     Slices(
                         obs=torch.stack([step["obs"] for step in seq]),

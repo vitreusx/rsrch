@@ -67,6 +67,9 @@ sac:
             - do_env_step
   atari:
     $extends: [base]
+    env:
+      type: atari
+      atari.env_id: Pong
     rl.sac:
       actor:
         opt:
@@ -83,41 +86,66 @@ sac:
           type: sac_image
 ppo:
   base:
-    rl.type: ppo
-    rl.ppo:
-      encoder:
-        type: ppo
-      actor_dist:
-        type: auto
-        beta:
-          min_std: 0.1
-      adv_norm: true
-      clip_vloss: true
-      vf_coeff: 0.5
-      clip_grad: 0.5
-      gamma: 0.99
-      gae_lambda: 0.95
-      share_encoder: false
+    wm.loader: ~
+    rl:
+      type: ppo
+      loader: on_policy
+      ppo:
+        encoder:
+          type: ppo
+        actor_dist:
+          type: auto
+          beta:
+            min_std: 0.1
+        adv_norm: true
+        clip_vloss: true
+        vf_coeff: 0.5
+        clip_grad: 0.5
+        gamma: 0.99
+        gae_lambda: 0.95
+        share_encoder: false
+    data.loaders.on_policy:
+      min_seq_len: 16
   mujoco:
     $extends: [base]
+    env:
+      type: gym
+      gym.env_id: Humanoid-v4
     rl.ppo:
       update_epochs: 10
       update_batch: 64
       opt:
         type: adam
         lr: 3e-4
-      ent_coeff: 0.0
       clip_coeff: 0.2
+      ent_coeff: 0.0
+    train.num_envs: 1
+    data.loaders.on_policy:
+      steps_per_batch: 2048
+    stages:
+      - train_loop:
+          until: 1e6
+          tasks: [do_rl_opt_step]
   atari:
     $extends: [base]
+    env:
+      type: atari
+      atari.env_id: Pong
     rl.ppo:
       update_epochs: 4
       update_batch: 256
       opt:
         type: adam
         lr: 2.5e-4
-      ent_coeff: 1e-2
       clip_coeff: 0.1
+      ent_coeff: 0.01
+    train.num_envs: 8
+    data.loaders.on_policy:
+      steps_per_batch: 1024
+    stages:
+      - train_loop:
+          until: 10e6
+          tasks: [do_rl_opt_step]
 
 dreamer:
   base:

@@ -9,7 +9,7 @@ from functools import wraps
 from itertools import islice
 from pathlib import Path
 from queue import Queue
-from threading import Lock, Thread
+from threading import Lock, RLock, Thread
 from typing import Literal
 
 import numpy as np
@@ -118,6 +118,9 @@ class Runner:
         elif rl_type == "sac":
             rl_cfg = self.cfg.rl.sac
             self.actor = sac.Actor(rl_cfg.actor, rl_obs_space, rl_act_space)
+        elif rl_type == "ppo":
+            rl_cfg = self.cfg.rl.ppo
+            self.actor = ppo.Actor(rl_cfg, rl_obs_space, rl_act_space)
         else:
             raise ValueError(rl_type)
 
@@ -137,7 +140,7 @@ class Runner:
 
         self.buf = rl.data.Buffer()
         self.buf = self.sdk.wrap_buffer(self.buf)
-        self.buf_mtx = Lock()
+        self.buf_mtx = RLock()
 
         self.envs = self.sdk.make_envs(
             self.cfg.train.num_envs,
@@ -276,6 +279,17 @@ class Runner:
             if self.cfg.repro.determinism != "full":
                 self.rl_iter = data.make_async(self.rl_iter)
 
+        elif self.cfg.rl.loader == "on_policy":
+            temp_buf = rl.data.Buffer()
+            temp_buf = self.sdk.wrap_buffer(temp_buf)
+
+            self.rl_loader = data.OnPolicyLoaderRL(
+                do_env_step=self.do_env_step,
+                temp_buf=temp_buf,
+                **cfg.loaders.on_policy,
+            )
+            self.rl_iter = iter(self.rl_loader)
+
         wm_type = self.cfg.wm.type
         if wm_type == "dreamer":
             wm_cfg = self.cfg.wm.dreamer
@@ -286,31 +300,25 @@ class Runner:
         rl_type = self.cfg.rl.type
         if rl_type == "a2c":
             rl_cfg = self.cfg.rl.a2c
-
-            def make_critic():
-                critic = a2c.Critic(rl_cfg.critic, self.actor.obs_space)
-                critic = critic.to(self.device)
-                return critic
-
             self.rl_trainer = a2c.Trainer(
                 cfg=rl_cfg,
                 actor=self.actor,
-                make_critic=make_critic,
                 compute_dtype=self.compute_dtype,
             )
 
         elif rl_type == "sac":
             rl_cfg = self.cfg.rl.sac
-
-            def make_q():
-                q = sac.Q(rl_cfg.critic, self.actor.obs_space, self.actor.act_space)
-                q = q.to(self.device)
-                return q
-
             self.rl_trainer = sac.Trainer(
                 cfg=rl_cfg,
                 actor=self.actor,
-                make_q=make_q,
+                compute_dtype=self.compute_dtype,
+            )
+
+        elif rl_type == "ppo":
+            rl_cfg = self.cfg.rl.ppo
+            self.rl_trainer = ppo.Trainer(
+                cfg=rl_cfg,
+                actor=self.actor,
                 compute_dtype=self.compute_dtype,
             )
 
@@ -737,13 +745,15 @@ class Runner:
 
         with self.buf_mtx:
             rl_batch = next(self.rl_iter)
-        rl_batch = rl_batch.to(self.device)
+        rl_batch = self._move_to_device(rl_batch)
 
         if isinstance(self.rl_trainer, a2c.Trainer):
             rl_output = self.rl_trainer.compute(rl_batch)
             self.rl_trainer.opt_step(rl_output.loss)
             mets = rl_output.metrics
         elif isinstance(self.rl_trainer, sac.Trainer):
+            mets = self.rl_trainer.opt_step(rl_batch)
+        elif isinstance(self.rl_trainer, ppo.Trainer):
             mets = self.rl_trainer.opt_step(rl_batch)
 
         if self.should_log_rl:
@@ -752,6 +762,16 @@ class Runner:
             self.exp.add_scalar(f"rl/env_step", self.env_step, step="rl_opt_step")
 
         self.rl_opt_step += 1
+
+    def _move_to_device(self, x):
+        if hasattr(x, "to"):
+            return x.to(self.device)
+        elif isinstance(x, list):
+            return [self._move_to_device(elem) for elem in x]
+        elif isinstance(x, dict):
+            return {k: self._move_to_device(v) for k, v in x.items()}
+        else:
+            return x
 
     def do_wm_val_step(self):
         if len(self.val_ids) == 0:

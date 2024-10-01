@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections import defaultdict
 from datetime import datetime
 from functools import cached_property
@@ -11,12 +13,25 @@ from rsrch import rl
 from rsrch.exp import Experiment
 from rsrch.exp.board.tensorboard import Tensorboard
 from rsrch.rl import gym
-from rsrch.rl.types import Slices
+from rsrch.types.tensorlike.core import Tensorlike
 from rsrch.utils import cron, repro
 
 from . import config
 from .nets import *
 from .utils import gae_adv_est
+
+
+class Slices(Tensorlike):
+    def __init__(self, obs: Tensor, act: Tensor, reward: Tensor, term: Tensor):
+        super().__init__(shape=reward.shape)
+        self.obs = self.register("obs", obs)
+        self.act = self.register("act", act)
+        self.reward = self.register("reward", reward)
+        self.term = self.register("term", term)
+
+    @staticmethod
+    def collate_fn(batch: list[Slices]):
+        return torch.stack(batch, dim=1)
 
 
 class ScaledOptimizer:
@@ -86,7 +101,7 @@ def main():
     opt = torch.optim.Adam(ac.parameters(), lr=cfg.lr, eps=cfg.opt_eps)
     opt = ScaledOptimizer(opt)
 
-    class ACAgent(gym.agents.Markov):
+    class ACAgent(gym.vector.agents.Markov):
         @torch.inference_mode()
         def _policy(self, obs):
             with autocast():

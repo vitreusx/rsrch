@@ -132,19 +132,21 @@ TrainerOutput = namedtuple("TrainerOutput", ("loss", "metrics"))
 
 
 class Trainer(TrainerBase):
-    ON_POLICY = False
-
     def __init__(
         self,
         cfg: Config,
         actor: Actor,
-        make_critic: Callable[[], nn.Module],
         compute_dtype: torch.dtype | None,
     ):
         super().__init__(compute_dtype)
         self.cfg = cfg
-
         self.actor = actor
+
+        def make_critic():
+            critic = Critic(cfg.critic, self.actor.obs_space)
+            critic = critic.to(self.device)
+            return critic
+
         self.critic = make_critic()
 
         if self.cfg.target_critic is not None:

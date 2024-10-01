@@ -160,7 +160,6 @@ class Trainer(TrainerBase):
         self.wm = wm
         self.opt = self._make_opt()
         self.reward_fn, _ = get_reward_scheme(cfg)
-
         self._p0 = [p.data.clone() for p in self.opt.parameters]
 
     def _make_opt(self):
