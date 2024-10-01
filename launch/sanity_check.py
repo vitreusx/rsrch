@@ -7,7 +7,7 @@ from .common import *
 def sanity_check(test_name, suffix=""):
     all_tests = []
 
-    common_args = ["-p", "atari.base", "atari.train"]
+    common_args = ["-p", "exp.sanity_check"]
     common_opts = {
         "run.interactive": False,
         "run.create_commit": False,

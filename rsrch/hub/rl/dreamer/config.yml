@@ -50,17 +50,21 @@ env:
     stack_num: ~
 
 data:
-  buffer:
-    capacity: 2e6
-    batch_size: 16
-    slice_len: 50
-    subseq_len: [50, 50]
-    prioritize_ends: true
-    ongoing: false
-  dream:
-    batch_size: ${data.buffer.batch_size * data.buffer.slice_len}
-    horizon: 15
+  capacity: 2e6
   val_frac: 0.0
+  loaders:
+    real_wm:
+      batch_size: 16
+      slice_len: 50
+      subseq_len: [50, 50]
+      prioritize_ends: true
+      ongoing: false
+    real_rl:
+      batch_size: ${real_wm.batch_size * real_wm.slice_len}
+      slice_len: 16
+    dream_rl:
+      batch_size: ${real_wm.batch_size * real_wm.slice_len}
+      slice_len: 16
 
 train:
   num_envs: 1
@@ -71,6 +75,7 @@ val:
 
 wm:
   type: dreamer
+  loader: real_wm
   dreamer:
     rssm:
       ensemble: 1
@@ -121,6 +126,7 @@ wm:
 
 rl:
   type: a2c
+  loader: dream_rl
   a2c:
     actor:
       encoder:
@@ -166,5 +172,3 @@ stages:
         - do_opt_step: ~
           every: 5
         - do_env_step
-
-use_model: true

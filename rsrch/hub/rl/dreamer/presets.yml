@@ -1,29 +1,44 @@
 sac:
   base:
-    rl.type: sac
-    rl.sac:
-      critic:
-        polyak:
-          every: 1
-          tau: 0.995
-      num_q: 2
-      gamma: 0.99
-      alpha:
-        adaptive: true
-        init_value: 1e-3
-        amp_rate: 1e-3
-        decay_rate: 1e-3
-        rel_min_ent: auto
-      clip_grad: ~
+    wm.loader: ~
+    rl:
+      type: sac
+      loader: real_rl
+      sac:
+        critic:
+          polyak:
+            every: 1
+            tau: 0.995
+        num_q: 2
+        gamma: 0.99
+        alpha:
+          adaptive: true
+          init_value: 1e-3
+          amp_rate: 1e-3
+          decay_rate: 1e-3
+          min_ent: auto
+        clip_grad: ~
   mujoco:
     $extends: [base]
+    env:
+      type: gym
+      gym:
+        env_id: Humanoid-v4
+    data:
+      capacity: 1e6
+      loaders.real_rl:
+        batch_size: 256
+        slice_len: 2
+    train.num_envs: 1
+    val.num_envs: 4
     rl.sac:
       actor:
         opt:
           type: adam
           lr: 3e-4
+          eps: 1e-5
         opt_ratio: 2
-        encoder: &sac-encoder-1
+        encoder:
           type: box
           box:
             hidden: 256
@@ -33,7 +48,23 @@ sac:
         opt:
           type: adam
           lr: 1e-3
-        encoder: *sac-encoder-1
+          eps: 1e-5
+        encoder:
+          type: box
+          box:
+            hidden: 256
+            layers: 2
+            act: relu
+    profile.functions: [do_rl_opt_step]
+    stages:
+      - env_rollout:
+          until: 5e3
+          mode: rand
+      - train_loop:
+          until: 1e6
+          tasks:
+            - do_rl_opt_step
+            - do_env_step
   atari:
     $extends: [base]
     rl.sac:
@@ -42,13 +73,14 @@ sac:
           type: adam
           lr: 3e-4
         opt_ratio: 1
-        encoder: &sac-encoder-2
+        encoder:
           type: sac_image
       critic:
         opt:
           type: adam
           lr: 3e-4
-        encoder: *sac-encoder-2
+        encoder:
+          type: sac_image
 ppo:
   base:
     rl.type: ppo
@@ -178,24 +210,6 @@ exp:
             - do_opt_step: ~
               every:
                 n: 64
-                accumulate: true
-            - do_env_step
-
-  mono_test:
-    $extends: [dreamer.atari, atari.base]
-    _freq: 64
-    stages:
-      - env_rollout:
-          until: ${3e3 * _freq}
-          mode: rand
-      - train_loop:
-          until: ${1e5 * _freq}
-          tasks:
-            - do_val_epoch: ~
-              every: ${5e3 * _freq}
-            - do_opt_step: ~
-              every:
-                n: ${_freq}
                 accumulate: true
             - do_env_step
 

@@ -4,19 +4,20 @@ from typing import Callable
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch import Tensor, nn
 
+import rsrch.distributions as D
 from rsrch import spaces
 from rsrch.nn import dh
 from rsrch.nn.utils import safe_mode
-import torch.nn.functional as F
-
 from rsrch.rl.utils import polyak
+
 from ..common import nets
-from ..common.trainer import TrainerBase, ScaledOptimizer
+from ..common.trainer import ScaledOptimizer, TrainerBase
 from ..common.types import Slices
+from ..common.utils import to_camel_case
 from . import _alpha as alpha
-import rsrch.distributions as D
 
 
 @dataclass
@@ -64,7 +65,7 @@ class ContQ(nn.Module):
     def forward(self, obs: Tensor, act: Tensor) -> Tensor:
         input = torch.cat((obs.flatten(1), act.flatten(1)), 1)
         q_value = self.proj(self.encoder(input))
-        return q_value.flatten(1)
+        return q_value.ravel()
 
 
 class DiscQ(nn.Module):
@@ -90,6 +91,17 @@ class DiscQ(nn.Module):
         return q_values
 
 
+def Q(
+    cfg: Config.Q,
+    obs_space: spaces.torch.Tensor,
+    act_space: spaces.torch.Tensor,
+):
+    if isinstance(act_space, spaces.torch.Discrete):
+        return DiscQ(cfg, obs_space, act_space)
+    else:
+        return ContQ(cfg, obs_space, act_space)
+
+
 class Actor(nn.Sequential):
     def __init__(
         self,
@@ -108,6 +120,8 @@ class Actor(nn.Sequential):
         )
 
         super().__init__(encoder, head)
+        self.obs_space = obs_space
+        self.act_space = act_space
 
 
 class Trainer(TrainerBase):
@@ -116,18 +130,19 @@ class Trainer(TrainerBase):
         cfg: Config,
         actor: Actor,
         make_q: Callable[[], DiscQ | ContQ],
-        act_space: spaces.torch.Box | spaces.torch.Discrete,
         compute_dtype: torch.dtype | None = None,
     ):
         super().__init__(compute_dtype)
         self.cfg = cfg
         self.actor = actor
+        act_space = actor.act_space
         self._discrete = type(act_space) == spaces.torch.Discrete
 
         self.qf, self.qf_t = nn.ModuleList(), nn.ModuleList()
         for _ in range(cfg.num_q):
             self.qf.append(make_q())
             self.qf_t.append(make_q())
+        polyak.sync(self.qf, self.qf_t)
 
         self.actor_opt = self._make_opt(self.actor.parameters(), cfg.actor.opt)
         self.qf_opt = self._make_opt(self.qf.parameters(), cfg.critic.opt)
@@ -137,9 +152,11 @@ class Trainer(TrainerBase):
         self.opt_iter = 0
 
     def _make_opt(self, parameters: list[nn.Parameter], cfg: dict):
-        cls = getattr(torch.optim, cfg["type"])
+        cls = getattr(torch.optim, to_camel_case(cfg["type"]))
         del cfg["type"]
-        return ScaledOptimizer(cls(parameters, **cfg))
+        opt = cls(parameters, **cfg)
+        opt = ScaledOptimizer(opt)
+        return opt
 
     def opt_step(self, batch: Slices):
         mets = {}
@@ -163,6 +180,8 @@ class Trainer(TrainerBase):
                         min_q = torch.min(min_q, self.qf_t[idx](next_obs, next_act))
                     target = min_q - self.alpha.value * next_policy.log_prob(next_act)
 
+                target *= 1.0 - batch.term[-1].float()
+
                 for reward_t in reversed(batch.reward.unbind()):
                     target = reward_t + self.cfg.gamma * target
 
@@ -178,7 +197,9 @@ class Trainer(TrainerBase):
         self.qf_opt.step(q_loss, self.cfg.clip_grad)
         self.qf_polyak.step()
 
-        alpha_mets = {}
+        with torch.no_grad():
+            mets.update({"q_loss": q_loss, "mean_q": qf_pred.mean()})
+
         if self.opt_iter % self.cfg.actor.opt_ratio == 0:
             for _ in range(self.cfg.actor.opt_ratio):
                 with self.autocast():
@@ -207,12 +228,10 @@ class Trainer(TrainerBase):
                     entropy = self.actor(obs).entropy()
                     alpha_mets = self.alpha.opt_step(entropy)
 
-        with torch.no_grad():
-            mets = {
-                "actor_loss": actor_loss,
-                "q_loss": q_loss,
-                "mean_q": qf_pred.mean(),
-                **{f"alpha/{k}": v for k, v in alpha_mets.items()},
-            }
+            with torch.no_grad():
+                mets.update({"actor_loss": actor_loss})
+                if self.cfg.alpha.adaptive:
+                    mets.update({f"alpha/{k}": v for k, v in alpha_mets.items()})
 
+        self.opt_iter += 1
         return mets

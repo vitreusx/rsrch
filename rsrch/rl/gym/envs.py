@@ -188,7 +188,13 @@ class GymEnv(Env):
 
     def step(self, act):
         next_obs, reward, term, trunc, info = self.env.step(act)
-        res = {"obs": next_obs, "reward": reward, "term": term, "trunc": trunc, **info}
+        res = {
+            "obs": next_obs,
+            "reward": float(reward),
+            "term": term,
+            "trunc": trunc,
+            **info,
+        }
         if self.render:
             res["render"] = self.env.render()
         final = term or trunc
@@ -387,12 +393,13 @@ class EnvSet(VecEnv):
 
                 yield from steps
 
-                policy_idxes = np.array(policy_idxes)
-                policy = agent.policy(policy_idxes)
-                for env_idx, action in zip(policy_idxes, policy):
-                    actions[env_idx] = action
-                    fut = pool.submit(self.envs[env_idx].step, action)
-                    futures[fut] = env_idx
+                if len(policy_idxes) > 0:
+                    policy_idxes = np.array(policy_idxes)
+                    policy = agent.policy(policy_idxes)
+                    for env_idx, action in zip(policy_idxes, policy):
+                        actions[env_idx] = action
+                        fut = pool.submit(self.envs[env_idx].step, action)
+                        futures[fut] = env_idx
 
 
 class OrdinalEnv(Env):

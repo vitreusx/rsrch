@@ -34,7 +34,7 @@ alpha:
   init_value: 1e-3
   amp_rate: 1e-3
   decay_rate: 1e-3
-  rel_min_ent: auto
+  min_ent: auto
 hidden_dim: 256
 val:
   envs: 4

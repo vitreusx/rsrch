@@ -3,7 +3,7 @@ import types
 import typing
 from dataclasses import dataclass, fields, is_dataclass
 from functools import partial
-from typing import Any, Callable, Type, TypeVar, get_args, get_origin
+from typing import Any, Callable, ParamSpec, Type, TypeVar, get_args, get_origin
 
 T = TypeVar("T")
 
@@ -69,37 +69,49 @@ def cast(x: Any, t: Type[T]) -> T:
         return x if isinstance(t, type) and isinstance(x, t) else t(x)
 
 
-def typed_partial(func: Callable, *args, **kwargs):
-    """A variant of partial function from functools, which casts provided positional and keyword arguments to match function signature."""
+P, R = ParamSpec("R"), TypeVar("R")
+
+
+def argcast(func: Callable[P, R]) -> Callable[P, R]:
+    """Create a variant of a function, in which passed arguments are automatically converted to proper types, as indicated with parameter annotations."""
 
     sig = inspect.signature(func)
 
-    fields = {"__annotations__": {}}
-
+    type_map = {}
     for name, param in sig.parameters.items():
-        ptype = param.annotation
-        if ptype == param.empty:
-            ptype = Any
-        fields["__annotations__"][name] = ptype
+        arg_type = param.annotation
+        if arg_type == inspect._empty:
+            arg_type = Any
 
-        if param.default != param.empty:
-            fields[name] = param.default
+        if param.kind == param.VAR_POSITIONAL:
+            arg_type = list[arg_type]
+        elif param.kind == param.VAR_KEYWORD:
+            arg_type = dict[str, arg_type]
 
-    positional = []
-    if len(args) > 0:
-        for param in sig.parameters.values():
-            if param.name not in kwargs:
-                positional.append(param.name)
+        type_map[name] = arg_type
 
-        for name, arg in zip(positional, args):
-            fields[name] = arg
+    def wrapped(*args, **kwargs):
+        arg = sig.bind(*args, **kwargs)
+        arg.apply_defaults()
+        value_map = {}
+        for name, value in arg.arguments.items():
+            value_map[name] = cast(value, type_map[name])
 
-    for name, value in kwargs.items():
-        fields[name] = value
+        args, kwargs = [], {}
+        for name, param in sig.parameters.items():
+            if param.kind in (param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD):
+                args.append(value_map[name])
+            elif param.kind == param.VAR_POSITIONAL:
+                args.extend(value_map[name])
+            elif param.kind == param.KEYWORD_ONLY:
+                kwargs[name] = value_map[name]
+            elif param.kind == param.VAR_KEYWORD:
+                kwargs.update(value_map[name])
 
-    dc_type = dataclass(type("_Parameters", (object,), fields))
-    params_dc = vars(cast(kwargs, dc_type))
+        return_value = func(*args, **kwargs)
+        if sig.return_annotation != inspect._empty:
+            return_value = cast(return_value, sig.return_annotation)
 
-    typed_args = [params_dc[name] for name in positional]
-    typed_kwargs = [params_dc[name] for name in kwargs]
-    return partial(func, *typed_args, **typed_kwargs)
+        return return_value
+
+    return wrapped

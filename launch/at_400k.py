@@ -9,7 +9,7 @@ from .sanity_check import sanity_check
 def ratio_val_test(test_name, suffix=""):
     all_tests = []
 
-    common_args = ["-p", "atari.base", "atari.at_400k"]
+    common_args = ["-p", "exp.at_400k"]
     common_opts = {
         "run.interactive": False,
         "run.create_commit": False,

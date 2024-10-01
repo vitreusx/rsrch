@@ -9,7 +9,7 @@ from .sanity_check import sanity_check
 def export(test_name, suffix=""):
     all_tests = []
 
-    common_args = ["-p", "atari.base", "atari.export"]
+    common_args = ["-p", "exp.export"]
     common_opts = {
         "run.interactive": False,
         "run.create_commit": False,

@@ -48,23 +48,14 @@ class Config:
     @dataclass
     class Data:
         @dataclass
-        class Buffer:
-            capacity: int
-            batch_size: int
-            slice_len: int
-            subseq_len: int | tuple[int, int] | None = None
-            prioritize_ends: bool = False
-            ongoing: bool = False
+        class Loaders:
+            real_wm: dict
+            real_rl: dict
+            dream_rl: dict
 
-        buffer: Buffer
-
-        @dataclass
-        class Dream:
-            batch_size: int
-            horizon: int
-
-        dream: Dream
+        capacity: int
         val_frac: float
+        loaders: Loaders
 
     data: Data
 
@@ -85,6 +76,7 @@ class Config:
     @dataclass
     class WM:
         type: Literal["dreamer"]
+        loader: Literal["real_wm"] | None
         dreamer: dreamer.Config | None
 
     wm: WM
@@ -92,6 +84,7 @@ class Config:
     @dataclass
     class RL:
         type: Literal["a2c", "ppo", "sac"]
+        loader: Literal["real_rl", "dream_rl"] | None
         a2c: a2c.Config | None
         ppo: ppo.Config | None
         sac: sac.Config | None
@@ -99,4 +92,3 @@ class Config:
     rl: RL
 
     stages: list[dict | str]
-    use_model: bool

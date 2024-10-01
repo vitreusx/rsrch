@@ -20,12 +20,10 @@ class Agent(rl.VecAgentWrapper):
     def __init__(
         self,
         agent: rl.VecAgent,
-        act_space: spaces.torch.Tensor,
         noise: float,
         mode: Literal["train", "val", "rand"] = "rand",
     ):
         super().__init__(agent)
-        self.act_space = act_space
         self.noise = noise
         self.mode = mode
 

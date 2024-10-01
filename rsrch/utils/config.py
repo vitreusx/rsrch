@@ -5,11 +5,11 @@ import io
 import math
 import os
 import re
+import sys
 from collections.abc import MutableMapping
 from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
-import sys
 from typing import Any, TypeVar
 
 import numpy as np
@@ -36,7 +36,7 @@ def load(content: str):
     return yaml.load(buf)
 
 
-in_js_mode = False
+in_js_mode, in_upsert_mode = False, False
 
 
 @contextmanager
@@ -61,6 +61,18 @@ def py_mode():
         yield
     finally:
         in_js_mode = prev_mode
+
+
+@contextmanager
+def upsert_mode(mode=True):
+    """Automatically create nodes on access, if not existent."""
+    global in_upsert_mode
+    prev_mode = in_upsert_mode
+    in_upsert_mode = mode
+    try:
+        yield
+    finally:
+        in_upsert_mode = prev_mode
 
 
 locator = pp.Empty().setParseAction(lambda s, l, t: l)
@@ -164,9 +176,10 @@ class Node(MutableMapping):
 
     def __getitem__(self, key):
         with py_mode():
-            if isinstance(self.value, dict):
-                if key not in self.value:
-                    self[key] = {}
+            if in_upsert_mode:
+                if isinstance(self.value, dict):
+                    if key not in self.value:
+                        self[key] = {}
 
             value = self.value[key]
 
@@ -210,23 +223,25 @@ class Node(MutableMapping):
         return f"node({self.value!r})"
 
 
-def _apply_preset(base, preset):
+def _merge(base, other):
     if not (
         isinstance(base, Node)
         and isinstance(base.value, dict)
-        and isinstance(preset, Node)
-        and isinstance(preset.value, dict)
+        and isinstance(other, Node)
+        and isinstance(other.value, dict)
     ):
-        return preset
+        return other
 
-    if "$replace" in preset:
-        return preset
+    if "$replace" in other:
+        return other
 
-    for key, value in preset.items():
+    for key, value in other.items():
         if key.startswith("$"):
             continue
         with js_mode():
-            exec(f"base.{key} = _apply_preset(base.{key}, value)")
+            with upsert_mode():
+                exec(f"base.{key}")
+            exec(f"base.{key} = _merge(base.{key}, value)")
 
     return base
 
@@ -249,7 +264,7 @@ def render_all(cfg):
 
 
 def apply_preset(base, preset):
-    _apply_preset(Node(base), Node(preset))
+    _merge(Node(base), Node(preset))
 
 
 def apply_presets(base: dict, all_presets: dict, presets: list[str]):
@@ -266,9 +281,9 @@ def apply_presets(base: dict, all_presets: dict, presets: list[str]):
                 extends = [extends]
             for ext_name in extends:
                 ext = preset.render("${" + ext_name + "}")
-                _apply_preset(base, ext)
+                _merge(base, ext)
 
-        _apply_preset(base, preset)
+        _merge(base, preset)
 
 
 def hide_private(x):

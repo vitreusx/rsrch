@@ -28,9 +28,8 @@ def auto_min_ent(act_space: spaces.torch.Tensor) -> float:
     elif isinstance(act_space, spaces.torch.Box):
         # Target: normal distribution with scale ratio of 5e-2 of the extent
         # of the action space
-        scale = 5e-2 * (act_space.high - act_space.low)
+        scale = 7.5e-2 * (act_space.high - act_space.low)
         dist = D.Normal(0, scale, len(act_space.shape))
-        dist = D.TruncNormal(dist, act_space.low, act_space.high)
         return dist.entropy().item()
     else:
         raise ValueError(type(act_space))

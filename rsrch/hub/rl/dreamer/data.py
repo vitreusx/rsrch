@@ -2,7 +2,7 @@ import threading
 from collections import defaultdict, deque, namedtuple
 from dataclasses import dataclass
 from queue import Queue
-from typing import Any, Callable, Iterator, Literal
+from typing import Any, Callable, Iterator, Literal, Sequence
 
 import numpy as np
 import torch
@@ -172,11 +172,16 @@ class RealLoaderWM(data.IterableDataset):
             yield self._collate_fn(batch)
 
     def _subseq(self, seq: list[dict], start, end):
-        seq = seq[start:end]
+        seq = [*seq[start:end]]
 
         res = {
             "obs": torch.stack([step["obs"] for step in seq]),
-            "reward": torch.tensor(np.array([step.get("reward", 0.0) for step in seq])),
+            "reward": torch.tensor(
+                np.array(
+                    [step.get("reward", 0.0) for step in seq],
+                    dtype=np.float32,
+                )
+            ),
             "term": torch.tensor(np.array([step.get("term", False) for step in seq])),
         }
 
@@ -212,10 +217,76 @@ def make_async(iterator: Iterator):
         yield batches.get()
 
 
-class RealLoaderRL(RealLoaderWM):
+class RealLoaderRL(data.IterableDataset):
+    def __init__(
+        self,
+        buf: rl.data.Buffer,
+        sampler: data.Sampler,
+        batch_size: int,
+        slice_len: int,
+    ):
+        super().__init__()
+        self.buf = buf
+        self.sampler = sampler
+        self.batch_size = batch_size
+        self.slice_len = slice_len
+
+    def empty(self):
+        found = set()
+        for seq_id in self.sampler:
+            if seq_id in found:
+                continue
+
+            seq = self.buf[seq_id]
+            if len(seq) >= self.slice_len:
+                return False
+
+            found.add(seq_id)
+            if len(found) == len(self.sampler):
+                break
+
+        return True
+
     def __iter__(self):
-        for batch in super().__iter__():
-            yield batch.seq
+        ep_id_iter = iter(self.sampler)
+
+        while True:
+            batch = []
+            while len(batch) < self.batch_size:
+                ep_id = next(ep_id_iter, None)
+                if ep_id is None:
+                    break
+
+                seq = self.buf[ep_id]
+                if len(seq) < self.slice_len:
+                    continue
+
+                index = np.random.randint(len(seq) - self.slice_len + 1)
+                batch.append(seq[index : index + self.slice_len])
+
+            yield self.collate_fn(batch)
+
+    def collate_fn(self, batch: list[Sequence[dict]]):
+        batch = [[*seq] for seq in batch]
+        obs, act, reward, term = [], [], [], []
+        for t in range(self.slice_len):
+            for idx in range(self.batch_size):
+                obs.append(batch[idx][t]["obs"])
+                term.append(batch[idx][t].get("term", False))
+                if t > 0:
+                    act.append(batch[idx][t]["act"])
+                    reward.append(batch[idx][t]["reward"])
+
+        obs = torch.stack(obs)
+        obs = obs.reshape(self.slice_len, self.batch_size, *obs.shape[1:])
+        act = torch.stack(act)
+        act = act.reshape(self.slice_len - 1, self.batch_size, *act.shape[1:])
+        reward = torch.tensor(np.array(reward, dtype=np.float32))
+        reward = reward.reshape(self.slice_len - 1, self.batch_size)
+        term = torch.tensor(np.array(term))
+        term = term.reshape(self.slice_len, self.batch_size)
+
+        return Slices(obs, act, reward, term)
 
 
 class DreamLoaderRL(data.IterableDataset):
@@ -241,12 +312,15 @@ class DreamLoaderRL(data.IterableDataset):
         self.to_recycle = None
         """A pair of (h_0, term) to recycle on next iteration. Such a pair may come from a world model opt step."""
 
+    def empty(self):
+        return self.real_slices.empty()
+
     def dream_from(self, h_0: Tensor, term: Tensor):
         self.wm.requires_grad_(False)
 
         with autocast(self.device, self.compute_dtype):
             states, actions = [h_0], []
-            for _ in range(self.slice_len):
+            for _ in range(self.slice_len - 1):
                 policy = self.actor(states[-1].detach())
                 enc_act = policy.rsample()
                 actions.append(enc_act)
