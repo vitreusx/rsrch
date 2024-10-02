@@ -196,13 +196,13 @@ Beyond that, for testing purposes, we also add an online train-validation split 
   \label{fig:naive_perf}
 \end{figure}
 
-To determine what the performance would be with the step count limit of $400 \times 10^3$, we have also performed tests with prefill and total step counts equivalent to the setup for $E \leq 4$ ($400 \times 10^3$ and $20 \times 10^3$ respectively), with $E > 4$. The results can be found in \autoref{fig:naive_lim}. As we can see, at $E = 4$, the final score is the greatest across all three environments. Even so, it is significantly smaller than for the full horizon of $6.4 \times 10^6$ environment steps, as well as being more ``erratic''.
+To determine what the performance would be with the step count limit of $400 \times 10^3$, we have also performed tests with prefill and total step counts equivalent to the setup for $E \leq 4$ ($400 \times 10^3$ and $20 \times 10^3$ respectively), with $E > 4$. The results can be found in \autoref{fig:at_400k_perf}. As we can see, at $E = 4$, the final score is the greatest across all three environments. Even so, it is significantly smaller than for the full horizon of $6.4 \times 10^6$ environment steps, as well as being more ``erratic''.
 
 \begin{figure}
   \centering
-  \includegraphics[width=0.8\linewidth,height=0.8\paperheight,keepaspectratio]{assets/naive_at_400k.pdf}
+  \includegraphics[width=0.8\linewidth,height=0.8\paperheight,keepaspectratio]{assets/at_400k.perf.pdf}
   \caption{Performance curves for a three-game subset of Atari-100k with different environment-to-update-step ratios, at a fixed env step limit of $400 \times 10^3$. The columns represent different environments. The rows represent different ratio values, $64$ being the default one.}
-  \label{fig:naive_lim}
+  \label{fig:at_400k_perf}
 \end{figure}
 
 A preliminary conclusion we may draw is that the system underfits for $E > 4$ and overfits for $E < 4$. Our next step is to investigate whether we can pinpoint the underlying causes of this phenomenon.

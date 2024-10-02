@@ -57,6 +57,7 @@ isort = "^5.0"
 plotly = "^5.15.0"
 matplotlib = "^3.8.3"
 tables = "^3.10.1"
+kaleido = "0.1.0"
 
 [build-system]
 requires = ["poetry-core>=1.5"]
