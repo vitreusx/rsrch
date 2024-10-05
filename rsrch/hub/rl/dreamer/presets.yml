@@ -280,6 +280,9 @@ exp:
                 n: ${_freq}
                 accumulate: true
             - do_env_step
+      - save_ckpt:
+          full: false
+          tag: final
 
   export:
     $extends: [dreamer.atari, atari.base]
