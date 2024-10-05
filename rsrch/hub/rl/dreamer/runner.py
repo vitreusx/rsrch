@@ -104,27 +104,28 @@ class Runner:
         else:
             raise ValueError(wm_type)
 
+        self.wm = self.wm.to(self.device)
+
         if self.cfg.rl.loader == "dream_rl":
-            rl_obs_space = self.wm.state_space
-            rl_act_space = self.wm.act_space
+            self.rl_obs_space = self.wm.state_space
+            self.rl_act_space = self.wm.act_space
         else:
-            rl_obs_space = self.sdk.obs_space
-            rl_act_space = self.sdk.act_space
+            self.rl_obs_space = self.sdk.obs_space
+            self.rl_act_space = self.sdk.act_space
 
         rl_type = self.cfg.rl.type
         if rl_type == "a2c":
             rl_cfg = self.cfg.rl.a2c
-            self.actor = a2c.Actor(rl_cfg.actor, rl_obs_space, rl_act_space)
+            self.actor = a2c.Actor(rl_cfg.actor, self.rl_obs_space, self.rl_act_space)
         elif rl_type == "sac":
             rl_cfg = self.cfg.rl.sac
-            self.actor = sac.Actor(rl_cfg.actor, rl_obs_space, rl_act_space)
+            self.actor = sac.Actor(rl_cfg.actor, self.rl_obs_space, self.rl_act_space)
         elif rl_type == "ppo":
             rl_cfg = self.cfg.rl.ppo
-            self.actor = ppo.Actor(rl_cfg, rl_obs_space, rl_act_space)
+            self.actor = ppo.Actor(rl_cfg, self.rl_obs_space, self.rl_act_space)
         else:
             raise ValueError(rl_type)
 
-        self.wm = self.wm.to(self.device)
         self.actor = self.actor.to(self.device)
 
         if self.cfg.profile.enabled:
@@ -142,6 +143,34 @@ class Runner:
         self.buf = self.sdk.wrap_buffer(self.buf)
         self.buf_mtx = RLock()
 
+        self.train_sampler = rl.data.Sampler()
+        self.val_sampler = rl.data.Sampler()
+        self.val_ids = set()
+
+        class SplitHook(rl.data.Hook):
+            def on_create(hook, seq_id: int):
+                is_val = (len(self.val_ids) == 0) or (
+                    np.random.rand() < self.cfg.data.val_frac
+                )
+                if is_val:
+                    self.val_sampler.add(seq_id)
+                    self.val_ids.add(seq_id)
+                else:
+                    self.train_sampler.add(seq_id)
+
+            def on_delete(hook, seq_id: int):
+                if seq_id in self.val_ids:
+                    del self.val_sampler[seq_id]
+                    self.val_ids.remove(seq_id)
+                else:
+                    del self.train_sampler[seq_id]
+
+        self.buf = rl.data.Observable(self.buf)
+        self.buf.attach(SplitHook(), replay=True)
+
+        cfg = self.cfg.data
+        self.buf = rl.data.SizeLimited(self.buf, cap=cfg.capacity)
+
         self.envs = self.sdk.make_envs(
             self.cfg.train.num_envs,
             mode="train",
@@ -158,6 +187,9 @@ class Runner:
         self.exp.register_step("env_step", lambda: self.env_step)
         self.agent_step = 0
         self.exp.register_step("agent_step", lambda: self.agent_step)
+
+    def _compile(self, model: nn.Module):
+        return torch.compile(model, mode="reduce-overhead")
 
     def _make_agent(self, mode: Literal["train", "val"]):
         agent_ = rl_.Agent(
@@ -218,34 +250,7 @@ class Runner:
 
     @exec_once
     def setup_train(self):
-        self.train_sampler = rl.data.Sampler()
-        self.val_sampler = rl.data.Sampler()
-        self.val_ids = set()
-
-        class SplitHook(rl.data.Hook):
-            def on_create(hook, seq_id: int):
-                is_val = (len(self.val_ids) == 0) or (
-                    np.random.rand() < self.cfg.data.val_frac
-                )
-                if is_val:
-                    self.val_sampler.add(seq_id)
-                    self.val_ids.add(seq_id)
-                else:
-                    self.train_sampler.add(seq_id)
-
-            def on_delete(hook, seq_id: int):
-                if seq_id in self.val_ids:
-                    del self.val_sampler[seq_id]
-                    self.val_ids.remove(seq_id)
-                else:
-                    del self.train_sampler[seq_id]
-
-        self.buf = rl.data.Observable(self.buf)
-        self.buf.attach(SplitHook(), replay=True)
-
         cfg = self.cfg.data
-        self.buf = rl.data.SizeLimited(self.buf, cap=cfg.capacity)
-
         if self.cfg.wm.loader == "real_wm":
             self.wm_loader = data.RealLoaderWM(
                 buf=self.buf,
@@ -375,12 +380,15 @@ class Runner:
         self.val_envs = self.sdk.make_envs(self.cfg.val.num_envs, mode="val")
         self.val_agent = self._make_agent(mode="val")
 
-    def save_buf(self, tag: str | None = None):
-        if tag is None:
-            cur_step = getattr(self, self.cfg.def_step)
-            tag = f"{self.cfg.def_step}={cur_step:g}"
+    def save_buf(self, path: str | None = None, tag: str | None = None):
+        if path is None:
+            if tag is None:
+                cur_step = getattr(self, self.cfg.def_step)
+                tag = f"{self.cfg.def_step}={cur_step:g}"
+            dst = self.exp.dir / "data" / f"samples.{tag}.pkl.lzma"
+        else:
+            dst = Path(path)
 
-        dst = self.exp.dir / "data" / f"samples.{tag}.pkl.lzma"
         dst.parent.mkdir(parents=True, exist_ok=True)
 
         with lzma.open(dst, "wb") as f:
@@ -388,7 +396,7 @@ class Runner:
 
         self.exp.log(logging.INFO, f"Saved buffer data to: {str(dst)}")
 
-    def load_data(self, path: str | Path):
+    def load_buf(self, path: str | Path):
         path = Path(path)
 
         with lzma.open(path, "rb") as f:
@@ -800,3 +808,16 @@ class Runner:
     def do_rl_val_step(self):
         for k, v in self.rl_trainer.compute_stats().items():
             self.exp.add_scalar(f"rl/stats/{k}", v, step="rl_opt_step")
+
+    def reset_rl(self):
+        if self.cfg.rl.type == "sac":
+
+            def make_actor():
+                cfg = self.cfg.rl.sac
+                actor = sac.Actor(cfg.actor, self.rl_obs_space, self.rl_act_space)
+                actor = actor.to(self.device)
+                return actor
+
+            self.rl_trainer.reset(make_actor)
+        else:
+            raise ValueError(self.cfg.rl.type)

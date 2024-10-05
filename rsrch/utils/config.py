@@ -223,29 +223,6 @@ class Node(MutableMapping):
         return f"node({self.value!r})"
 
 
-def _merge(base, other):
-    if not (
-        isinstance(base, Node)
-        and isinstance(base.value, dict)
-        and isinstance(other, Node)
-        and isinstance(other.value, dict)
-    ):
-        return other
-
-    if "$replace" in other:
-        return other
-
-    for key, value in other.items():
-        if key.startswith("$"):
-            continue
-        with js_mode():
-            with upsert_mode():
-                exec(f"base.{key}")
-            exec(f"base.{key} = _merge(base.{key}, value)")
-
-    return base
-
-
 def _render_all(value):
     if isinstance(value, Node):
         unwrapped = value.value
@@ -263,8 +240,43 @@ def render_all(cfg):
     return cfg
 
 
-def apply_preset(base, preset):
-    _merge(Node(base), Node(preset))
+def _merge(base, other):
+    if not (
+        isinstance(base, Node)
+        and isinstance(base.value, dict)
+        and isinstance(other, Node)
+        and isinstance(other.value, dict)
+    ):
+        return other
+
+    if other.get("$replace", False):
+        return other
+
+    for key, value in other.items():
+        if key.startswith("$"):
+            continue
+        with js_mode():
+            with upsert_mode():
+                exec(f"base.{key}")
+            exec(f"base.{key} = _merge(base.{key}, value)")
+
+    return base
+
+
+def _apply_preset(base: Node, preset: Node):
+    assert isinstance(preset.value, dict)
+    if "$extends" in preset:
+        extends: str | list[str] = preset["$extends"]
+        if isinstance(extends, str):
+            extends = [extends]
+        for ext_name in extends:
+            ext = preset.render("${" + ext_name + "}")
+            _apply_preset(base, ext)
+    _merge(base, preset)
+
+
+def apply_preset(base: dict, preset: dict):
+    _apply_preset(Node(base), Node(preset))
 
 
 def apply_presets(base: dict, all_presets: dict, presets: list[str]):
@@ -273,17 +285,7 @@ def apply_presets(base: dict, all_presets: dict, presets: list[str]):
     for name in presets:
         with js_mode():
             preset: Node = eval(f"all_presets.{name}")
-
-        assert isinstance(preset.value, dict)
-        if "$extends" in preset:
-            extends = preset["$extends"]
-            if isinstance(extends, str):
-                extends = [extends]
-            for ext_name in extends:
-                ext = preset.render("${" + ext_name + "}")
-                _merge(base, ext)
-
-        _merge(base, preset)
+        _apply_preset(base, preset)
 
 
 def hide_private(x):

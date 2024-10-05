@@ -9,15 +9,15 @@ from .sanity_check import sanity_check
 def low_ratio_test(test_name, suffix=""):
     all_tests = []
 
-    common_args = ["-p", "exp.mono_rv"]
+    common_args = ["-p", "exp.ratio_val_test"]
     common_opts = {
         "run.interactive": False,
         "run.create_commit": False,
     }
 
-    seeds = [0]
-    envs = ATARI_100k_5
-    freqs = [2, 1]
+    seeds = [0, 1, 2]
+    envs = ATARI_100k_3
+    freqs = [64, 32, 16, 8, 4, 2]
 
     for seed, env, freq in product(seeds, envs, freqs):
         options = {
@@ -35,7 +35,7 @@ def low_ratio_test(test_name, suffix=""):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--name", default="low-ratio-test")
+    p.add_argument("--name", default="ratio-val-test")
     args = p.parse_args()
 
     all_tests = [

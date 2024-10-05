@@ -4,7 +4,8 @@ import copy
 from dataclasses import dataclass
 from functools import cached_property
 from numbers import Number
-from typing import Sequence, Tuple, TypeVar, overload
+from threading import RLock
+from typing import Callable, Sequence, Tuple, TypeVar, overload
 
 import numpy as np
 import torch
@@ -12,7 +13,33 @@ import torch
 _TORCH_FUNCTIONS = {}
 
 
+class _NOT_FOUND:
+    ...
+
+
 T = TypeVar("T")
+
+
+class defer_eval(property):
+    """This is basically `@cached_property` which doesn't blow up when tracing or compiling."""
+
+    def __init__(self, func: Callable[..., T]):
+        super().__init__(func)
+        self.func = func
+        self._prop = cached_property(func)
+        self.__doc__ = func.__doc__
+
+    def __set_name__(self, owner, name):
+        self._prop.__set_name__(owner, name)
+        super().__set_name__(owner, name)
+
+    def __get__(self, instance, owner=None) -> T:
+        if torch.compiler.is_compiling():
+            # Behave like `@property`
+            return super().__get__(instance, owner)
+        else:
+            # Behave like `@cached_property`
+            return self._prop.__get__(instance, owner)
 
 
 class Tensorlike:
@@ -74,14 +101,11 @@ class Tensorlike:
         new._tensors = copy.copy(self._tensors)
         new._batched = copy.copy(self._batched)
 
-        for prop in dir(new.__class__):
-            if isinstance(getattr(new.__class__, prop), cached_property):
-                try:
-                    delattr(new, prop)
-                except:
-                    # If cached_property hasn't been accessed, delattr will
-                    # throw an error.
-                    pass
+        for name in dir(new.__class__):
+            val = getattr(new.__class__, name)
+            if isinstance(val, defer_eval) and name in new.__dict__:
+                # @cached_property / @defer_eval stores true value in __dict__
+                delattr(new, name)
 
         for name, value in fields.items():
             setattr(new, name, value)
@@ -479,6 +503,13 @@ class Tensorlike:
     def cuda(self):
         return self.to(device="cuda")
 
+    def pin_memory(self, device=None):
+        fields = {}
+        for name in self._tensors:
+            tensor: torch.Tensor = getattr(self, name)
+            fields[name] = tensor.pin_memory(device)
+        return self._new(self.shape, fields)
+
     def __repr__(self):
         fields = {"shape": self.shape}
         for name in self._tensors:
@@ -491,4 +522,4 @@ class Tensorlike:
         return repr(cls)
 
 
-__all__ = ["Tensorlike"]
+__all__ = ["Tensorlike", "defer_eval"]

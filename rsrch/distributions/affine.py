@@ -1,11 +1,11 @@
 import math
-from functools import cached_property
 from numbers import Number
 
 import torch
 from torch import Tensor
 
 from rsrch.types import Tensorlike
+from rsrch.types.tensorlike.core import defer_eval
 
 from .distribution import Distribution
 from .utils import sum_rightmost
@@ -35,7 +35,7 @@ class Affine(Distribution, Tensorlike):
         else:
             self.scale = scale
 
-    @cached_property
+    @defer_eval
     def log_scale(self):
         if isinstance(self.scale, Tensor):
             return sum_rightmost(self.scale.abs().log(), self.event_dims)

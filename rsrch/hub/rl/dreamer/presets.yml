@@ -1,11 +1,13 @@
+no_model:
+  wm.loader: ~
+
 sac:
   base:
-    wm.loader: ~
     rl:
       type: sac
       loader: real_rl
       sac:
-        critic:
+        qf:
           polyak:
             every: 1
             tau: 0.995
@@ -32,23 +34,19 @@ sac:
     train.num_envs: 1
     val.num_envs: 4
     rl.sac:
+      opt:
+        type: adam
+        eps: 1e-5
+        actor: { lr: 3e-4 }
+        qf: { lr: 1e-5 }
       actor:
-        opt:
-          type: adam
-          lr: 3e-4
-          eps: 1e-5
-        opt_ratio: 2
         encoder:
           type: box
           box:
             hidden: 256
             layers: 2
             act: relu
-      critic:
-        opt:
-          type: adam
-          lr: 1e-3
-          eps: 1e-5
+      qf:
         encoder:
           type: box
           box:
@@ -71,22 +69,18 @@ sac:
       type: atari
       atari.env_id: Pong
     rl.sac:
+      opt:
+        type: adam
+        eps: 1e-5
+        lr: 3e-4
       actor:
-        opt:
-          type: adam
-          lr: 3e-4
-        opt_ratio: 1
         encoder:
           type: sac_image
-      critic:
-        opt:
-          type: adam
-          lr: 3e-4
+      qf:
         encoder:
           type: sac_image
 ppo:
   base:
-    wm.loader: ~
     rl:
       type: ppo
       loader: on_policy
@@ -203,7 +197,7 @@ atari:
 
 dmc:
   proprio:
-    data.buffer.prioritize_ends: false
+    data.loaders.real_wm.prioritize_ends: false
     env:
       type: dmc
       dmc:
@@ -213,7 +207,7 @@ dmc:
         frame_skip: 2
 
   vision:
-    data.buffer.prioritize_ends: false
+    data.loaders.real_wm.prioritize_ends: false
     env:
       type: dmc
       dmc:
@@ -241,7 +235,7 @@ exp:
                 accumulate: true
             - do_env_step
 
-  mono_rv:
+  ratio_val_test:
     $extends: [dreamer.atari, atari.base]
     _freq: 64
     data.val_frac: 0.15
@@ -261,6 +255,9 @@ exp:
                 n: ${_freq}
                 accumulate: true
             - do_env_step
+      - save_ckpt:
+          full: false
+          tag: final
 
   at_400k:
     $extends: [dreamer.atari, atari.base]
@@ -304,3 +301,109 @@ exp:
       - save_ckpt:
           full: false
           tag: final
+
+  use_expert:
+    $extends: [dreamer.atari, atari.base]
+    _ckpt_path: ~
+    _data_path: ~
+    stages:
+      - load_ckpt:
+          path: ${_ckpt_path}
+      - do_val_epoch: ~
+      - env_rollout:
+          until: 400e3
+          mode: train
+      - save_buf:
+          path: ${_data_path}
+
+  offline:
+    $extends: [dreamer.atari, atari.base]
+    _data_path: ~
+    def_step: wm_opt_step
+    stages:
+      - load_buf:
+          path: ${_data_path}
+      - train_loop:
+          until: { n: 25e3, of: wm_opt_step }
+          tasks:
+            - do_val_epoch: ~
+              every: 1e3
+            - do_val_step: ~
+              every: { n: 16, of: wm_opt_step }
+            - do_opt_step
+
+  with_expert_data:
+    $extends: [dreamer.atari, atari.base]
+    _freq: 64
+    _data_path: ~
+    stages:
+      - load_buf:
+          path: ${_data_path}
+      - train_loop:
+          until: 100e3
+          tasks:
+            - do_val_epoch: ~
+              every: 10e3
+            - do_val_step: ~
+              every: { n: 16, of: wm_opt_step }
+            - do_opt_step: ~
+              every:
+                n: ${_freq}
+                accumulate: true
+            - do_env_step
+
+  sr_sac:
+    $extends: [no_model, sac.mujoco, dmc.proprio]
+    _updates_per_step: 1
+    _reset_interval: 2.56e6
+    profile.functions: [do_rl_opt_step]
+    env:
+      type: dmc
+      dmc:
+        domain: walker
+        task: walk
+        frame_skip: 1
+        obs_type: proprio_flat
+    rl.sac:
+      opt:
+        $replace: true
+        type: adam
+        lr: 3e-4
+        betas: [0.9, 0.999]
+        eps: 1.5e-4
+      actor:
+        encoder:
+          type: box
+          box:
+            hidden: 256
+            layers: 2
+            act: relu
+      qf:
+        encoder: ${..actor.encoder}
+        polyak:
+          every: 1
+          tau: 0.995
+      gamma: 0.99
+    data:
+      capacity: 1e6
+      loaders.real_rl:
+        batch_size: 256
+        slice_len: 2
+    stages:
+      - env_rollout:
+          until: 5e3
+          mode: rand
+      - train_loop:
+          until: 500e3
+          tasks:
+            - do_val_epoch: ~
+              every: 50e3
+            - do_rl_val_step: ~
+              every: { n: 16, of: rl_opt_step }
+            - reset_rl: ~
+              every:
+                n: ${_reset_interval}
+                of: rl_opt_step
+            - do_rl_opt_step:
+                n: ${_updates_per_step}
+            - do_env_step

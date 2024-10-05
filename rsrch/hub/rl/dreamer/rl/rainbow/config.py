@@ -27,3 +27,4 @@ class Config:
     opt: dict
     grad_clip: float | None
     dueling: bool
+    polyak: dict

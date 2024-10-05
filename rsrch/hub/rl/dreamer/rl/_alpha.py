@@ -52,6 +52,7 @@ class Alpha(nn.Module):
         else:
             self.value = cfg.init_value
 
+    @torch.compiler.disable
     def opt_step(self, entropy: Tensor):
         """Optimize alpha value based on current entropy estimates.
         :param entropy: Tensor of shape (N,) containing entropy estimates.

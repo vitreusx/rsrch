@@ -69,6 +69,7 @@ class RealLoaderWM(data.IterableDataset):
         ongoing: bool = False,
         subseq_len: int | tuple[int, int] | None = None,
         prioritize_ends: bool = False,
+        pin_memory: bool = False,
     ):
         super().__init__()
         self.buf = buf
@@ -78,11 +79,12 @@ class RealLoaderWM(data.IterableDataset):
         self.ongoing = ongoing
         self.subseq_len = subseq_len
         self.prioritize_ends = prioritize_ends
+        self.pin_memory = pin_memory
 
-        if isinstance(subseq_len, tuple):
-            self.minlen, self.maxlen = subseq_len
-        elif subseq_len is not None:
+        if isinstance(subseq_len, int):
             self.minlen, self.maxlen = subseq_len, subseq_len
+        elif subseq_len is not None:
+            self.minlen, self.maxlen = subseq_len
 
         if hasattr(self, "minlen"):
             self.minlen = max(self.minlen, self.slice_len)
@@ -193,8 +195,11 @@ class RealLoaderWM(data.IterableDataset):
         return Slices(**res)
 
     def _collate_fn(self, batch):
+        seq = torch.stack([item["seq"] for item in batch], dim=1)
+        if self.pin_memory:
+            seq = seq.pin_memory()
         return BatchWM(
-            seq=torch.stack([item["seq"] for item in batch], dim=1),
+            seq=seq,
             **{k: [item[k] for item in batch] for k in ("h_0", "end_pos")},
         )
 
@@ -224,12 +229,14 @@ class RealLoaderRL(data.IterableDataset):
         sampler: data.Sampler,
         batch_size: int,
         slice_len: int,
+        pin_memory: bool = False,
     ):
         super().__init__()
         self.buf = buf
         self.sampler = sampler
         self.batch_size = batch_size
         self.slice_len = slice_len
+        self.pin_memory = pin_memory
 
     def empty(self):
         found = set()
@@ -286,7 +293,10 @@ class RealLoaderRL(data.IterableDataset):
         term = torch.tensor(np.array(term))
         term = term.reshape(self.slice_len, self.batch_size)
 
-        return Slices(obs, act, reward, term)
+        slices = Slices(obs, act, reward, term)
+        if self.pin_memory:
+            slices = slices.pin_memory()
+        return slices
 
 
 class DreamLoaderRL(data.IterableDataset):
@@ -394,12 +404,14 @@ class OnPolicyLoaderRL(data.IterableDataset):
         temp_buf: rl.data.Buffer,
         steps_per_batch: int,
         min_seq_len: int,
+        pin_memory: bool = False,
     ):
         super().__init__()
         self.do_env_step = do_env_step
         self.temp_buf = temp_buf
         self.steps_per_batch = steps_per_batch
         self.min_seq_len = min_seq_len
+        self.pin_memory = pin_memory
 
     def empty(self):
         return False
@@ -419,17 +431,18 @@ class OnPolicyLoaderRL(data.IterableDataset):
             for seq in self.temp_buf.values():
                 if len(seq) < self.min_seq_len:
                     continue
-                batch.append(
-                    Slices(
-                        obs=torch.stack([step["obs"] for step in seq]),
-                        act=torch.stack([step["act"] for step in seq[1:]]),
-                        reward=torch.tensor(
-                            np.array([step["reward"] for step in seq[1:]])
-                        ),
-                        term=torch.tensor(
-                            np.array([step.get("term", False) for step in seq])
-                        ),
-                    )
+
+                slices = Slices(
+                    obs=torch.stack([step["obs"] for step in seq]),
+                    act=torch.stack([step["act"] for step in seq[1:]]),
+                    reward=torch.tensor(np.array([step["reward"] for step in seq[1:]])),
+                    term=torch.tensor(
+                        np.array([step.get("term", False) for step in seq])
+                    ),
                 )
+                if self.pin_memory:
+                    slices = slices.pin_memory()
+
+                batch.append(slices)
 
             yield batch

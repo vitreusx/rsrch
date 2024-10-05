@@ -1,10 +1,9 @@
-from functools import cached_property
-
 import torch
 import torch.nn.functional as F
 from torch import Tensor
 
 from rsrch.types.tensorlike import Tensorlike
+from rsrch.types.tensorlike.core import defer_eval
 
 from .distribution import Distribution
 from .kl import register_kl
@@ -43,7 +42,7 @@ class Categorical(Distribution, Tensorlike):
         self._param_type = param_type
         self._param = self.register("_param", param)
 
-    @cached_property
+    @defer_eval
     def logits(self) -> Tensor:
         if self._param_type == "logits":
             logits = self._param
@@ -51,7 +50,7 @@ class Categorical(Distribution, Tensorlike):
             logits = self.log_probs
         return logits
 
-    @cached_property
+    @defer_eval
     def log_probs(self) -> Tensor:
         if self._param_type == "log_probs":
             log_probs = self._param
@@ -63,7 +62,7 @@ class Categorical(Distribution, Tensorlike):
             log_probs = probs.log()
         return log_probs
 
-    @cached_property
+    @defer_eval
     def probs(self) -> Tensor:
         if self._param_type == "probs":
             probs = self._param

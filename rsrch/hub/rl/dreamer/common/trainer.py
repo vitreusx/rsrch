@@ -10,6 +10,8 @@ from .utils import null_ctx
 class ScaledOptimizer:
     def __init__(self, opt: torch.optim.Optimizer):
         self.opt = opt
+        device = self.parameters[0].device
+        self.scaler = getattr(torch, device.type).amp.GradScaler()
 
     @cached_property
     def parameters(self) -> list[nn.Parameter]:
@@ -17,14 +19,6 @@ class ScaledOptimizer:
         for group in self.opt.param_groups:
             params.extend(group["params"])
         return params
-
-    @cached_property
-    def device(self) -> torch.device:
-        return self.parameters[0].device
-
-    @cached_property
-    def scaler(self) -> torch.cuda.amp.GradScaler:
-        return getattr(torch, self.device.type).amp.GradScaler()
 
     def step(self, loss: Tensor, clip_grad: float | None = None):
         self.opt.zero_grad(set_to_none=True)

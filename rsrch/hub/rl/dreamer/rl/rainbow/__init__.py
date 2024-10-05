@@ -8,13 +8,14 @@ from torch import Tensor, nn
 
 import rsrch.distributions as D
 from rsrch import spaces
-from rsrch.hub.rl.dreamer.common.trainer import TrainerBase
 from rsrch.nn.utils import safe_mode
 from rsrch.rl import gym
 from rsrch.rl.utils import polyak
 
 from ...common import nets
-from ...common.utils import autocast
+from ...common.trainer import ScaledOptimizer, TrainerBase
+from ...common.types import Slices
+from ...common.utils import autocast, to_camel_case
 from . import config, noisy
 from .dist_q import ValueDist
 
@@ -125,7 +126,7 @@ class Agent(gym.vector.agents.Markov):
 
     @cached_property
     def device(self):
-        return next(self.q.parameters()).device
+        return next(self.qf.parameters()).device
 
     @contextmanager
     def compute_ctx(self):
@@ -160,3 +161,19 @@ class Trainer(TrainerBase):
         self.qf = qf
         self.qf_t = Q(cfg, qf.obs_space, qf.act_space)
         polyak.sync(self.qf, self.qf_t)
+        self.qf_polyak = polyak.Polyak(self.qf, self.qf_t, **cfg.polyak)
+
+        self.opt = self._make_opt(self.qf.parameters(), cfg.opt)
+
+    def _make_opt(self, parameters: list[nn.Parameter], cfg: dict):
+        cls = getattr(torch.optim, to_camel_case(cfg["type"]))
+        del cfg["type"]
+        opt = cls(parameters, **cfg)
+        opt = ScaledOptimizer(opt)
+        return opt
+
+    def compute(self, batch: Slices):
+        ...
+
+    def opt_step(self, loss: Tensor):
+        ...
