@@ -12,6 +12,7 @@ import rsrch.distributions as D
 from rsrch import spaces
 from rsrch.nn.utils import over_seq, pass_gradient, safe_mode
 from rsrch.types import Tensorlike
+from rsrch.types.tensorlike.core import defer_eval
 
 from ..common import dh, nets
 from ..common.utils import tf_init
@@ -36,21 +37,17 @@ class State(Tensorlike):
         super().__init__(deter.shape[:-1])
         self.deter = self.register("deter", deter)
         self.stoch = self.register("stoch", stoch)
-        self._as_tensor = None
-
-    def _new(self, shape: torch.Size, fields: dict):
-        new = super()._new(shape, fields)
-        new._as_tensor = None
-        return new
 
     def zero_(self):
         self.deter.zero_()
         self.stoch.zero_()
         return self
 
+    @defer_eval
+    def _as_tensor(self):
+        return torch.cat((self.deter, self.stoch), -1)
+
     def as_tensor(self):
-        if self._as_tensor is None:
-            self._as_tensor = torch.cat((self.deter, self.stoch), -1)
         return self._as_tensor
 
 

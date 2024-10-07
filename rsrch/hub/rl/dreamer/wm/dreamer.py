@@ -80,9 +80,8 @@ class WorldModel(nn.Module):
         self.rssm = rssm.RSSM(cfg.rssm, obs_size, self.act_size)
 
         self.state_size = self.rssm.stoch_size + self.rssm.deter_size
-        self.state_space = spaces.torch.Tensorlike(
-            as_tensor=spaces.torch.Tensor((self.state_size,)),
-        )
+        as_tensor_space = spaces.torch.Tensor((self.state_size,))
+        self.state_space = spaces.torch.Tensorlike(as_tensor_space)
 
         self.obs_dec = self._make_decoder(
             space=self.obs_space,
@@ -145,9 +144,6 @@ class WorldModel(nn.Module):
         return state.as_tensor()
 
 
-TrainerOutput = namedtuple("TrainerOutput", ("loss", "metrics", "states", "h_n"))
-
-
 class Trainer(TrainerBase):
     def __init__(
         self,
@@ -168,6 +164,13 @@ class Trainer(TrainerBase):
         del cfg["type"]
         opt = cls(self.wm.parameters(), **cfg)
         return ScaledOptimizer(opt)
+
+    @dataclass
+    class Output:
+        loss: Tensor
+        metrics: dict
+        states: rssm.State
+        h_n: rssm.State
 
     def compute(
         self,
@@ -223,7 +226,7 @@ class Trainer(TrainerBase):
                 if "obs_loss" in locals():
                     mets["obs_loss"] = obs_loss
 
-        return TrainerOutput(loss, mets, states.detach(), h_n.detach())
+        return Trainer.Output(loss, mets, states.detach(), h_n.detach())
 
     def _kl_loss(
         self,
@@ -275,6 +278,3 @@ class Trainer(TrainerBase):
             stats["rel_dp_norm"] = torch.mean(torch.stack(rel_dp_norms))
 
         return stats
-
-
-AsTensor = rssm.AsTensor

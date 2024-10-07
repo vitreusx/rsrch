@@ -12,6 +12,7 @@ from torch.nn.utils.parametrizations import _SpectralNorm, spectral_norm
 import rsrch.distributions as D
 from rsrch import spaces
 from rsrch.nn.utils import safe_mode
+from rsrch.types.tensorlike.core import Tensorlike
 
 from . import dh
 from .utils import to_camel_case
@@ -164,7 +165,7 @@ def register_encoder(name: str):
     return decorator
 
 
-def make_encoder(space: spaces.torch.Tensor, **kwargs):
+def make_encoder(space, **kwargs):
     cls_type = kwargs["type"]
     cls = ENCODERS[kwargs["type"]]
     del kwargs["type"]
@@ -226,8 +227,7 @@ class ImageEncoder(nn.Sequential):
         self.space = space
 
     def forward(self, input: Tensor):
-        input = input - 0.5
-        return super().forward(input)
+        return super().forward(input - 0.5)
 
 
 class Flatten(nn.Module):
@@ -237,13 +237,22 @@ class Flatten(nn.Module):
 
 @register_encoder("box")
 class BoxEncoder(nn.Sequential):
-    def __init__(self, space: spaces.torch.Box, **mlp):
+    def __init__(
+        self,
+        space: spaces.torch.Box | spaces.torch.Tensorlike,
+        **mlp,
+    ):
         in_features = math.prod(space.shape)
         super().__init__(
             Flatten(),
             MLP(in_features, None, **mlp),
         )
         self.space = space
+
+    def forward(self, input: Tensor | Tensorlike):
+        if not isinstance(input, Tensor):
+            input = input.as_tensor()
+        return super().forward(input)
 
 
 @register_encoder("discrete")
@@ -279,7 +288,7 @@ class DictEncoder(nn.ModuleDict):
 
 
 @register_encoder("auto")
-def AutoEncoder(space: spaces.torch.Tensor, **args):
+def AutoEncoder(space, **args):
     if isinstance(space, spaces.torch.Dict):
         return DictEncoder(
             space,
@@ -290,7 +299,7 @@ def AutoEncoder(space: spaces.torch.Tensor, **args):
         return ImageEncoder(space, **args.get("image", {}))
     elif isinstance(space, spaces.torch.Discrete):
         return DiscreteEncoder(space, **args.get("discrete", {}))
-    elif isinstance(space, spaces.torch.Box):
+    elif isinstance(space, (spaces.torch.Box, spaces.torch.Tensorlike)):
         return BoxEncoder(space, **args.get("box", {}))
     else:
         raise ValueError(type(space))
@@ -624,15 +633,21 @@ def PPOEncoder(space: spaces.torch.Tensor):
         return PPOBoxEncoder(space)
 
 
+def layer_init(layer, bias_const=0.0):
+    nn.init.kaiming_normal_(layer.weight)
+    torch.nn.init.constant_(layer.bias, bias_const)
+    return layer
+
+
 @register_encoder("sac_image")
 class SACImageEncoder(nn.Sequential):
     def __init__(self, space: spaces.torch.Image):
         super().__init__(
-            nn.Conv2d(space.num_channels, 32, 8, 4),
+            layer_init(nn.Conv2d(space.num_channels, 32, 8, 4)),
             nn.ReLU(),
-            nn.Conv2d(32, 64, 4, 2),
+            layer_init(nn.Conv2d(32, 64, 4, 2)),
             nn.ReLU(),
-            nn.Conv2d(64, 64, 3, 1),
+            layer_init(nn.Conv2d(64, 64, 3, 1)),
             nn.ReLU(),
             nn.Flatten(),
         )
@@ -643,7 +658,7 @@ class SACImageEncoder(nn.Sequential):
 
         self.extend(
             [
-                nn.Linear(z_features, 512),
+                layer_init(nn.Linear(z_features, 512)),
                 nn.ReLU(),
             ]
         )

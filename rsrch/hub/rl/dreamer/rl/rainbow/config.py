@@ -1,4 +1,7 @@
 from dataclasses import dataclass
+from typing import Literal
+
+from ...common.config import Sched
 
 
 @dataclass
@@ -17,6 +20,12 @@ class Noisy:
 
 
 @dataclass
+class Prio:
+    is_coef_exp: Sched
+    prio_exp: Sched
+
+
+@dataclass
 class Config:
     encoder: dict
     hidden_dim: int
@@ -24,7 +33,10 @@ class Config:
     double_dqn: bool
     dist: Dist
     noisy: Noisy
+    prio: Prio
     opt: dict
-    grad_clip: float | None
+    clip_grad: float | None
     dueling: bool
     polyak: dict
+    rew_fn: Literal["id", "clip", "tanh"]
+    rew_clip: tuple[float, float] | None

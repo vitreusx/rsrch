@@ -21,7 +21,7 @@ T = TypeVar("T")
 
 
 class defer_eval(property):
-    """This is basically `@cached_property` which doesn't blow up when tracing or compiling."""
+    """This descriptor class acts like @cached_property in tensor-like classes. Cached values are not carried over when creating new objects (e.g. via `stack` or `cat`). Moreover, this descriptor is safe to use when tracing or compiling."""
 
     def __init__(self, func: Callable[..., T]):
         super().__init__(func)

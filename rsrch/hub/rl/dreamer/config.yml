@@ -38,7 +38,7 @@ profile:
 env:
   type: atari
   atari:
-    env_id: Alien
+    env_id: Pong
     screen_size: 64
     frame_skip: 4
     obs_type: grayscale

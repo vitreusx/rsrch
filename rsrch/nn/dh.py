@@ -148,7 +148,7 @@ class TruncNormal(nn.Module):
         layer_ctor: Callable[[int], nn.Module],
         space: spaces.torch.Box,
         std_type: Literal["const", "exp", "softplus", "sigmoid2"] = "sigmoid2",
-        min_std: float = 0.1,
+        min_std: float = math.exp(-5),
     ):
         super().__init__()
         self.space = space

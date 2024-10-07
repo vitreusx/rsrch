@@ -141,6 +141,7 @@ class Box(Tensor):
 class OneHot(Box):
     def __init__(self, n: int):
         super().__init__(shape=(n,), low=0.0, high=1.0)
+        self.n = n
 
 
 class Discrete(Tensor):
@@ -302,3 +303,14 @@ class Tensorlike:
 
     def __init__(self, as_tensor: Tensor):
         self.as_tensor = as_tensor
+
+    def sample(
+        self,
+        shape: tuple[int, ...] = (),
+        gen: torch.Generator | None = None,
+    ):
+        return self.as_tensor.sample(shape, gen)
+
+    @property
+    def shape(self):
+        return self.as_tensor.shape

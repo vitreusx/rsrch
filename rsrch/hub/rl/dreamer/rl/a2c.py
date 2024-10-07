@@ -52,16 +52,13 @@ class Actor(nn.Module):
     def __init__(
         self,
         cfg: Config.Actor,
-        obs_space: spaces.torch.Tensor | spaces.torch.Tensorlike,
+        obs_space: spaces.torch.Tensor,
         act_space: spaces.torch.Tensor,
     ):
         super().__init__()
         self.cfg = cfg
         self.obs_space = obs_space
         self.act_space = act_space
-
-        if isinstance(obs_space, spaces.torch.Tensorlike):
-            obs_space = obs_space.as_tensor
 
         self.enc = nets.make_encoder(obs_space, **cfg.encoder)
         with safe_mode(self):
@@ -74,8 +71,6 @@ class Actor(nn.Module):
         self.apply(tf_init)
 
     def forward(self, obs):
-        if not isinstance(obs, Tensor):
-            obs = obs.as_tensor()
         return self.head(self.enc(obs))
 
 
@@ -83,14 +78,11 @@ class Critic(nn.Module):
     def __init__(
         self,
         cfg: Config.Critic,
-        obs_space: spaces.torch.Tensor | spaces.torch.Tensorlike,
+        obs_space: spaces.torch.Tensor,
     ):
         super().__init__()
         self.cfg = cfg
         self.obs_space = obs_space
-
-        if isinstance(obs_space, spaces.torch.Tensorlike):
-            obs_space = obs_space.as_tensor
 
         self.enc = nets.make_encoder(obs_space, **cfg.encoder)
         with safe_mode(self):
@@ -104,8 +96,6 @@ class Critic(nn.Module):
         self.apply(tf_init)
 
     def forward(self, obs):
-        if not isinstance(obs, Tensor):
-            obs = obs.as_tensor()
         return self.head(self.enc(obs))
 
 
@@ -212,8 +202,8 @@ class Trainer(TrainerBase):
             del cfg["type"]
             return cls(**cfg)
 
-    def compute(self, batch: Slices):
-        losses, mets = {}, {}
+    def opt_step(self, batch: Slices):
+        losses = {}
 
         # For reinforce, we detach `target` variable, so requiring gradients on
         # any computation leading up to it will cause autograd to leak memory
@@ -264,6 +254,11 @@ class Trainer(TrainerBase):
             coef = self.cfg.coef
             loss = sum(coef.get(k, 1.0) * v for k, v in losses.items())
 
+        self.opt.step(loss, self.cfg.clip_grad)
+        self.opt_iter += 1
+        if self.update_target is not None:
+            self.update_target.step()
+
         with torch.no_grad():
             with self.autocast():
                 mets = {}
@@ -282,13 +277,7 @@ class Trainer(TrainerBase):
                 for k, v in losses.items():
                     mets[f"{k}_loss"] = v.detach()
 
-        return TrainerOutput(loss, mets)
-
-    def opt_step(self, loss: Tensor):
-        self.opt.step(loss, self.cfg.clip_grad)
-        self.opt_iter += 1
-        if self.update_target is not None:
-            self.update_target.step()
+        return mets
 
     @torch.no_grad()
     def compute_stats(self):

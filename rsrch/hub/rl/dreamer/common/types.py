@@ -13,7 +13,3 @@ class Slices(Tensorlike):
         self.act = self.register("act", act)
         self.reward = self.register("reward", reward)
         self.term = self.register("term", term)
-
-    @staticmethod
-    def collate_fn(batch: list[Slices]):
-        return torch.stack(batch, dim=1)

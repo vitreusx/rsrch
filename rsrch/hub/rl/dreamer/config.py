@@ -4,6 +4,7 @@ from typing import Literal
 
 from rsrch import rl
 
+from .common.config import *
 from .rl import a2c, ppo, sac
 from .wm import dreamer
 
@@ -76,7 +77,7 @@ class Config:
 
     @dataclass
     class WM:
-        type: Literal["dreamer"]
+        type: Literal["dreamer"] | None
         loader: Literal["real_wm"] | None
         dreamer: dreamer.Config | None
 

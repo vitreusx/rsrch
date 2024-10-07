@@ -207,8 +207,9 @@ class PSampler:
         self[key] = prio
 
     def __getitem__(self, key):
+        """Get sample probability."""
         key_idx = self._key_to_idx[key]
-        return self.prio_tree[key_idx]
+        return self.prio_tree[key_idx] / self.prio_tree.total
 
     def __delitem__(self, key):
         index = self._key_to_idx[key]

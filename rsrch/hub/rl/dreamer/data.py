@@ -11,12 +11,30 @@ from torch.utils import data
 from torch.utils.data import DataLoader
 
 from rsrch import rl, spaces
-from rsrch.nn.utils import over_seq
+from rsrch.nn.utils import frozen, over_seq
 
 from .common.types import Slices
 from .common.utils import autocast
 from .rl import Actor
 from .wm import WorldModel
+
+
+def make_async(iterator: Iterator):
+    """Make an iterator "asynchronous."
+
+    To be precise, the fetching from the iterator is done by a separate thread."""
+
+    batches = Queue(maxsize=1)
+
+    def loader_fn():
+        while True:
+            batches.put(next(iterator))
+
+    thr = threading.Thread(target=loader_fn, daemon=True)
+    thr.start()
+
+    while True:
+        yield batches.get()
 
 
 class StateMap:
@@ -48,12 +66,14 @@ class StateMap:
 @dataclass
 class BatchWM:
     seq: Slices
+    index: list[tuple[int, int]]
     h_0: list[Tensor | None]
-    end_pos: list[tuple[int, int]]
+    end_pos: list[tuple[int, int]] | None
 
     def to(self, device: torch.device):
         return BatchWM(
             seq=self.seq.to(device),
+            index=self.index,
             h_0=[x.to(device) if x is not None else x for x in self.h_0],
             end_pos=self.end_pos,
         )
@@ -148,7 +168,6 @@ class RealLoaderWM(data.IterableDataset):
                     "start": index,
                     "stop": index + length,
                     "ep_id": ep_id,
-                    "seq_id": next_idx,
                 }
                 next_idx += 1
 
@@ -160,10 +179,10 @@ class RealLoaderWM(data.IterableDataset):
                 start = end - self.slice_len
 
                 item = {}
+                item["index"] = (ep["ep_id"], start)
+                item["end_pos"] = (ep["ep_id"], end)
                 item["seq"] = self._subseq(ep["seq"], start, end)
-                item["h_0"] = self.h_0s.get((ep["seq_id"], start))
-                item["end_pos"] = (ep["seq_id"], end)
-
+                item["h_0"] = self.h_0s.get(item["index"])
                 batch.append(item)
 
                 ep["start"] = end
@@ -171,7 +190,7 @@ class RealLoaderWM(data.IterableDataset):
             if len(batch) == 0:
                 break
 
-            yield self._collate_fn(batch)
+            yield self.collate_fn(batch)
 
     def _subseq(self, seq: list[dict], start, end):
         seq = [*seq[start:end]]
@@ -194,42 +213,25 @@ class RealLoaderWM(data.IterableDataset):
 
         return Slices(**res)
 
-    def _collate_fn(self, batch):
+    def collate_fn(self, batch):
         seq = torch.stack([item["seq"] for item in batch], dim=1)
         if self.pin_memory:
             seq = seq.pin_memory()
+
         return BatchWM(
             seq=seq,
-            **{k: [item[k] for item in batch] for k in ("h_0", "end_pos")},
+            **{k: [item[k] for item in batch] for k in ("index", "h_0", "end_pos")},
         )
 
 
-def make_async(iterator: Iterator):
-    """Make an iterator "asynchronous."
-
-    To be precise, the fetching from the iterator is done by a separate thread."""
-
-    batches = Queue(maxsize=1)
-
-    def loader_fn():
-        while True:
-            batches.put(next(iterator))
-
-    thr = threading.Thread(target=loader_fn, daemon=True)
-    thr.start()
-
-    while True:
-        yield batches.get()
-
-
-class RealLoaderRL(data.IterableDataset):
+class RealLoaderWM_v2(data.IterableDataset):
     def __init__(
         self,
         buf: rl.data.Buffer,
         sampler: data.Sampler,
         batch_size: int,
         slice_len: int,
-        pin_memory: bool = False,
+        pin_memory: bool = True,
     ):
         super().__init__()
         self.buf = buf
@@ -239,36 +241,104 @@ class RealLoaderRL(data.IterableDataset):
         self.pin_memory = pin_memory
 
     def empty(self):
-        found = set()
-        for seq_id in self.sampler:
-            if seq_id in found:
-                continue
-
-            seq = self.buf[seq_id]
-            if len(seq) >= self.slice_len:
-                return False
-
-            found.add(seq_id)
-            if len(found) == len(self.sampler):
-                break
-
-        return True
+        return next(self.sampler, None) is None
 
     def __iter__(self):
-        ep_id_iter = iter(self.sampler)
+        pos_iter = iter(self.sampler)
+        while True:
+            batch, index = [], []
+            for _ in range(self.batch_size):
+                ep_id, offset = next(pos_iter)
+                index.append((ep_id, offset))
+                seq = self.buf[ep_id]
+                batch.append(seq[offset : offset + self.slice_len])
+
+            batch = self.collate_fn(batch)
+            h_0 = [None for _ in range(self.batch_size)]
+            yield BatchWM(batch, index, h_0, end_pos=None)
+
+    def collate_fn(self, batch: list[Sequence[dict]]):
+        batch = [[*seq] for seq in batch]
+        obs, act, reward, term = [], [], [], []
+        for t in range(self.slice_len):
+            for idx in range(self.batch_size):
+                obs.append(batch[idx][t]["obs"])
+                term.append(batch[idx][t].get("term", False))
+                # act[0] and reward[0] are undefined, since we do not keep h_0
+                act.append(batch[idx][max(t, 1)]["act"])
+                reward.append(batch[idx][t].get("reward", 0.0))
+
+        obs = torch.stack(obs)
+        obs = obs.reshape(self.slice_len, self.batch_size, *obs.shape[1:])
+        act = torch.stack(act)
+        act = act.reshape(self.slice_len, self.batch_size, *act.shape[1:])
+        reward = torch.tensor(np.array(reward, dtype=np.float32))
+        reward = reward.reshape(self.slice_len, self.batch_size)
+        term = torch.tensor(np.array(term))
+        term = term.reshape(self.slice_len, self.batch_size)
+
+        slices = Slices(obs, act, reward, term)
+        if self.pin_memory:
+            slices = slices.pin_memory()
+        return slices
+
+
+class RealLoaderRL(data.IterableDataset):
+    def __init__(
+        self,
+        buf: rl.data.Buffer,
+        sampler: data.Sampler,
+        batch_size: int,
+        slice_len: int,
+        sampler_type: Literal["ep_ids", "slice_pos"] = "ep_ids",
+        pin_memory: bool = False,
+    ):
+        super().__init__()
+        self.buf = buf
+        self.sampler = sampler
+        self.batch_size = batch_size
+        self.slice_len = slice_len
+        self.sampler_type = sampler_type
+        self.pin_memory = pin_memory
+
+    def empty(self):
+        if self.sampler_type == "ep_ids":
+            found = set()
+            for seq_id in self.sampler:
+                if seq_id in found:
+                    continue
+
+                seq = self.buf[seq_id]
+                if len(seq) >= self.slice_len:
+                    return False
+
+                found.add(seq_id)
+                if len(found) == len(self.sampler):
+                    break
+
+            return True
+        else:
+            return next(iter(self.sampler), None) is None
+
+    def __iter__(self):
+        sampler_iter = iter(self.sampler)
 
         while True:
             batch = []
             while len(batch) < self.batch_size:
-                ep_id = next(ep_id_iter, None)
-                if ep_id is None:
+                next_ = next(sampler_iter, None)
+                if next_ is None:
                     break
 
-                seq = self.buf[ep_id]
-                if len(seq) < self.slice_len:
-                    continue
+                if self.sampler_type == "ep_ids":
+                    ep_id = next_
+                    seq = self.buf[ep_id]
+                    if len(seq) < self.slice_len:
+                        continue
+                    index = np.random.randint(len(seq) - self.slice_len + 1)
+                else:
+                    ep_id, index = next_
 
-                index = np.random.randint(len(seq) - self.slice_len + 1)
                 batch.append(seq[index : index + self.slice_len])
 
             yield self.collate_fn(batch)
@@ -326,28 +396,25 @@ class DreamLoaderRL(data.IterableDataset):
         return self.real_slices.empty()
 
     def dream_from(self, h_0: Tensor, term: Tensor):
-        self.wm.requires_grad_(False)
+        with frozen(self.wm):
+            with autocast(self.device, self.compute_dtype):
+                states, actions = [h_0], []
+                for _ in range(self.slice_len - 1):
+                    policy = self.actor(states[-1].detach())
+                    enc_act = policy.rsample()
+                    actions.append(enc_act)
+                    next_state = self.wm.img_step(states[-1], enc_act).rsample()
+                    states.append(next_state)
 
-        with autocast(self.device, self.compute_dtype):
-            states, actions = [h_0], []
-            for _ in range(self.slice_len - 1):
-                policy = self.actor(states[-1].detach())
-                enc_act = policy.rsample()
-                actions.append(enc_act)
-                next_state = self.wm.img_step(states[-1], enc_act).rsample()
-                states.append(next_state)
+                states = torch.stack(states)
+                actions = torch.stack(actions)
 
-            states = torch.stack(states)
-            actions = torch.stack(actions)
+                reward_dist = over_seq(self.wm.reward_dec)(states)
+                reward = reward_dist.mode[1:]
 
-            reward_dist = over_seq(self.wm.reward_dec)(states)
-            reward = reward_dist.mode[1:]
-
-            term_dist = over_seq(self.wm.term_dec)(states)
-            term_ = term_dist.mean.contiguous()
-            term_[0] = term.float()
-
-        self.wm.requires_grad_(True)
+                term_dist = over_seq(self.wm.term_dec)(states)
+                term_ = term_dist.mean.contiguous()
+                term_[0] = term.float()
 
         return Slices(states, actions, reward, term_)
 

@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Literal
+from typing import Callable, Literal
 
 import torch
 from torch import Tensor, nn
@@ -153,6 +153,8 @@ class Trainer(TrainerBase):
         self,
         cfg: config.Config,
         qf: Q,
+        is_coef_exp: Callable[[], float] | None = None,
+        prio_exp: Callable[[], float] | None = None,
         compute_dtype: torch.dtype | None = None,
     ):
         super().__init__(compute_dtype)
@@ -164,6 +166,8 @@ class Trainer(TrainerBase):
         self.qf_polyak = polyak.Polyak(self.qf, self.qf_t, **cfg.polyak)
 
         self.opt = self._make_opt(self.qf.parameters(), cfg.opt)
+        self.is_coef_exp = is_coef_exp
+        self.prio_exp = prio_exp
 
     def _make_opt(self, parameters: list[nn.Parameter], cfg: dict):
         cls = getattr(torch.optim, to_camel_case(cfg["type"]))
@@ -172,8 +176,80 @@ class Trainer(TrainerBase):
         opt = ScaledOptimizer(opt)
         return opt
 
-    def compute(self, batch: Slices):
-        ...
+    @dataclass
+    class Output:
+        metrics: dict
+        prio_values: Tensor
 
-    def opt_step(self, loss: Tensor):
-        ...
+    def opt_step(self, batch: Slices, is_coefs: Tensor | None = None):
+        rew = self._reward_fn(batch.reward)
+        slice_len = batch.obs.shape[0]
+
+        with torch.no_grad():
+            with self.autocast():
+                next_q_eval = self.qf_t(batch.obs[-1])
+
+                if isinstance(next_q_eval, ValueDist):
+                    if self.cfg.double_dqn:
+                        next_q_act: ValueDist = self.qf(batch.obs[-1])
+                    else:
+                        next_q_act = next_q_eval
+                    act = next_q_act.mean.argmax(-1)
+                    target = next_q_eval.gather(-1, act[..., None])
+                    target = target.squeeze(-1)
+                elif isinstance(next_q_eval, Tensor):
+                    if self.cfg.double_dqn:
+                        next_q_act: Tensor = self.qf(batch.obs[-1])
+                        act = next_q_act.argmax(-1)
+                        target = next_q_eval.gather(-1, act[..., None])
+                        target = target.squeeze(-1)
+                    else:
+                        target = next_q_eval.max(-1).values
+
+                cont = 1.0 - batch.term.float()
+                target = cont[-1] * target
+                for t in reversed(range(slice_len - 2)):
+                    target = rew[t] + self.cfg.gamma * target
+
+        with self.autocast():
+            qv: Tensor | ValueDist = self.qf(batch.obs[0])
+            pred = qv.gather(-1, batch.act[0][..., None]).squeeze(-1)
+
+            if isinstance(target, ValueDist):
+                q_losses = ValueDist.w1_div(target, pred)
+            else:
+                q_losses = (pred - target).square()
+
+            if is_coefs is not None:
+                weights = is_coefs ** self.is_coef_exp()
+                q_losses = weights * q_losses
+
+            loss = q_losses.mean()
+
+        self.opt.step(loss, self.cfg.clip_grad)
+
+        with torch.no_grad():
+            pred = pred.mean if isinstance(pred, ValueDist) else pred
+
+            if isinstance(target, ValueDist):
+                prio = q_losses.detach()
+            else:
+                prio = (pred - target).square()
+            prio = prio ** self.prio_exp()
+
+            mets = {
+                "loss": loss,
+                "mean_q_pred": pred.mean(),
+                "target": target.mean(),
+            }
+
+        return Trainer.Output(mets, prio)
+
+    def _reward_fn(self, reward: Tensor):
+        rew_fn = self.cfg.rew_fn
+        if rew_fn == "clip":
+            return reward.clamp(*self.cfg.rew_clip)
+        elif rew_fn == "tanh":
+            return reward.tanh()
+        else:
+            return reward

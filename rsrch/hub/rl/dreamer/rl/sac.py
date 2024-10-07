@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from functools import partial
-from typing import Callable
+from typing import Callable, Literal
 
 import numpy as np
 import torch
@@ -12,6 +12,7 @@ from rsrch import spaces
 from rsrch.nn import dh
 from rsrch.nn.utils import frozen, safe_mode
 from rsrch.rl.utils import polyak
+from rsrch.types import Tensorlike
 
 from ..common import nets
 from ..common.trainer import ScaledOptimizer, TrainerBase
@@ -25,26 +26,29 @@ class Config:
     @dataclass
     class Actor:
         encoder: dict
+        opt: dict
 
     @dataclass
-    class Q:
+    class Qf:
         encoder: dict
         polyak: dict
+        opt: dict
 
-    opt: dict
     actor: Actor
-    qf: Q
-    num_q: int
+    qf: Qf
+    num_qf: int
     gamma: float
     alpha: alpha.Config
     clip_grad: float | None
+    rew_fn: Literal["id", "clip", "tanh"] = "id"
+    rew_clip: tuple[float, float] | None = None
 
 
-class ContQ(nn.Module):
+class ContQf(nn.Module):
     def __init__(
         self,
-        cfg: Config.Q,
-        obs_space: spaces.torch.Tensor,
+        cfg: Config.Qf,
+        obs_space: spaces.torch.Box | spaces.torch.Tensorlike,
         act_space: spaces.torch.Box,
     ):
         super().__init__()
@@ -60,20 +64,23 @@ class ContQ(nn.Module):
 
         self.proj = nn.Linear(z_features, 1)
 
-    def forward(self, obs: Tensor, act: Tensor) -> Tensor:
+    def forward(self, obs: Tensor | Tensorlike, act: Tensor) -> Tensor:
+        if not isinstance(obs, Tensor):
+            obs = obs.as_tensor()
         input = torch.cat((obs.flatten(1), act.flatten(1)), 1)
         q_value = self.proj(self.encoder(input))
         return q_value.ravel()
 
 
-class DiscQ(nn.Module):
+class DiscQf(nn.Module):
     def __init__(
         self,
-        cfg: Config.Q,
-        obs_space: spaces.torch.Tensor,
-        act_space: spaces.torch.Discrete,
+        cfg: Config.Qf,
+        obs_space: spaces.torch.Tensor | spaces.torch.Tensorlike,
+        act_space: spaces.torch.Discrete | spaces.torch.OneHot,
     ):
         super().__init__()
+        self.act_space = act_space
 
         self.encoder = nets.make_encoder(obs_space, **cfg.encoder)
         with safe_mode(self.encoder):
@@ -85,19 +92,24 @@ class DiscQ(nn.Module):
     def forward(self, obs: Tensor, act: Tensor | None = None) -> Tensor:
         q_values = self.proj(self.encoder(obs))
         if act is not None:
-            q_values = q_values.gather(1, act.unsqueeze(-1)).squeeze(-1)
+            if act.dtype.is_floating_point:
+                # One-hot encoded actions
+                q_values = (q_values * act).sum(-1)
+            else:
+                # Discrete actions
+                q_values = q_values.gather(1, act.unsqueeze(-1)).squeeze(-1)
         return q_values
 
 
-def Q(
-    cfg: Config.Q,
+def Qf(
+    cfg: Config.Qf,
     obs_space: spaces.torch.Tensor,
     act_space: spaces.torch.Tensor,
 ):
-    if isinstance(act_space, spaces.torch.Discrete):
-        return DiscQ(cfg, obs_space, act_space)
+    if isinstance(act_space, (spaces.torch.Discrete, spaces.torch.OneHot)):
+        return DiscQf(cfg, obs_space, act_space)
     else:
-        return ContQ(cfg, obs_space, act_space)
+        return ContQf(cfg, obs_space, act_space)
 
 
 class Actor(nn.Sequential):
@@ -137,49 +149,39 @@ class Trainer(TrainerBase):
         self._discrete = type(act_space) == spaces.torch.Discrete
 
         self.qf, self.qf_t = nn.ModuleList(), nn.ModuleList()
-        for _ in range(cfg.num_q):
-            self.qf.append(self._make_q())
-            self.qf_t.append(self._make_q())
+        for _ in range(cfg.num_qf):
+            self.qf.append(self._make_qf())
+            self.qf_t.append(self._make_qf())
         polyak.sync(self.qf, self.qf_t)
 
-        self._opt_groups = {
-            "actor": [*self.actor.parameters()],
-            "qf": [*self.qf.parameters()],
-        }
-        self.opt = self._make_opt(self._opt_groups, cfg.opt)
+        self.actor_opt = self._make_opt(self.actor.parameters(), cfg.actor.opt)
+        self.qf_opt = self._make_opt(self.qf.parameters(), cfg.qf.opt)
         self.opt_iter = 0
 
         self.qf_polyak = polyak.Polyak(self.qf, self.qf_t, **cfg.qf.polyak)
-        self.alpha = alpha.Alpha(cfg.alpha, act_space)
+        self.alpha = alpha.Alpha(cfg.alpha, act_space, self.device)
 
-        self._save_init_parameters()
+        self._save_init_values()
 
-    def _save_init_parameters(self):
-        self._init_params = {}
-        for name, params in self._opt_groups.items():
-            self._init_params[name] = [p.data.clone() for p in params]
+    def _make_qf(self):
+        qf = Qf(self.cfg.qf, self.actor.obs_space, self.actor.act_space)
+        qf = qf.to(self.device)
+        return qf
 
-    def _make_q(self):
-        q = Q(self.cfg.qf, self.actor.obs_space, self.actor.act_space)
-        q = q.to(self.device)
-        return q
-
-    def _make_opt(self, groups: dict[str, nn.Parameter], cfg: dict):
+    def _make_opt(self, parameters, cfg: dict):
         cfg = {**cfg}
         cls = getattr(torch.optim, to_camel_case(cfg["type"]))
         del cfg["type"]
-
-        opt_groups = []
-        for name, params in [*groups.items()]:
-            if name in cfg:
-                opt_groups.append({"params": params, **cfg[name]})
-                del cfg[name]
-            else:
-                opt_groups.append({"params": params})
-
-        opt = cls(opt_groups, **cfg)
+        opt = cls(parameters, **cfg)
         opt = ScaledOptimizer(opt)
         return opt
+
+    def _save_init_values(self):
+        self._init_values = {}
+        for name in ("actor", "qf"):
+            opt: ScaledOptimizer = getattr(self, f"{name}_opt")
+            values = [p.data.clone() for p in opt.parameters]
+            self._init_values[name] = values
 
     def opt_step(self, batch: Slices):
         with torch.no_grad():
@@ -190,14 +192,14 @@ class Trainer(TrainerBase):
 
                 if self._discrete:
                     min_q = self.qf_t[0](next_obs)
-                    for idx in range(1, self.cfg.num_q):
+                    for idx in range(1, self.cfg.num_qf):
                         min_q = torch.min(min_q, self.qf_t[idx](next_obs))
                     next_policy: D.Categorical
                     targets = min_q - self.alpha.value * next_policy.log_probs
                     target = (next_policy.probs * targets).sum(-1)
                 else:
                     min_q = self.qf_t[0](next_obs, next_act)
-                    for idx in range(1, self.cfg.num_q):
+                    for idx in range(1, self.cfg.num_qf):
                         min_q = torch.min(min_q, self.qf_t[idx](next_obs, next_act))
                     target = min_q - self.alpha.value * next_policy.log_prob(next_act)
 
@@ -215,49 +217,49 @@ class Trainer(TrainerBase):
                 q_losses.append(F.mse_loss(qf_pred, target))
             q_loss = torch.stack(q_losses).sum()
 
+        self.qf_opt.step(q_loss, self.cfg.clip_grad)
+        self.qf_polyak.step()
+
+        with self.autocast():
             policy = self.actor(obs)
-            act = policy.rsample()
 
         if self._discrete:
             with torch.no_grad():
                 with self.autocast():
                     min_q = self.qf[0](obs)
-                    for idx in range(1, self.cfg.num_q):
+                    for idx in range(1, self.cfg.num_qf):
                         min_q = torch.min(min_q, self.qf[idx](obs))
 
             with self.autocast():
                 policy: D.Categorical
-                actor_losses = -(min_q - self.alpha.value * policy.log_probs)
+                actor_losses = self.alpha.value * policy.log_probs - min_q
                 actor_loss = (policy.probs * actor_losses).mean()
-                actor_loss = actor_loss * len(obs)
         else:
             with self.autocast():
-                with frozen(self.qf):
-                    min_q = self.qf[0](obs, act)
-                    for idx in range(1, self.cfg.num_q):
-                        min_q = torch.min(min_q, self.qf[idx](obs, act))
-                actor_loss = -(min_q - self.alpha.value * policy.log_prob(act)).mean()
+                act = policy.rsample()
+                min_q = self.qf[0](obs, act)
+                for idx in range(1, self.cfg.num_qf):
+                    min_q = torch.min(min_q, self.qf[idx](obs, act))
+                actor_loss = (self.alpha.value * policy.log_prob(act) - min_q).mean()
 
-        loss = q_loss + actor_loss
+        self.actor_opt.step(actor_loss, self.cfg.clip_grad)
+
+        self.opt_iter += 1
+
+        with torch.no_grad():
+            entropy = self.actor(batch.obs[0]).entropy()
+
+        if self.alpha.adaptive:
+            self.alpha.opt_step(entropy)
 
         with torch.no_grad():
             mets = {
                 "q_loss": q_loss,
                 "mean_q": qf_pred.mean(),
                 "actor_loss": actor_loss,
+                "entropy": entropy.mean(),
+                "alpha": self.alpha.value,
             }
-
-        self.opt.step(loss, self.cfg.clip_grad)
-        self.qf_polyak.step()
-        self.opt_iter += 1
-
-        if self.alpha.adaptive:
-            entropy = self.actor(batch.obs[0]).entropy()
-            alpha_mets = self.alpha.opt_step(entropy)
-
-            with torch.no_grad():
-                if self.cfg.alpha.adaptive:
-                    mets.update({f"alpha/{k}": v for k, v in alpha_mets.items()})
 
         return mets
 
@@ -266,18 +268,19 @@ class Trainer(TrainerBase):
         new_actor = make_actor()
         polyak.sync(new_actor, self.actor)
 
-        for idx in range(self.cfg.num_q):
+        for idx in range(self.cfg.num_qf):
             new_qf = self._make_q()
             polyak.sync(new_qf, self.qf[idx])
             polyak.sync(new_qf, self.qf_t[idx])
 
-        self._save_init_parameters()
+        self._save_init_values()
 
     @torch.no_grad()
     def compute_stats(self):
-        for name in self._init_params:
-            init_values = self._init_params[name]
-            cur_values = self._opt_groups[name]
+        for name in self._init_values:
+            init_values = self._init_values[name]
+            opt: ScaledOptimizer = getattr(self, f"{name}_opt")
+            cur_values = opt.parameters
 
             p_norms, rel_p_norms, dp_norms, rel_dp_norms = [], [], [], []
             for init_p, cur_p in zip(init_values, cur_values):

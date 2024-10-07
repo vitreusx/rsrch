@@ -1,8 +1,9 @@
 from collections import defaultdict
-from typing import Sequence
+from typing import Callable, Sequence
 
 import gymnasium
 import numpy as np
+import torch
 
 from rsrch import spaces
 
