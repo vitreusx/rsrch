@@ -1,19 +1,16 @@
 env:
-  type: gym
-  gym:
-    env_id: HalfCheetah-v4
-  # type: atari
-  # atari:
-  #   env_id: Alien
-  #   screen_size: 84
-  #   frame_skip: 4
-  #   obs_type: grayscale
-  #   noop_max: 30
-  #   fire_reset: true
-  #   term_on_life_loss: false
-  #   sticky: true
-  #   time_limit: 108e3
-  #   stack_num: 4
+  type: atari
+  atari:
+    env_id: Breakout
+    screen_size: 84
+    frame_skip: 4
+    obs_type: grayscale
+    noop_max: 30
+    fire_reset: true
+    term_on_life_loss: true
+    repeat_action_probability: 0.0
+    time_limit: 108e3
+    stack_num: 4
 total_steps: 10e6
 lr: 2.5e-4
 opt_eps: 1e-5
@@ -22,9 +19,8 @@ steps_per_epoch: 128
 gamma: 0.99
 gae_lambda: 0.95
 update_epochs: 4
-update_batch: 128
+update_batch: 256
 adv_norm: true
-env_workers: 4
 val_episodes: 16
 device: cuda
 clip_coeff: 0.1
@@ -34,8 +30,7 @@ vf_coeff: 0.5
 clip_grad: 0.5
 log_every: 16
 val_every: 10e3
-decorrelate: false
-share_encoder: false
+share_encoder: true
 custom_init: true
 seed: 42
 save_ckpt_every: 1e6

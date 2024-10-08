@@ -16,6 +16,14 @@ def get_out_features(space: spaces.torch.Tensor):
         return math.prod(space.shape)
 
 
+def layer_init_(layer, std=math.sqrt(2), bias_const=0.0):
+    if getattr(layer, "weight") is not None:
+        torch.nn.init.orthogonal_(layer.weight, std)
+    if getattr(layer, "bias") is not None:
+        torch.nn.init.constant_(layer.bias, bias_const)
+    return layer
+
+
 class Normal(nn.Module):
     def __init__(
         self,
@@ -100,6 +108,7 @@ class Categorical(nn.Module):
         self.space = space
         self.vocab_size = int(space.n)
         self.layer = layer_ctor(self.vocab_size)
+        layer_init_(self.layer, std=1e-2)
         self._event_dims = len(space.shape)
 
     def forward(self, input: Tensor):

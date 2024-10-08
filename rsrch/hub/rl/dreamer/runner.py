@@ -153,9 +153,8 @@ class Runner:
         self.agent = self._make_agent(mode="train")
 
         self.env_iter = iter(self.sdk.rollout(self.envs, self.agent))
-        self._ep_ids = defaultdict(lambda: None)
-        self._ep_rets = defaultdict(lambda: 0.0)
         self._env_steps = defaultdict(lambda: 0)
+        self._ep_ids = defaultdict(lambda: None)
 
         self.env_step = 0
         self.exp.register_step("env_step", lambda: self.env_step)
@@ -515,11 +514,13 @@ class Runner:
         with self.buf_mtx:
             self._ep_ids[env_idx] = self.buf.push(self._ep_ids[env_idx], step, final)
 
-        self._ep_rets[env_idx] += step.get("reward", 0.0)
         if final:
-            self.exp.add_scalar("train/ep_ret", self._ep_rets[env_idx])
             del self._ep_ids[env_idx]
-            del self._ep_rets[env_idx]
+
+        if "ep_returns" in step:
+            self.exp.add_scalar("train/ep_ret", step["ep_returns"])
+        if "ep_length" in step:
+            self.exp.add_scalar("train/ep_len", step["ep_length"])
 
         self.agent_step += 1
 
@@ -614,7 +615,7 @@ class Runner:
     def do_val_epoch(
         self,
         max_batches: int | None = None,
-        max_val_steps: int = int(128e3),
+        num_episodes: int = 32,
         step: str | None = None,
     ):
         self.setup_val()
@@ -629,33 +630,16 @@ class Runner:
         env_rets = defaultdict(lambda: 0.0)
         all_rets = []
 
-        env_step = defaultdict(lambda: None)
-        total_steps = 0
-        finished = [False for _ in range(self.val_envs.num_envs)]
-
-        pbar = self.exp.pbar(desc="Val epoch", total=max_val_steps)
+        pbar = self.exp.pbar(desc="Val epoch", total=num_episodes)
 
         for env_idx, (step, final) in val_iter:
             env_rets[env_idx] += step["reward"]
             if final:
                 all_rets.append(env_rets[env_idx])
                 del env_rets[env_idx]
-                finished[env_idx] = True
-
-            if "total_steps" in step:
-                if env_step[env_idx] is None:
-                    env_step[env_idx] = step["total_steps"]
-                    diff = 0
-                else:
-                    diff = step["total_steps"] - env_step[env_idx]
-                    env_step[env_idx] = step["total_steps"]
-            else:
-                diff = 1
-
-            total_steps += diff
-            pbar.update(diff)
-            if total_steps >= max_val_steps and all(finished):
-                break
+                pbar.update()
+                if len(all_rets) >= num_episodes:
+                    break
 
         self.exp.add_scalar("val/mean_ep_ret", np.mean(all_rets), step=_step)
 

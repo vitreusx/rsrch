@@ -181,7 +181,7 @@ class RealLoaderWM(data.IterableDataset):
                 item = {}
                 item["index"] = (ep["ep_id"], start)
                 item["end_pos"] = (ep["ep_id"], end)
-                item["seq"] = self._subseq(ep["seq"], start, end)
+                item["seq"] = [*ep["seq"][start:end]]
                 item["h_0"] = self.h_0s.get(item["index"])
                 batch.append(item)
 
@@ -196,25 +196,44 @@ class RealLoaderWM(data.IterableDataset):
         seq = [*seq[start:end]]
 
         res = {
-            "obs": torch.stack([step["obs"] for step in seq]),
-            "reward": torch.tensor(
-                np.array(
-                    [step.get("reward", 0.0) for step in seq],
-                    dtype=np.float32,
-                )
-            ),
-            "term": torch.tensor(np.array([step.get("term", False) for step in seq])),
+            "obs": [step["obs"] for step in seq],
+            "reward": [step.get("reward", 0.0) for step in seq],
+            "term": [step.get("term", False) for step in seq],
         }
 
         res["act"] = [step.get("act") for step in seq]
         if res["act"][0] is None:
             res["act"][0] = torch.zeros_like(res["act"][-1])
-        res["act"] = torch.stack(res["act"])
 
-        return Slices(**res)
+        return res
 
     def collate_fn(self, batch):
-        seq = torch.stack([item["seq"] for item in batch], dim=1)
+        all_seq = [item["seq"] for item in batch]
+        batch_size, seq_len = len(all_seq), len(all_seq[0])
+
+        obs, act, reward, term = [], [], [], []
+        undef_act = all_seq[0][-1]["act"]
+        for t in range(seq_len):
+            for idx in range(batch_size):
+                step = all_seq[idx][t]
+                obs.append(step["obs"])
+                term.append(step["term"])
+                reward.append(step.get("reward", 0.0))
+                if "act" in step:
+                    act.append(step["act"])
+                else:
+                    act.append(undef_act)
+
+        obs = torch.stack(obs)
+        obs = obs.reshape(seq_len, batch_size, *obs.shape[1:])
+        act = torch.stack(act)
+        act = act.reshape(seq_len, batch_size, *act.shape[1:])
+        reward = torch.tensor(np.asarray(reward))
+        reward = reward.reshape(seq_len, batch_size, *reward.shape[1:])
+        term = torch.tensor(np.asarray(term))
+        term = term.reshape(seq_len, batch_size, *term.shape[1:])
+
+        seq = Slices(obs, act, reward, term)
         if self.pin_memory:
             seq = seq.pin_memory()
 
@@ -484,15 +503,22 @@ class OnPolicyLoaderRL(data.IterableDataset):
         return False
 
     def __iter__(self):
+        ep_ids = defaultdict(lambda: None)
+        prev_obs = defaultdict(lambda: None)
+
         while True:
             self.temp_buf.clear()
+            ep_ids.clear()
 
-            ep_ids = defaultdict(lambda: None)
+            for env_idx in prev_obs:
+                ep_ids[env_idx] = self.temp_buf.reset({"obs": prev_obs[env_idx]})
+
             for _ in range(self.steps_per_batch):
                 env_idx, (step, final) = self.do_env_step()
                 ep_ids[env_idx] = self.temp_buf.push(ep_ids[env_idx], step, final)
+                prev_obs[env_idx] = step["obs"]
                 if final:
-                    del ep_ids[env_idx]
+                    del ep_ids[env_idx], prev_obs[env_idx]
 
             batch = []
             for seq in self.temp_buf.values():

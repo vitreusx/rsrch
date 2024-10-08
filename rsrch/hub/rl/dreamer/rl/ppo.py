@@ -8,9 +8,10 @@ from torch import Tensor, nn
 
 import rsrch.distributions as D
 from rsrch import spaces
+from rsrch.nn import dh
 from rsrch.nn.utils import over_seq, safe_mode
 
-from ..common import dh, nets
+from ..common import nets
 from ..common.trainer import ScaledOptimizer, TrainerBase
 from ..common.types import Slices
 from ..common.utils import find_class
@@ -77,10 +78,16 @@ class Actor(nn.Module):
         return self.head(features), features
 
 
+def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
+    torch.nn.init.orthogonal_(layer.weight, std)
+    torch.nn.init.constant_(layer.bias, bias_const)
+    return layer
+
+
 class CriticHead(nn.Sequential):
     def __init__(self, in_features: int):
         super().__init__(
-            nn.Linear(in_features, 1),
+            layer_init(nn.Linear(in_features, 1), std=1.0),
             nn.Flatten(0),
         )
 
@@ -169,7 +176,8 @@ class Trainer(TrainerBase):
                         logp_ = policy[:-1].log_prob(seq.act)
                         logp.append(logp_)
                         cont = 1.0 - seq.term.float()
-                        value, reward = value * cont, seq.reward * cont[:-1]
+                        reward = seq.reward.sign()
+                        value, reward = value * cont, reward * cont[:-1]
                         val.append(value[:-1])
                         adv_, ret_ = gen_adv_est(
                             reward, value, self.cfg.gamma, self.cfg.gae_lambda
@@ -183,8 +191,8 @@ class Trainer(TrainerBase):
         for _ in range(self.cfg.update_epochs):
             perm = torch.randperm(len(val))
             for idxes in perm.split(self.cfg.update_batch):
-                if len(idxes) < self.cfg.update_batch:
-                    cont
+                if len(idxes) < 0.5 * self.cfg.update_batch:
+                    continue
 
                 with self.autocast():
                     new_policy, new_value = self._forward_ac(obs[idxes])
@@ -194,7 +202,10 @@ class Trainer(TrainerBase):
 
                     adv_ = adv[idxes]
                     if self.cfg.adv_norm:
+                        true_adv = adv_.clone()
                         adv_ = (adv_ - adv_.mean()) / (adv_.std() + 1e-8)
+                    else:
+                        true_adv = adv_
 
                     t1 = -adv_ * ratio
                     t2 = -adv_ * ratio.clamp(
@@ -226,7 +237,7 @@ class Trainer(TrainerBase):
         with torch.no_grad():
             mets = {
                 "ratio": ratio.mean(),
-                "adv": adv_.mean(),
+                "adv": true_adv.mean(),
                 "policy_loss": policy_loss,
                 "entropy": new_ent.mean(),
                 "ent_loss": ent_loss,

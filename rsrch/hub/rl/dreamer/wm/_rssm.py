@@ -10,11 +10,12 @@ from torch import Tensor, nn
 
 import rsrch.distributions as D
 from rsrch import spaces
+from rsrch.nn import dh
 from rsrch.nn.utils import over_seq, pass_gradient, safe_mode
 from rsrch.types import Tensorlike
 from rsrch.types.tensorlike.core import defer_eval
 
-from ..common import dh, nets
+from ..common import nets
 from ..common.utils import tf_init
 
 

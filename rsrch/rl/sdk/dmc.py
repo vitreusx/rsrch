@@ -16,7 +16,7 @@ BENCHMARKING = suite.BENCHMARKING
 
 from .. import data, gym
 from . import gym as gym_api
-from .utils import FrameSkip, FrameSkipV, RecordTotalSteps, RecordTotalStepsV, RenderEnv
+from .utils import FrameSkip, FrameSkipV, GymRecordStats, RecordStatsV, RenderEnv
 
 ObsType = Literal["proprio", "proprio_flat", "visual"]
 
@@ -177,7 +177,7 @@ class SDK:
             return
 
         if self.cfg.frame_skip > 1:
-            envs = RecordTotalStepsV(envs)
+            envs = RecordStatsV(envs)
             envs = FrameSkipV(envs, frame_skip=self.cfg.frame_skip)
 
         return envs
@@ -192,6 +192,7 @@ class SDK:
                 "camera_id": self.cfg.camera_id,
             },
         )
+        env = GymRecordStats(env)
         env = FrameSkip(env, self.cfg.frame_skip)
         if self.cfg.obs_type == "proprio_flat":
             env = gymnasium.wrappers.FlattenObservation(env)
@@ -199,8 +200,6 @@ class SDK:
         render |= self.cfg.obs_type == "visual"
         env = gym.envs.GymEnv(env, seed=seed, render=render)
 
-        if self.cfg.frame_skip > 1:
-            env = RecordTotalSteps(env)
         if self.cfg.obs_type == "visual":
             env = RenderEnv(env)
 

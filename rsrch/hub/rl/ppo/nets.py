@@ -19,7 +19,6 @@ class Encoder(nn.Sequential):
                 nn.ReLU(),
                 nn.Conv2d(64, 64, 3, 1),
                 nn.ReLU(),
-                nn.AdaptiveMaxPool2d((7, 7)),
                 nn.Flatten(),
                 nn.Linear(64 * 7 * 7, 512),
                 nn.ReLU(),
@@ -76,13 +75,13 @@ class ActorCritic(nn.Module):
         self,
         obs_space: spaces.torch.Tensor,
         act_space: spaces.torch.Tensor,
-        share_enc=False,
+        share_encoder=False,
         custom_init=False,
     ):
         super().__init__()
-        self._share_enc = share_enc
+        self.share_encoder = share_encoder
 
-        if self._share_enc:
+        if self.share_encoder:
             self.enc = Encoder(obs_space)
             self.actor_head = ActorHead(act_space, self.enc.enc_dim)
             self.critic_head = CriticHead(self.enc.enc_dim)
@@ -98,7 +97,7 @@ class ActorCritic(nn.Module):
             self._custom_init()
 
     def _custom_init(self):
-        if self._share_enc:
+        if self.share_encoder:
             self.enc.apply(layer_init)
             self.actor_head.apply(lambda x: layer_init(x, std=1e-2))
             self.critic_head.apply(lambda x: layer_init(x, std=1.0))
@@ -109,14 +108,14 @@ class ActorCritic(nn.Module):
             self.critic[1].apply(lambda x: layer_init(x, std=1.0))
 
     def forward(self, state: Tensor, values=True):
-        if self._share_enc:
+        if self.share_encoder:
             z = self.enc(state)
             policy = self.actor_head(z)
         else:
             policy = self.actor(state)
 
         if values:
-            if self._share_enc:
+            if self.share_encoder:
                 value = self.critic_head(z)
             else:
                 value = self.critic(state)

@@ -11,7 +11,7 @@ import torch
 from rsrch import spaces
 
 from .. import data, gym
-from .utils import MapSeq, RecordTotalStepsV, StackSeq
+from .utils import GymRecordStats, MapSeq, RecordStatsV, StackSeq
 
 ObsType = Literal["rgb", "grayscale", "ram"]
 
@@ -28,7 +28,7 @@ class Config:
     time_limit: int | None = int(108e3)
     stack_num: int | None = 4
     use_envpool: bool = True
-    sticky: bool = True
+    repeat_action_probability: float = 0.25
 
 
 class NoopResetEnv(gymnasium.Wrapper):
@@ -147,25 +147,6 @@ class ToChannelLast(gymnasium.ObservationWrapper):
 
     def observation(self, x):
         return np.transpose(x, (2, 0, 1))
-
-
-class RecordTotalSteps(gymnasium.Wrapper):
-    def __init__(self, env: gymnasium.Env, frame_skip: int = 1):
-        super().__init__(env)
-        self.frame_skip = frame_skip
-        self._total_steps = 0
-
-    def reset(self, **kwargs):
-        obs, info = super().reset(**kwargs)
-        self._total_steps += 1
-        info["total_steps"] = self._total_steps
-        return obs, info
-
-    def step(self, action):
-        next_obs, reward, term, trunc, info = super().step(action)
-        self._total_steps += 1
-        info["total_steps"] = self._total_steps
-        return next_obs, reward, term, trunc, info
 
 
 class VecAgentWrapper(gym.VecAgentWrapper):
@@ -368,14 +349,18 @@ class SDK:
             episodic_life=self.cfg.term_on_life_loss and mode == "train",
             zero_discount_on_life_loss=False,
             reward_clip=False,
-            repeat_action_probability=(0.25 if self.cfg.sticky else 0.0),
+            repeat_action_probability=self.cfg.repeat_action_probability,
             use_inter_area_resize=True,
             use_fire_reset=self.cfg.fire_reset,
             full_action_space=False,
             seed=seed,
         )
 
-        envs = RecordTotalStepsV(envs, frame_skip=self.cfg.frame_skip)
+        envs = RecordStatsV(
+            envs,
+            frame_skip=self.cfg.frame_skip,
+            do_stat_reset=lambda step: step["terminated"] == 1,
+        )
         return envs
 
     def _env(
@@ -386,20 +371,17 @@ class SDK:
     ) -> gym.Env:
         episodic = self.cfg.term_on_life_loss and mode == "train"
 
-        version = "v5" if self.cfg.sticky else "v4"
-        task_id = f"ALE/{self.cfg.env_id}-{version}"
+        env = gymnasium.make(
+            f"ALE/{self.cfg.env_id}-v5",
+            frameskip=1,
+            obs_type=self.cfg.obs_type,
+            render_mode="rgb_array" if render else None,
+            repeat_action_probability=self.cfg.repeat_action_probability,
+        )
+
+        env = GymRecordStats(env)
 
         if self.cfg.obs_type in ("rgb", "grayscale"):
-            env = gymnasium.make(
-                task_id,
-                frameskip=1,
-                render_mode="rgb_array" if render else None,
-                obs_type=self.cfg.obs_type,
-            )
-
-            # Recording steps needs to happen before frame skip and no-op max
-            env = RecordTotalSteps(env)
-
             env = gymnasium.wrappers.AtariPreprocessing(
                 env=env,
                 frame_skip=self.cfg.frame_skip,
@@ -412,12 +394,6 @@ class SDK:
             )
             env = ToChannelLast(env)
         else:
-            env = gymnasium.make(
-                task_id,
-                frameskip=self.cfg.frame_skip,
-                render_mode="rgb_array" if render else None,
-                obs_type=self.cfg.obs_type,
-            )
             env = NoopResetEnv(env, self.cfg.noop_max)
             if episodic:
                 env = EpisodicLifeEnv(env)

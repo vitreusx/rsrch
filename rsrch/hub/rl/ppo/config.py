@@ -8,7 +8,6 @@ from rsrch.utils.config import *
 @dataclass
 class Config:
     env: rl.sdk.Config
-    env_workers: int
     val_episodes: int
     val_every: int
     train_envs: int
@@ -28,7 +27,6 @@ class Config:
     log_every: int
     ent_coeff: float
     vf_coeff: float
-    decorrelate: bool
     share_encoder: bool
     custom_init: bool
     seed: int

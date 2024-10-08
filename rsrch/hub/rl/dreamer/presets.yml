@@ -115,6 +115,7 @@ sac:
 
 ppo:
   base:
+    $extends: [no_model]
     rl:
       type: ppo
       loader: on_policy
@@ -123,15 +124,13 @@ ppo:
           type: ppo
         actor_dist:
           type: auto
-          beta:
-            min_std: 0.1
         adv_norm: true
         clip_vloss: true
         vf_coeff: 0.5
         clip_grad: 0.5
         gamma: 0.99
         gae_lambda: 0.95
-        share_encoder: false
+        share_encoder: true
     data.loaders.on_policy:
       min_seq_len: 16
   mujoco:
@@ -158,21 +157,26 @@ ppo:
     $extends: [base]
     env:
       type: atari
-      atari.env_id: Pong
+      atari:
+        env_id: Pong
+        screen_size: 84
+        stack_num: 4
+        term_on_life_loss: true
     rl.ppo:
       update_epochs: 4
       update_batch: 256
       opt:
         type: adam
         lr: 2.5e-4
+        eps: 1e-5
       clip_coeff: 0.1
-      ent_coeff: 0.01
+      ent_coeff: 1e-2
     train.num_envs: 8
     data.loaders.on_policy:
       steps_per_batch: 1024
     stages:
       - train_loop:
-          until: 10e6
+          until: 40e6
           tasks: [do_rl_opt_step]
 
 dreamer:
@@ -227,6 +231,9 @@ atari:
     env:
       type: atari
       atari.env_id: Pong
+  v4:
+    env.atari:
+      repeat_action_probability: 0.0
   for_100k:
     env.atari.sticky: false
 

@@ -61,36 +61,81 @@ class MapSeq(Sequence):
             return self.f(self.seq[idx])
 
 
-class RecordTotalSteps(gym.EnvWrapper):
-    def __init__(self, env: gym.Env, frame_skip: int = 1):
+class GymRecordStats(gymnasium.Wrapper):
+    def __init__(self, env: gymnasium.Env):
         super().__init__(env)
-        self.frame_skip = frame_skip
         self._total_steps = 0
+        self._ep_returns = 0.0
+        self._ep_length = 0
 
-    def reset(self):
-        obs = super().reset()
+    def reset(self, **kwargs):
+        obs, info = super().reset(**kwargs)
         self._total_steps += 1
-        obs["total_steps"] = self._total_steps
-        return obs
+        self._ep_length += 1
+        info["total_steps"] = self._total_steps
+        return obs, info
 
     def step(self, action):
-        next_obs, final = super().step(action)
+        next_obs, reward, term, trunc, info = super().step(action)
         self._total_steps += 1
-        next_obs["total_steps"] = self._total_steps
-        return next_obs, final
+        info["total_steps"] = self._total_steps
+        self._ep_length += 1
+        self._ep_returns += reward
+        if term or trunc:
+            info["ep_returns"] = self._ep_returns
+            self._ep_returns = 0.0
+            info["ep_length"] = self._ep_length
+            self._ep_length = 0
+        return next_obs, reward, term, trunc, info
 
 
-class RecordTotalStepsV(gym.envs.VecEnvWrapper):
-    def __init__(self, env: gym.VecEnv, frame_skip: int = 1):
+class RecordStatsV(gym.envs.VecEnvWrapper):
+    def __init__(
+        self,
+        env: gym.VecEnv,
+        frame_skip: int = 1,
+        do_stat_reset: Callable[[dict], bool] | None = None,
+    ):
         super().__init__(env)
         self.env = env
         self.frame_skip = frame_skip
-        self._total_steps = [0 for _ in range(self.env.num_envs)]
+        self.do_stat_reset = do_stat_reset
 
     def rollout(self, agent: gym.VecAgent):
+        is_first, total_steps, ep_returns, ep_length = [], [], [], []
+        for _ in range(self.num_envs):
+            is_first.append(True)
+            total_steps.append(0)
+            ep_returns.append(0.0)
+            ep_length.append(0)
+
         for env_idx, (step, final) in self.env.rollout(agent):
-            self._total_steps[env_idx] += self.frame_skip
-            step["total_steps"] = self._total_steps[env_idx]
+            if is_first[env_idx]:
+                total_steps[env_idx] += 1
+                ep_length[env_idx] += 1
+                is_first[env_idx] = False
+            else:
+                total_steps[env_idx] += self.frame_skip
+                ep_length[env_idx] += self.frame_skip
+
+            step["total_steps"] = total_steps[env_idx]
+
+            ep_returns[env_idx] += step.get("reward", 0.0)
+
+            if final:
+                is_first[env_idx] = True
+
+                if self.do_stat_reset is not None:
+                    do_stat_reset = self.do_stat_reset(step)
+                else:
+                    do_stat_reset = True
+
+                if do_stat_reset:
+                    step["ep_length"] = ep_length[env_idx]
+                    step["ep_returns"] = ep_returns[env_idx]
+                    ep_length[env_idx] = 0
+                    ep_returns[env_idx] = 0.0
+
             yield env_idx, (step, final)
 
 

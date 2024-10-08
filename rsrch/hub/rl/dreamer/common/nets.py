@@ -11,10 +11,10 @@ from torch.nn.utils.parametrizations import _SpectralNorm, spectral_norm
 
 import rsrch.distributions as D
 from rsrch import spaces
+from rsrch.nn import dh
 from rsrch.nn.utils import safe_mode
 from rsrch.types.tensorlike.core import Tensorlike
 
-from . import dh
 from .utils import to_camel_case
 
 ActType = Literal["relu", "elu", "tanh"]
@@ -595,20 +595,34 @@ def ImpalaEncoder(
         return ImpalaLarge(space, model_size, use_spectral_norm)
 
 
+def layer_init(layer, bias_const=0.0):
+    nn.init.kaiming_normal_(layer.weight)
+    torch.nn.init.constant_(layer.bias, bias_const)
+    return layer
+
+
 @register_encoder("ppo_image")
 class PPOImageEncoder(nn.Sequential):
     def __init__(self, space: spaces.torch.Image):
         super().__init__(
-            nn.Conv2d(space.num_channels, 32, 8, 4),
+            layer_init(nn.Conv2d(space.num_channels, 32, 8, 4)),
             nn.ReLU(),
-            nn.Conv2d(32, 64, 4, 2),
+            layer_init(nn.Conv2d(32, 64, 4, 2)),
             nn.ReLU(),
-            nn.Conv2d(64, 64, 3, 1),
+            layer_init(nn.Conv2d(64, 64, 3, 1)),
             nn.ReLU(),
-            nn.AdaptiveMaxPool2d((7, 7)),
             nn.Flatten(),
-            nn.Linear(64 * 7 * 7, 512),
-            nn.ReLU(),
+        )
+
+        with safe_mode(self):
+            x = space.sample([1]).cpu()
+            z_features = self(x).shape[1]
+
+        self.extend(
+            [
+                layer_init(nn.Linear(z_features, 512)),
+                nn.ReLU(),
+            ]
         )
 
 
@@ -618,9 +632,9 @@ class PPOBoxEncoder(nn.Sequential):
         obs_dim = int(np.prod(space.shape))
         super().__init__(
             nn.Flatten(),
-            nn.Linear(obs_dim, 64),
+            layer_init(nn.Linear(obs_dim, 64)),
             nn.Tanh(),
-            nn.Linear(64, 64),
+            layer_init(nn.Linear(64, 64)),
             nn.Tanh(),
         )
 
@@ -631,12 +645,6 @@ def PPOEncoder(space: spaces.torch.Tensor):
         return PPOImageEncoder(space)
     else:
         return PPOBoxEncoder(space)
-
-
-def layer_init(layer, bias_const=0.0):
-    nn.init.kaiming_normal_(layer.weight)
-    torch.nn.init.constant_(layer.bias, bias_const)
-    return layer
 
 
 @register_encoder("sac_image")

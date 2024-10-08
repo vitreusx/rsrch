@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
 from itertools import islice
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 from tqdm.auto import tqdm
 
 from rsrch import rl
@@ -21,17 +23,28 @@ from .nets import *
 from .utils import gae_adv_est
 
 
-class Slices(Tensorlike):
-    def __init__(self, obs: Tensor, act: Tensor, reward: Tensor, term: Tensor):
-        super().__init__(shape=reward.shape)
-        self.obs = self.register("obs", obs)
-        self.act = self.register("act", act)
-        self.reward = self.register("reward", reward)
-        self.term = self.register("term", term)
+@dataclass
+class Slices:
+    obs: Tensor
+    act: Tensor
+    reward: Tensor
+    term: Tensor
 
-    @staticmethod
-    def collate_fn(batch: list[Slices]):
-        return torch.stack(batch, dim=1)
+    def to(self, device: torch.device | None = None):
+        return Slices(
+            obs=self.obs.to(device),
+            act=self.act.to(device),
+            reward=self.reward.to(device),
+            term=self.term.to(device),
+        )
+
+    def pin_memory(self):
+        return Slices(
+            obs=self.obs.pin_memory(),
+            act=self.act.pin_memory(),
+            reward=self.reward.pin_memory(),
+            term=self.term.pin_memory(),
+        )
 
 
 class ScaledOptimizer:
@@ -87,13 +100,12 @@ def main():
 
     sdk = rl.sdk.make(cfg.env)
 
-    val_envs = sdk.make_envs(cfg.env_workers, mode="val")
     train_envs = sdk.make_envs(cfg.train_envs, mode="train")
 
     ac = ActorCritic(
         obs_space=sdk.obs_space,
         act_space=sdk.act_space,
-        share_enc=cfg.share_encoder,
+        share_encoder=cfg.share_encoder,
         custom_init=cfg.custom_init,
     )
     ac = ac.to(device)
@@ -103,18 +115,16 @@ def main():
 
     class ACAgent(gym.vector.agents.Markov):
         @torch.inference_mode()
-        def _policy(self, obs):
+        def policy_from_last(self, obs):
             with autocast():
                 act_rv = ac(obs.to(device), values=False)
                 return act_rv.sample().cpu()
 
-    train_agent = ACAgent()
-    val_agent = ACAgent()
+    train_agent = ACAgent(sdk.obs_space, sdk.act_space)
 
     buf = sdk.wrap_buffer(rl.data.Buffer())
 
     ep_ids = defaultdict(lambda: None)
-    ep_rets = defaultdict(lambda: 0.0)
     env_iter = iter(sdk.rollout(train_envs, train_agent))
 
     dt = datetime.now()
@@ -132,7 +142,6 @@ def main():
     pbar = tqdm(total=cfg.total_steps)
 
     should_log = cron.Every(lambda: env_step, cfg.log_every)
-    should_val = cron.Every(lambda: env_step, cfg.val_every)
     should_save = cron.Every(lambda: env_step, cfg.save_ckpt_every)
 
     def save_ckpt():
@@ -142,31 +151,30 @@ def main():
             state = {"ac": ac.state_dict()}
             torch.save(state, f)
 
-    def val_epoch():
-        val_returns, ep_returns = [], defaultdict(lambda: 0.0)
-        val_iter = sdk.rollout(val_envs, val_agent)
-        while True:
-            env_idx, (step, final) = next(val_iter)
-            ep_returns[env_idx] += step.get("reward", 0.0)
-            if final:
-                val_returns.append(ep_returns[env_idx])
-                del ep_returns[env_idx]
-                if len(val_returns) >= cfg.val_episodes:
-                    break
-
-        exp.add_scalar("val/returns", np.mean(val_returns))
+    prev_step = defaultdict(lambda: None)
 
     def train_step():
-        buf.clear()
         ep_ids.clear()
+        buf.clear()
+
+        for env_idx in range(cfg.train_envs):
+            if env_idx not in prev_step:
+                continue
+            ep_ids[env_idx] = buf.reset({"obs": prev_step[env_idx]["obs"]})
+
         nonlocal env_step
         for _ in range(cfg.steps_per_epoch * cfg.train_envs):
             env_idx, (step, final) = next(env_iter)
             ep_ids[env_idx] = buf.push(ep_ids[env_idx], step, final)
-            ep_rets[env_idx] += step.get("reward", 0.0)
+            prev_step[env_idx] = step
             if final:
-                exp.add_scalar("train/ep_ret", ep_rets[env_idx])
-                del ep_ids[env_idx], ep_rets[env_idx]
+                del ep_ids[env_idx], prev_step[env_idx]
+
+            if "ep_returns" in step:
+                exp.add_scalar("train/ep_ret", step["ep_returns"])
+            if "ep_length" in step:
+                exp.add_scalar("train/ep_len", step["ep_length"])
+
             env_step += 1
             pbar.update()
 
@@ -231,7 +239,7 @@ def main():
                         v_loss2 = (clipped_v - ret[idxes]).square()
                         v_loss = 0.5 * torch.max(v_loss1, v_loss2).mean()
                     else:
-                        v_loss = 0.5 * (new_value - ret[idxes]).square().mean()
+                        v_loss = F.mse_loss(new_value - ret[idxes])
 
                     ent_loss = -new_policy.entropy().mean()
 
@@ -251,9 +259,6 @@ def main():
     while True:
         if should_save:
             save_ckpt()
-
-        if should_val:
-            val_epoch()
 
         if env_step >= cfg.total_steps:
             break

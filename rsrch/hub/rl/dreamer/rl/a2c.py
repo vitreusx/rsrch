@@ -10,7 +10,7 @@ from torch import Tensor, nn
 
 import rsrch.distributions as D
 from rsrch import spaces
-from rsrch.hub.rl.dreamer.common import dh
+from rsrch.nn import dh
 from rsrch.nn.utils import over_seq, safe_mode
 from rsrch.rl import gym
 from rsrch.rl.utils import polyak

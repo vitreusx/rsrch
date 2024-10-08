@@ -12,7 +12,7 @@ from rsrch import spaces
 from rsrch.types.tensorlike.dict import TensorDict
 
 from .. import data, gym
-from .utils import MapSeq
+from .utils import GymRecordStats, MapSeq, RecordStatsV
 
 ObsType = Literal["base", "flat", "render"]
 
@@ -252,6 +252,7 @@ class SDK:
                 num_envs=num_envs,
                 seed=seed,
             )
+            envs = RecordStatsV(envs)
         except:
             return
 
@@ -262,6 +263,8 @@ class SDK:
             self.cfg.env_id,
             render_mode="rgb_array" if render else None,
         )
+
+        env = GymRecordStats(env)
 
         if (
             isinstance(env.action_space, gymnasium.spaces.Box)
