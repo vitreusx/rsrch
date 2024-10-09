@@ -108,7 +108,8 @@ class Categorical(nn.Module):
         self.space = space
         self.vocab_size = int(space.n)
         self.layer = layer_ctor(self.vocab_size)
-        layer_init_(self.layer, std=1e-2)
+        if getattr(self.layer, "bias") is not None:
+            torch.nn.init.zeros_(self.layer.bias)
         self._event_dims = len(space.shape)
 
     def forward(self, input: Tensor):

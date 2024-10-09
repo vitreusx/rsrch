@@ -44,6 +44,12 @@ class Config:
     rew_clip: tuple[float, float] | None = None
 
 
+def layer_init(layer, bias_const=0.0):
+    nn.init.kaiming_normal_(layer.weight)
+    torch.nn.init.constant_(layer.bias, bias_const)
+    return layer
+
+
 class ContQf(nn.Module):
     def __init__(
         self,
@@ -62,7 +68,7 @@ class ContQf(nn.Module):
             input = input_space.sample((1,))
             z_features = self.encoder(input).shape[1]
 
-        self.proj = nn.Linear(z_features, 1)
+        self.proj = layer_init(nn.Linear(z_features, 1))
 
     def forward(self, obs: Tensor | Tensorlike, act: Tensor) -> Tensor:
         if not isinstance(obs, Tensor):
@@ -87,7 +93,7 @@ class DiscQf(nn.Module):
             input = obs_space.sample((1,))
             z_features = self.encoder(input).shape[1]
 
-        self.proj = nn.Linear(z_features, act_space.n)
+        self.proj = layer_init(nn.Linear(z_features, act_space.n))
 
     def forward(self, obs: Tensor, act: Tensor | None = None) -> Tensor:
         q_values = self.proj(self.encoder(obs))
@@ -234,6 +240,7 @@ class Trainer(TrainerBase):
                 policy: D.Categorical
                 actor_losses = self.alpha.value * policy.log_probs - min_q
                 actor_loss = (policy.probs * actor_losses).mean()
+                actor_loss = actor_loss * actor_losses.shape[-1]
         else:
             with self.autocast():
                 act = policy.rsample()
