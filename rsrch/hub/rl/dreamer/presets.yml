@@ -3,6 +3,38 @@ no_model:
   wm.loader: ~
   rl.loader: real_rl
 
+grid_launch:
+  run.interactive: false
+  run.create_commit: false
+
+atari:
+  base:
+    env:
+      type: atari
+      atari.env_id: Pong
+  v4:
+    env.atari:
+      repeat_action_probability: 0.0
+
+dmc:
+  proprio:
+    env:
+      type: dmc
+      dmc:
+        domain: walker
+        task: walk
+        obs_type: proprio
+        frame_skip: 2
+  vision:
+    env:
+      type: dmc
+      dmc:
+        domain: walker
+        task: walk
+        obs_type: visual
+        frame_skip: 2
+        render_size: [64, 64]
+
 sac:
   base:
     $extends: [no_model]
@@ -186,7 +218,6 @@ dreamer:
       type: dreamer
       loader: real_wm
     rl:
-      type: a2c
       loader: dream_rl
   atari:
     $extends: [base]
@@ -226,38 +257,6 @@ dreamer:
       opt.actor.lr: 8e-5
       opt.critic.lr: 8e-5
       actor_ent: 1e-4
-
-atari:
-  base:
-    env:
-      type: atari
-      atari.env_id: Pong
-  v4:
-    env.atari:
-      repeat_action_probability: 0.0
-  for_100k:
-    env.atari.sticky: false
-
-dmc:
-  proprio:
-    data.loaders.real_wm.prioritize_ends: false
-    env:
-      type: dmc
-      dmc:
-        domain: walker
-        task: walk
-        obs_type: proprio
-        frame_skip: 2
-  vision:
-    data.loaders.real_wm.prioritize_ends: false
-    env:
-      type: dmc
-      dmc:
-        domain: walker
-        task: walk
-        obs_type: visual
-        frame_skip: 2
-        render_size: [64, 64]
 
 exp:
   sanity_check:
@@ -445,39 +444,34 @@ exp:
             - do_rl_opt_step:
                 n: ${_updates_per_step}
             - do_env_step
-  dreamer_sac:
-    $extends: [ratio_val_test]
-    rl:
-      type: sac
-      sac:
-        opt:
-          type: adam
-          eps: 1e-5
-          actor: { lr: 3e-4 }
-          qf: { lr: 1e-5 }
-        actor:
-          encoder:
-            type: box
-            box:
-              hidden: 256
-              layers: 2
-              act: relu
-        qf:
-          encoder:
-            type: box
-            box:
-              hidden: 256
-              layers: 2
-              act: relu
-          polyak:
-            every: 1
-            tau: 0.995
-        num_q: 2
-        gamma: 0.99
-        clip_grad: ~
-        alpha:
-          adaptive: true
-          init_value: 1e-3
-          amp_rate: 1e-3
-          decay_rate: 1e-3
-          min_ent: auto
+  split_freq:
+    $extends: [dreamer.atari, atari.base]
+    _wm_freq: 4
+    _rl_freq: 4
+    _prefill: 40e3
+    data.val_frac: 0.15
+    stages:
+      - env_rollout:
+          until: ${_prefill}
+          mode: rand
+      - train_loop:
+          until: 400e3
+          tasks:
+            - do_val_epoch: ~
+              every: 20e3
+            - do_wm_val_step: ~
+              every: { n: 16, of: wm_opt_step }
+            - do_rl_val_step: ~
+              every: { n: 16, of: rl_opt_step }
+            - do_wm_opt_step: ~
+              every:
+                n: ${_wm_freq}
+                accumulate: true
+            - do_rl_opt_step: ~
+              every:
+                n: ${_rl_freq}
+                accumulate: true
+            - do_env_step
+      - save_ckpt:
+          full: false
+          tag: final
