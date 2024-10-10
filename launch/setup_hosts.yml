@@ -4,10 +4,14 @@
     conda_prefix: ~/miniforge3
     conda: "{{ conda_prefix }}/bin/conda"
     poetry: ~/.local/bin/poetry
-    repo_dir: ~/self/rsrch
     repo_url: https://github.com/vitreusx/rsrch
 
   tasks:
+    - name: Check if user has provided 'repo_dir' and 'runs_dir'
+      ansible.builtin.fail:
+        msg: User has not provided all variables necessary to run script.
+      when: repo_dir is undefined or runs_dir is undefined
+
     - name: Install conda
       ansible.builtin.shell:
         creates: "{{ conda_prefix }}"
@@ -38,16 +42,25 @@
         repo: "{{ repo_url }}"
         version: "{{ commit_sha.stdout }}"
         dest: "{{ repo_dir }}"
+        force: true
 
     - name: Set up python env for the repo
       ansible.builtin.shell:
         cmd: |-
+          set -e
           eval "$({{ conda }} shell.bash hook)"
           python -m keyring --disable 2>/dev/null || true
-          cd "{{ repo_dir }}"
           POETRY_NO_INTERACTION=1 {{ poetry }} install --sync --without dev
+        chdir: "{{ repo_dir }}"
+
+    - name: Set up runs/ as a symlink
+      ansible.builtin.file:
+        src: "{{ runs_dir }}"
+        dest: "{{ repo_dir }}/runs"
+        state: link
 
     - name: Copy commands to each host
       ansible.builtin.copy:
-        src: grid.txt
-        dest: "{{ repo_dir }}/grid.txt"
+        src: "{{ commands_file }}"
+        dest: "{{ repo_dir }}/commands.txt"
+      when: commands_file is defined

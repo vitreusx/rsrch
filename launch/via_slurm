@@ -1,8 +1,0 @@
-#!/usr/bin/bash
-
-cat - >grid.txt
-
-ansible-playbook launch/setup_hosts.yml
-
-NTESTS=$(wc -l grid.txt)
-sbatch --array=0-$(($NTESTS - 1)) launch/grid.slurm
