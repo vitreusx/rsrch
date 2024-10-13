@@ -6,7 +6,7 @@ from .common import *
 from .sanity_check import sanity_check
 
 
-def ratio_val_test(test_name, suffix=""):
+def at_400k(test_name, suffix=""):
     all_tests = []
 
     common_args = ["-p", "exp.at_400k"]
@@ -40,7 +40,7 @@ def main():
 
     all_tests = [
         *sanity_check(args.name, "-sanity"),
-        *ratio_val_test(args.name),
+        *at_400k(args.name),
     ]
 
     prefix = ["python", "-m", "rsrch.hub.rl.dreamer"]

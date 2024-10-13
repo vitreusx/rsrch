@@ -95,7 +95,6 @@ class Runner:
         self.exp.set_as_default(self.cfg.def_step)
 
         wm_type = self.cfg.wm.type
-        self.wm = None
         if wm_type == "dreamer":
             wm_cfg = self.cfg.wm.dreamer
 
@@ -104,6 +103,8 @@ class Runner:
 
             obs_space, act_space = self.sdk.obs_space, self.sdk.act_space
             self.wm = dreamer.WorldModel(wm_cfg, obs_space, act_space)
+        else:
+            self.wm = None
 
         if self.wm is not None:
             self.wm = self.wm.to(self.device)
@@ -325,6 +326,8 @@ class Runner:
         if wm_type == "dreamer":
             wm_cfg = self.cfg.wm.dreamer
             self.wm_trainer = dreamer.Trainer(wm_cfg, self.wm, self.compute_dtype)
+        else:
+            self.wm_trainer = None
 
         rl_type = self.cfg.rl.type
         if rl_type == "a2c":
@@ -433,16 +436,18 @@ class Runner:
         full: bool = False,
         tag: str | None = None,
     ):
-        state = {
-            "wm": self.wm.state_dict(),
-            "actor": self.actor.state_dict(),
-        }
+        state = {}
+        if self.wm is not None:
+            state["wm"] = self.wm.state_dict()
+        state["actor"] = self.actor.state_dict()
+
         if full:
+            if self.wm_trainer is not None:
+                state["wm_trainer"] = self.wm_trainer.save()
+
             state = {
                 **state,
-                "wm_trainer": self.wm_trainer.save(),
                 "rl_trainer": self.rl_trainer.save(),
-                "buf": self.buf.save(),
                 "repro": repro.state.save(),
             }
 
@@ -464,13 +469,18 @@ class Runner:
         with open(path, "rb") as f:
             state = torch.load(f, map_location="cpu")
 
-        self.wm.load_state_dict(state["wm"])
+        if "wm" in state and self.wm is not None:
+            self.wm.load_state_dict(state["wm"])
+
         self.actor.load_state_dict(state["actor"])
 
-        if "buf" in state:
+        if "wm_trainer" in state and self.wm_trainer is not None:
             self.wm_trainer.load(state["wm_trainer"])
+
+        if "rl_trainer" in state:
             self.rl_trainer.load(state["rl_trainer"])
-            self.buf.load(state["buf"])
+
+        if "repro" in state:
             repro.state.load(state["repro"])
 
         self.exp.log(logging.INFO, f"Loaded checkpoint from: {str(path)}")
