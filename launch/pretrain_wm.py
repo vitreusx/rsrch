@@ -19,7 +19,7 @@ def pretrain_wm(test_name: str, suffix: str = ""):
         opts = {
             "env.atari.env_id": env,
             "repro.seed": seed,
-            "_freq": freqs,
+            "_freq": freq,
             "run.dir": f"runs/{test_name}/{env}-seed={seed}-freq={freq}{suffix}",
         }
         args = [*common_args, "-o", format_opts(opts)]
