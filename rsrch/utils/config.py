@@ -36,7 +36,7 @@ def load(content: str):
     return yaml.load(buf)
 
 
-in_js_mode, in_upsert_mode = False, False
+in_js_mode, in_upsert_mode, do_eval_templates = False, False, True
 
 
 @contextmanager
@@ -73,6 +73,18 @@ def upsert_mode(mode=True):
         yield
     finally:
         in_upsert_mode = prev_mode
+
+
+@contextmanager
+def eval_templates(mode=True):
+    """Whether to eval templates (`${...}`'s)."""
+    global do_eval_templates
+    prev_mode = do_eval_templates
+    do_eval_templates = mode
+    try:
+        yield
+    finally:
+        do_eval_templates = prev_mode
 
 
 locator = pp.Empty().setParseAction(lambda s, l, t: l)
@@ -183,7 +195,7 @@ class Node(MutableMapping):
 
             value = self.value[key]
 
-            if isinstance(value, str):
+            if isinstance(value, str) and do_eval_templates:
                 value = self.render(value)
 
             if isinstance(value, (list, dict)):
@@ -256,9 +268,10 @@ def _merge(base, other):
         if key.startswith("$"):
             continue
         with js_mode():
-            with upsert_mode():
-                exec(f"base.{key}")
-            exec(f"base.{key} = _merge(base.{key}, value)")
+            with eval_templates(False):
+                with upsert_mode():
+                    exec(f"base.{key}")
+                exec(f"base.{key} = _merge(base.{key}, value)")
 
     return base
 

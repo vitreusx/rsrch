@@ -237,9 +237,8 @@ class Runner:
 
         class SplitHook(rl.data.Hook):
             def on_create(hook, seq_id: int):
-                is_val = (len(self.val_ids) == 0) or (
-                    np.random.rand() < self.cfg.data.val_frac
-                )
+                total = len(self.train_ids) + len(self.val_ids)
+                is_val = len(self.val_ids) <= self.cfg.data.val_frac * total
                 if is_val:
                     self.val_ep_ids.add(seq_id)
                     self.val_ids.add(seq_id)

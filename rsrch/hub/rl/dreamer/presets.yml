@@ -47,6 +47,7 @@ sac:
           adaptive: true
           value: 1.0
           target: auto
+          auto_coefs: [0.89, 5e-2]
           opt:
             type: adam
             lr: ${qf.opt.lr}
@@ -159,10 +160,12 @@ ppo:
           type: auto
         adv_norm: true
         clip_vloss: true
-        vf_coeff: 0.5
+        vf_coef: 0.5
         clip_grad: 0.5
         gamma: 0.99
         gae_lambda: 0.95
+        alpha:
+          adaptive: false
         share_encoder: true
     data.loaders.on_policy:
       min_seq_len: 16
@@ -177,8 +180,9 @@ ppo:
       opt:
         type: adam
         lr: 3e-4
-      clip_coeff: 0.2
-      ent_coeff: 0.0
+      clip_coef: 0.2
+      alpha:
+        value: 0.0
     train.num_envs: 1
     data.loaders.on_policy:
       steps_per_batch: 2048
@@ -202,8 +206,8 @@ ppo:
         type: adam
         lr: 2.5e-4
         eps: 1e-5
-      clip_coeff: 0.1
-      ent_coeff: 1e-2
+      clip_coef: 0.1
+      alpha.value: 1e-2
     train.num_envs: 8
     data.loaders.on_policy:
       steps_per_batch: 1024
@@ -405,6 +409,97 @@ exp:
                 n: ${_rl_freq}
                 accumulate: true
             - do_env_step
+      - save_ckpt:
+          full: false
+          tag: final
+  ppo_alpha:
+    $extends: [ppo.atari]
+    rl.ppo.alpha:
+      adaptive: true
+      value: 1.0
+      target: auto
+      auto_coefs: [0.75, 5e-2]
+      opt:
+        type: adam
+        lr: ${ppo.opt.lr}
+        eps: 1e-4
+  dreamer_ppo:
+    $extends: [dreamer.atari]
+    rl:
+      loader: dream_rl
+      type: ppo
+      ppo:
+        encoder:
+          type: box
+          box: ${_.mlp}
+        actor_dist:
+          type: auto
+        adv_norm: true
+        clip_vloss: true
+        vf_coef: 0.5
+        clip_grad: 0.5
+        gamma: 0.99
+        gae_lambda: 0.95
+        share_encoder: true
+        update_epochs: 8
+        update_batch: 1024
+        opt:
+          type: adam
+          lr: 3e-4
+        clip_coef: 0.2
+        alpha:
+          adaptive: true
+          value: 1.0
+          target: auto
+          auto_coefs: [0.75, 5e-2]
+          opt:
+            type: adam
+            lr: ${ppo.opt.lr}
+            eps: 1e-4
+    stages:
+      - env_rollout:
+          until: 50e3
+          mode: rand
+      - train_loop:
+          until: 5e6
+          tasks:
+            - do_val_epoch: ~
+              every: 1e6
+            - do_opt_step: ~
+              every:
+                n: 64
+                accumulate: true
+            - do_env_step
+  pretrain_wm:
+    $extends: [dreamer.atari, atari.base]
+    _freq: 64
+    _prefill: 40e3
+    data.val_frac: 0.15
+    stages:
+      - env_rollout:
+          until: ${_prefill}
+          mode: rand
+      - train_wm:
+          stop_criteria:
+            rel_patience: 0.5
+            margin: 0.0
+            min_steps: 1024
+          val_on_loss_improv: 0.2
+          val_every: 1024
+          max_val_batches: 128
+      - train_loop:
+          until: 400e3
+          tasks:
+            - do_val_epoch: ~
+              every: 20e3
+            - do_val_step: ~
+              every: { n: 16, of: wm_opt_step }
+            - do_opt_step: ~
+              every:
+                n: ${_freq}
+                accumulate: true
+            - do_env_step
+      - do_val_epoch: ~
       - save_ckpt:
           full: false
           tag: final

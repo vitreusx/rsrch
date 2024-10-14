@@ -15,6 +15,7 @@ from ..common import nets
 from ..common.trainer import ScaledOptimizer, TrainerBase
 from ..common.types import Slices
 from ..common.utils import find_class
+from . import _alpha as alpha
 
 
 @dataclass
@@ -24,14 +25,14 @@ class Config:
     update_epochs: int
     update_batch: int
     adv_norm: bool
-    clip_coeff: float
+    clip_coef: float
     clip_vloss: bool
     gamma: float
     gae_lambda: float
     opt: dict
     clip_grad: float | None
-    ent_coeff: float
-    vf_coeff: float
+    alpha: alpha.Config
+    vf_coef: float
     share_encoder: bool
 
 
@@ -132,6 +133,7 @@ class Trainer(TrainerBase):
             self.critic = Critic(cfg, actor.obs_space).to(device)
             parameters = [*self.actor.parameters(), *self.critic.parameters()]
         self.opt = self._make_opt(parameters)
+        self.alpha = alpha.Alpha(cfg.alpha, actor.act_space, device)
 
     def _make_opt(self, parameters):
         cfg = {**self.cfg.opt}
@@ -209,13 +211,13 @@ class Trainer(TrainerBase):
 
                     t1 = -adv_ * ratio
                     t2 = -adv_ * ratio.clamp(
-                        1 - self.cfg.clip_coeff, 1 + self.cfg.clip_coeff
+                        1 - self.cfg.clip_coef, 1 + self.cfg.clip_coef
                     )
                     policy_loss = torch.max(t1, t2).mean()
 
                     if self.cfg.clip_vloss:
                         clipped_v = val[idxes] + (new_value - val[idxes]).clamp(
-                            -self.cfg.clip_coeff, self.cfg.clip_coeff
+                            -self.cfg.clip_coef, self.cfg.clip_coef
                         )
                         v_loss1 = (new_value - ret[idxes]).square()
                         v_loss2 = (clipped_v - ret[idxes]).square()
@@ -224,15 +226,13 @@ class Trainer(TrainerBase):
                         v_loss = 0.5 * (new_value - ret[idxes]).square().mean()
 
                     new_ent = new_policy.entropy()
-                    ent_loss = -new_ent.mean()
+                    ent_loss = self.alpha.value * -new_ent.mean()
 
-                    loss = (
-                        policy_loss
-                        + self.cfg.ent_coeff * ent_loss
-                        + self.cfg.vf_coeff * v_loss
-                    )
+                    loss = policy_loss + ent_loss + self.cfg.vf_coef * v_loss
 
                 self.opt.step(loss, self.cfg.clip_grad)
+                if self.alpha.adaptive:
+                    self.alpha.opt_step(new_ent)
 
         with torch.no_grad():
             mets = {
@@ -240,7 +240,6 @@ class Trainer(TrainerBase):
                 "adv": true_adv.mean(),
                 "policy_loss": policy_loss,
                 "entropy": new_ent.mean(),
-                "ent_loss": ent_loss,
                 "v_loss": v_loss,
                 "value": val.mean(),
             }

@@ -1,5 +1,5 @@
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 import torch
@@ -13,25 +13,31 @@ from ..common.utils import to_camel_case
 
 @dataclass
 class Config:
-    adaptive: bool
-    value: float
-    target: float | Literal["auto"]
-    opt: dict
+    adaptive: bool = False
+    value: float = 1.0
+    min_value: float = 1e-8
+    target: float | Literal["auto"] = "auto"
+    auto_coefs: tuple[float, float] = (0.89, 5e-2)
+    opt: dict = field(default_factory=dict)
 
 
-def auto_target(act_space: spaces.torch.Tensor) -> float:
+def auto_target(
+    act_space: spaces.torch.Tensor,
+    coefs: tuple[float, float],
+) -> float:
+    disc_coef, cont_coef = coefs
+
     if isinstance(act_space, (spaces.torch.Discrete, spaces.torch.OneHot)):
-        # Target: 0.89 of maximum entropy for discrete space type.
+        # Target: `disc_coef` of maximum entropy for discrete space type.
         # Another interpretation is as an analogue of an eps-greedy policy
-        # with eps ~= 0.75
         logits = torch.zeros([act_space.n])
         max_ent = D.Categorical(logits=logits).entropy()
-        return (0.89 * max_ent).item()
+        return (disc_coef * max_ent).item()
 
     elif isinstance(act_space, spaces.torch.Box):
-        # Target: normal distribution with scale ratio of 5e-2 of the extent
+        # Target: normal distribution with scale ratio of `cont_coef` of the extent
         # of the action space.
-        scale = 5e-2 * (act_space.high - act_space.low)
+        scale = cont_coef * (act_space.high - act_space.low)
         dist = D.Normal(0, scale, len(act_space.shape))
         return dist.entropy().item()
 
@@ -55,10 +61,11 @@ class Alpha(nn.Module):
         if self.adaptive:
             log_value = math.log(self.cfg.value)
             self.log_value = nn.Parameter(torch.tensor([log_value], device=device))
+            self.min_log_value = math.log(self.cfg.min_value)
             self.opt = self._make_opt([self.log_value], cfg.opt)
             self.value = math.exp(self.log_value.item())
             if cfg.target == "auto":
-                self.target = auto_target(act_space)
+                self.target = auto_target(act_space, cfg.auto_coefs)
             else:
                 self.target = cfg.target
         else:
@@ -73,7 +80,8 @@ class Alpha(nn.Module):
         return cls(parameters, **cfg)
 
     def opt_step(self, entropy: Tensor):
-        loss = self.log_value.exp() * (entropy.detach().mean() - self.target)
+        value = self.log_value.clamp_min(self.min_log_value).exp()
+        loss = value * (entropy.detach().mean() - self.target)
         self.opt.zero_grad(set_to_none=True)
         loss.backward()
         self.opt.step()

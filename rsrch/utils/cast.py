@@ -1,8 +1,9 @@
 import inspect
 import types
 import typing
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import MISSING, dataclass, fields, is_dataclass
 from functools import partial, wraps
+from textwrap import indent
 from typing import Any, Callable, ParamSpec, Type, TypeVar, get_args, get_origin
 
 T = TypeVar("T")
@@ -17,12 +18,28 @@ def cast(x: Any, t: Type[T]) -> T:
 
     elif t in (None, type(None)):
         if x is not None:
-            raise ValueError(f"Cannot cast {x} to None.")
+            raise ValueError(f"Value is not None")
         return None
 
     elif is_dataclass(t):
         if not isinstance(x, dict):
-            raise ValueError(f"Cannot convert non-dict to {t}")
+            raise ValueError(f"Cannot convert non-dict to a dataclass.")
+
+        provided = set(x)
+        allowed = {field.name for field in fields(t)}
+        required = {
+            field.name
+            for field in fields(t)
+            if field.default == MISSING and field.default_factory == MISSING
+        }
+
+        extraneous = provided.difference(allowed)
+        if len(extraneous) > 0:
+            raise ValueError(f"Provided extraneous parameters: {extraneous}")
+
+        missing = required.difference(provided)
+        if len(missing) > 0:
+            raise ValueError(f"Missing parameters: {missing}")
 
         args = {}
         field_map = {field.name: field for field in fields(t)}
@@ -32,7 +49,13 @@ def cast(x: Any, t: Type[T]) -> T:
             field_t = field.type
             if isinstance(field_t, str):
                 field_t = eval(field_t)
-            args[field.name] = cast(x[field.name], field_t)
+
+            try:
+                args[field.name] = cast(x[field.name], field_t)
+            except Exception as e:
+                raise ValueError(
+                    f"Cannot cast value for {name}. Error:\n" + indent(str(e), " " * 2)
+                )
 
         return t(**args)
 
@@ -41,12 +64,21 @@ def cast(x: Any, t: Type[T]) -> T:
             ti_ = get_origin(ti) or ti
             if isinstance(ti_, type) and isinstance(x, ti_):
                 return x
+
+        errors = []
         for ti in t_args:
             try:
                 return cast(x, ti)
-            except:
+            except Exception as e:
+                errors.append(e)
                 pass
-        raise ValueError(f"None of the variant types {t_args} match value {x}")
+
+        lines = [f"Value cannot be cast into any of the variant types. Errors:"]
+        for ti, err in zip(t_args, errors):
+            lines.append(f"- for {ti}:")
+            lines.append(indent(f"{err}", " " * 4))
+
+        raise ValueError("\n".join(lines))
 
     elif t in (typing.Tuple, tuple):
         return tuple([cast(xi, ti) for xi, ti in zip(x, t_args)])
@@ -65,7 +97,7 @@ def cast(x: Any, t: Type[T]) -> T:
     elif t in (typing.Literal,):
         # For Literals, check if the value is one of the allowed values.
         if x not in t_args:
-            raise ValueError(f"{x} is not one of {t_args}")
+            raise ValueError(f"Value is not one of {t_args}")
         return x
 
     elif t == bool and isinstance(x, str):
@@ -75,7 +107,7 @@ def cast(x: Any, t: Type[T]) -> T:
         elif x in ("1", "t", "true", "y", "yes"):
             return True
         else:
-            raise ValueError(f"Cannot interpret {x} as bool")
+            raise ValueError(f"Value is not one of: 0/1, f/t, false/true, n/y, no/yes.")
 
     else:
         return x if isinstance(t, type) and isinstance(x, t) else t(x)
