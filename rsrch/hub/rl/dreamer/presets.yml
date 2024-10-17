@@ -503,3 +503,25 @@ exp:
       - save_ckpt:
           full: false
           tag: final
+  heavy_priming:
+    $extends: [sanity_check]
+    stages:
+      - env_rollout:
+          until: 20e3
+          mode: rand
+      - train_loop:
+          until: { n: 100e3, of: wm_opt_step }
+          tasks: [do_opt_step]
+      - env_rollout:
+          until: 200e3
+          mode: rand
+      - train_loop:
+          until: 5e6
+          tasks:
+            - do_val_epoch: ~
+              every: 1e6
+            - do_opt_step: ~
+              every:
+                n: 64
+                accumulate: true
+            - do_env_step
