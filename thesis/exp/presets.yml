@@ -10,7 +10,7 @@ thesis:
     data.val_frac: 0.0
     stages:
       - prefill:
-          until: 50e3
+          until: 200e3
       - train_loop:
           until: 5e6
           tasks:
@@ -82,9 +82,10 @@ thesis:
 
   pretrain:
     # Perform offline pretraining stage after the prefill stage
-    _ratio: 64
+    _wm_ratio: 64
+    _rl_ratio: 64
     _prefill: 20e3
-    _pretrain_rl_freq: 0.0
+    _rl_freq: 0.0
     stages:
       - prefill:
           until: ${_prefill}
@@ -96,17 +97,23 @@ thesis:
           val_on_loss_improv: 0.2
           val_every: 1024
           max_val_batches: 128
-          rl_opt_freq: ${_pretrain_rl_freq}
+          rl_opt_freq: ${_rl_freq}
       - train_loop:
           until: 400e3
           tasks:
             - do_val_epoch: ~
               every: 20e3
-            - do_val_step: ~
+            - do_wm_val_step: ~
               every: { n: 16, of: wm_opt_step }
-            - do_opt_step: ~
+            - do_rl_val_step: ~
+              every: { n: 16, of: rl_opt_step }
+            - do_wm_opt_step: ~
               every:
-                n: ${_ratio}
+                n: ${_wm_ratio}
+                accumulate: true
+            - do_rl_opt_step: ~
+              every:
+                n: ${_rl_ratio}
                 accumulate: true
             - do_env_step
       - do_val_epoch
