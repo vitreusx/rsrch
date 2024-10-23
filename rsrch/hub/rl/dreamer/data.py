@@ -79,7 +79,7 @@ class BatchWM:
         )
 
 
-class RealLoaderWM(data.IterableDataset):
+class DreamerWMLoader(data.IterableDataset):
     def __init__(
         self,
         buf: rl.data.Buffer,
@@ -243,7 +243,7 @@ class RealLoaderWM(data.IterableDataset):
         )
 
 
-class RealLoaderWM_v2(data.IterableDataset):
+class SliceWMLoader(data.IterableDataset):
     def __init__(
         self,
         buf: rl.data.Buffer,
@@ -302,7 +302,7 @@ class RealLoaderWM_v2(data.IterableDataset):
         return slices
 
 
-class RealLoaderRL(data.IterableDataset):
+class SlicesRLLoader(data.IterableDataset):
     def __init__(
         self,
         buf: rl.data.Buffer,
@@ -388,10 +388,10 @@ class RealLoaderRL(data.IterableDataset):
         return slices
 
 
-class DreamLoaderRL(data.IterableDataset):
+class DreamerRLLoader(data.IterableDataset):
     def __init__(
         self,
-        real_slices: RealLoaderWM,
+        real_slices: DreamerWMLoader,
         wm: WorldModel,
         actor: Actor,
         batch_size: int,
@@ -483,7 +483,7 @@ class DreamLoaderRL(data.IterableDataset):
             yield self.dream_from(h_0, term)
 
 
-class OnPolicyLoaderRL(data.IterableDataset):
+class OnPolicyRLLoader(data.IterableDataset):
     def __init__(
         self,
         do_env_step: Callable[[], tuple[int, tuple[dict, bool]]],

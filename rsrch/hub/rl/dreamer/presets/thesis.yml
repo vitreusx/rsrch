@@ -1,0 +1,163 @@
+thesis:
+  base:
+    $extends: [dreamer.atari, atari.base]
+    # For all experiments (save the sanity check) we reserve 15% of the episodes for validation purposes.
+    data.val_frac: 0.15
+
+  sanity_check:
+    # Check if the reference scores for base DreamerV2 are correct
+    $extends: [base]
+    data.val_frac: 0.0
+    stages:
+      - prefill:
+          until: 50e3
+      - train_loop:
+          until: 5e6
+          tasks:
+            - do_val_epoch: ~
+              every: 1e6
+            - do_opt_step: ~
+              every:
+                n: 64
+                accumulate: true
+            - do_env_step
+      - do_val_epoch
+
+  baseline:
+    # A baseline test - run the loop for 400k steps, with variable update freq
+    $extends: [base]
+    _ratio: 64 # Ratio of env steps to model/agent opt steps
+    _prefill: 20e3
+    stages:
+      - prefill:
+          until: ${_prefill}
+      - train_loop:
+          until: 400e3
+          tasks:
+            - do_val_epoch: ~
+              every: 20e3
+            - do_val_step: ~
+              every: { n: 16, of: wm_opt_step }
+            - do_opt_step: ~
+              every:
+                n: ${_ratio}
+                accumulate: true
+            - do_env_step
+      - do_val_epoch
+      - save_ckpt:
+          full: false
+          tag: final
+
+  split_ratios:
+    # Like the baseline test, but the model and agent update freqs are different
+    $extends: [base]
+    _wm_ratio: 64
+    _rl_ratio: 64
+    _prefill: 20e3
+    stages:
+      - prefill:
+          until: ${_prefill}
+      - train_loop:
+          until: 400e3
+          tasks:
+            - do_val_epoch: ~
+              every: 20e3
+            - do_wm_val_step: ~
+              every: { n: 16, of: wm_opt_step }
+            - do_rl_val_step: ~
+              every: { n: 16, of: rl_opt_step }
+            - do_wm_opt_step: ~
+              every:
+                n: ${_wm_ratio}
+                accumulate: true
+            - do_rl_opt_step: ~
+              every:
+                n: ${_rl_ratio}
+                accumulate: true
+            - do_env_step
+      - do_val_epoch
+      - save_ckpt:
+          full: false
+          tag: final
+
+  pretrain:
+    # Perform offline pretraining stage after the prefill stage
+    _ratio: 64
+    _prefill: 20e3
+    _pretrain_rl_freq: 0.0
+    stages:
+      - prefill:
+          until: ${_prefill}
+      - pretrain:
+          stop_criteria:
+            rel_patience: 0.5
+            margin: 0.0
+            min_steps: 1024
+          val_on_loss_improv: 0.2
+          val_every: 1024
+          max_val_batches: 128
+          rl_opt_freq: ${_pretrain_rl_freq}
+      - train_loop:
+          until: 400e3
+          tasks:
+            - do_val_epoch: ~
+              every: 20e3
+            - do_val_step: ~
+              every: { n: 16, of: wm_opt_step }
+            - do_opt_step: ~
+              every:
+                n: ${_ratio}
+                accumulate: true
+            - do_env_step
+      - do_val_epoch
+      - save_ckpt:
+          full: false
+          tag: final
+
+  periodic_resets:
+    # Perform periodic parameter resets
+    $extends: [base]
+    _wm_ratio: 64
+    _wm_reset_period: ~
+    _rl_ratio: 64
+    _rl_reset_period: ~
+    _prefill: 20e3
+    stages:
+      - prefill:
+          until: ${_prefill}
+      - train_loop:
+          until: 400e3
+          tasks:
+            - do_val_epoch: ~
+              every: 20e3
+            - reset_rl:
+                match_params: .*
+                shrink_coef: 0.0
+                pretrain: ~
+              every:
+                n: ${_rl_reset_period}
+                of: rl_opt_step
+            - reset_wm:
+                match_params: .*
+                shrink_coef: 0.0
+                pretrain: ~
+              every:
+                n: ${_wm_reset_period}
+                of: wm_opt_step
+            - do_wm_val_step: ~
+              every: { n: 16, of: wm_opt_step }
+            - do_rl_val_step: ~
+              every: { n: 16, of: rl_opt_step }
+            - do_wm_opt_step: ~
+              every:
+                n: ${_wm_ratio}
+                accumulate: true
+            - do_rl_opt_step: ~
+              every:
+                n: ${_rl_ratio}
+                accumulate: true
+            - do_env_step
+      - do_val_epoch
+      - save_ckpt:
+          full: false
+          tag: final

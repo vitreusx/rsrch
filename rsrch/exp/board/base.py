@@ -39,6 +39,10 @@ class Board:
         """Add a video. Accepts moviepy clips."""
         pass
 
+    def add_dict(self, tag: str, value: dict, *, step: Step = None):
+        """Add a dictionary."""
+        pass
+
 
 class StepMixin:
     def __init__(self):

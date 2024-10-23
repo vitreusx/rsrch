@@ -31,7 +31,6 @@ class Tensorboard(StepMixin, Board):
         super().__init__()
         self.dir = Path(dir)
         self._writer = tensorboard.SummaryWriter(log_dir=str(self.dir))
-        self._last = defaultdict(lambda: time.perf_counter())
 
     def add_config(self, config: dict):
         self._writer.add_hparams(hparam_dict=_flatten(config))

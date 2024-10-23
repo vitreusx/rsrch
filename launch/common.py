@@ -44,3 +44,6 @@ A100k_STABLE_5 = ["Assault", "BankHeist", "BattleZone", "CrazyClimber", "MsPacma
 
 # Manually selected subset of games, for which the performance curve is monotonic enough
 A100k_MONO = ["Pong", "CrazyClimber", "Assault", "Asterix"]
+
+# A new version of the subset of 3 games, which are (1) sufficiently monotonic to properly evaluate the speedup to be achieved, (2) are most predictive of the performance on Atari-100k subset of games.
+A100k_MONO_v2 = ["Assault", "CrazyClimber", "MsPacman"]

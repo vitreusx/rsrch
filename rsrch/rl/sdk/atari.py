@@ -9,9 +9,10 @@ import numpy as np
 import torch
 
 from rsrch import spaces
+from rsrch.rl.gym.wrappers import VecRecordStats
 
 from .. import data, gym
-from .utils import GymRecordStats, MapSeq, RecordStatsV, StackSeq
+from .utils import GymnasiumRecordStats, MapSeq, StackSeq
 
 ObsType = Literal["rgb", "grayscale", "ram"]
 
@@ -356,7 +357,7 @@ class SDK:
             seed=seed,
         )
 
-        envs = RecordStatsV(
+        envs = VecRecordStats(
             envs,
             frame_skip=self.cfg.frame_skip,
             do_stat_reset=lambda step: step["terminated"] == 1,
@@ -379,7 +380,7 @@ class SDK:
             repeat_action_probability=self.cfg.repeat_action_probability,
         )
 
-        env = GymRecordStats(env)
+        env = GymnasiumRecordStats(env)
 
         if self.cfg.obs_type in ("rgb", "grayscale"):
             env = gymnasium.wrappers.AtariPreprocessing(

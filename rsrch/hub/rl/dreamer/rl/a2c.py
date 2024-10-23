@@ -1,3 +1,4 @@
+import re
 from collections import namedtuple
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -16,7 +17,7 @@ from rsrch.rl import gym
 from rsrch.rl.utils import polyak
 from rsrch.utils import sched
 
-from ..common import nets
+from ..common import nets, plasticity
 from ..common.trainer import ScaledOptimizer, TrainerBase
 from ..common.types import Slices
 from ..common.utils import autocast, find_class, null_ctx, tf_init
@@ -132,15 +133,10 @@ class Trainer(TrainerBase):
         self.cfg = cfg
         self.actor = actor
 
-        def make_critic():
-            critic = Critic(cfg.critic, self.actor.obs_space)
-            critic = critic.to(self.device)
-            return critic
-
-        self.critic = make_critic()
+        self.critic = self._make_critic()
 
         if self.cfg.target_critic is not None:
-            self.target_critic = make_critic()
+            self.target_critic = self._make_critic()
             # polyak.sync(self.critic, self.target_critic)
             self.update_target = polyak.Polyak(
                 source=self.critic,
@@ -163,7 +159,13 @@ class Trainer(TrainerBase):
         self.actor_grad_mix = self._make_sched(cfg.actor_grad_mix)
         self.actor_ent = self._make_sched(cfg.actor_ent)
 
-        self._p0 = [p.data.clone() for p in self.opt.parameters]
+        self._actor_ref = plasticity.save_ref_state(self.actor)
+        self._critic_ref = plasticity.save_ref_state(self.critic)
+
+    def _make_critic(self):
+        critic = Critic(self.cfg.critic, self.actor.obs_space)
+        critic = critic.to(self.device)
+        return critic
 
     def save(self):
         state = super().save()
@@ -261,42 +263,71 @@ class Trainer(TrainerBase):
 
         with torch.no_grad():
             with self.autocast():
-                mets = {}
+                metrics = {}
+                metrics["reward_mean"] = batch.reward.mean()
+                metrics["reward_std"] = batch.reward.std()
+                metrics["target_mean"] = target.mean()
+                metrics["target_std"] = target.std()
+                metrics["ent_scale"] = ent_scale
+                metrics["entropy"] = policy_ent.mean()
+                metrics["value_mean"] = (value_dist.mean).mean()
 
-                mets["reward_mean"] = batch.reward.mean()
-                mets["reward_std"] = batch.reward.std()
-                mets["target_mean"] = target.mean()
-                mets["target_std"] = target.std()
-                mets["ent_scale"] = ent_scale
-                mets["entropy"] = policy_ent.mean()
-                mets["value_mean"] = (value_dist.mean).mean()
                 if "mix" in locals():
-                    mets["mix"] = mix
+                    metrics["mix"] = mix
 
-                mets["loss"] = loss
+                metrics["loss"] = loss
                 for k, v in losses.items():
-                    mets[f"{k}_loss"] = v.detach()
+                    metrics[f"{k}_loss"] = v.detach()
 
-        return mets
+        return metrics
 
-    @torch.no_grad()
-    def compute_stats(self):
-        p_norms, rel_p_norms, dp_norms, rel_dp_norms = [], [], [], []
-        for p0, p in zip(self._p0, self.opt.parameters):
-            p_norm = torch.linalg.norm(p.data)
-            p_norms.append(p_norm)
-            dp_norm = torch.linalg.norm(p.data - p0)
-            dp_norms.append(dp_norm)
-            p0_norm = torch.linalg.norm(p0)
-            if p0_norm != 0.0:
-                rel_p_norms.append(p_norm / p0_norm)
-                rel_dp_norms.append(dp_norm / p0_norm)
+    def check_plasticity(self, batch: Slices):
+        obs = batch.obs.flatten(0, 1)
 
-        stats = {}
-        stats["p_norm"] = torch.mean(torch.stack(p_norms))
-        stats["dp_norm"] = torch.mean(torch.stack(dp_norms))
-        if len(rel_p_norms) > 0:
-            stats["rel_p_norm"] = torch.mean(torch.stack(rel_p_norms))
-            stats["rel_dp_norm"] = torch.mean(torch.stack(rel_dp_norms))
+        _, actor_res = plasticity.full_test(
+            module=self.actor,
+            ref_state=self._actor_ref,
+            input=(obs,),
+        )
+        actor_mets = plasticity.full_metrics(actor_res)
 
-        return stats
+        _, critic_res = plasticity.full_test(
+            module=self.critic,
+            ref_state=self._critic_ref,
+            input=(obs,),
+        )
+        critic_mets = plasticity.full_metrics(critic_res)
+
+        metrics = {
+            **{f"actor/{k}": v for k, v in actor_mets.items()},
+            **{f"critic/{k}": v for k, v in critic_mets.items()},
+        }
+        results = {"actor": actor_res, "critic": critic_res}
+
+        return metrics, results
+
+    def reset(
+        self,
+        make_actor: Callable[[], Actor],
+        match_params: str,
+        shrink_coef: float,
+    ):
+        match_re = re.compile(match_params)
+
+        old_params = {
+            **dict(self.actor.named_parameters(prefix="actor")),
+            **dict(self.critic.named_parameters(prefix="critic")),
+        }
+
+        new_actor = make_actor()
+        new_critic = self._make_critic()
+        new_params = {
+            **dict(new_actor.named_parameters(prefix="actor")),
+            **dict(new_critic.named_parameters(prefix="critic")),
+        }
+
+        for name in old_params:
+            if match_re.match(name) is not None and name in new_params:
+                polyak.update_param(new_params[name], old_params[name], shrink_coef)
+
+        polyak.sync(self.critic, self.target_critic)

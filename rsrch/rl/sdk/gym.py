@@ -9,10 +9,11 @@ import numpy as np
 import torch
 
 from rsrch import spaces
+from rsrch.rl.gym.wrappers import VecRecordStats
 from rsrch.types.tensorlike.dict import TensorDict
 
 from .. import data, gym
-from .utils import GymRecordStats, MapSeq, RecordStatsV
+from .utils import GymnasiumRecordStats, MapSeq
 
 ObsType = Literal["base", "flat", "render"]
 
@@ -252,7 +253,7 @@ class SDK:
                 num_envs=num_envs,
                 seed=seed,
             )
-            envs = RecordStatsV(envs)
+            envs = VecRecordStats(envs)
         except:
             return
 
@@ -264,7 +265,7 @@ class SDK:
             render_mode="rgb_array" if render else None,
         )
 
-        env = GymRecordStats(env)
+        env = GymnasiumRecordStats(env)
 
         if (
             isinstance(env.action_space, gymnasium.spaces.Box)

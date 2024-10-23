@@ -1,12 +1,20 @@
+import torch
 import torch.nn as nn
 
 
+@torch.no_grad()
+def update_param(source: nn.Parameter, target: nn.Parameter, tau: float):
+    new_val = tau * target.data + (1.0 - tau) * source.data
+    target.data.copy_(new_val)
+
+
+@torch.no_grad()
 def update(source: nn.Module, target: nn.Module, tau: float):
     for target_p, source_p in zip(target.parameters(), source.parameters()):
-        new_val = tau * target_p.data + (1.0 - tau) * source_p.data
-        target_p.data.copy_(new_val)
+        update_param(source_p, target_p, tau)
 
 
+@torch.no_grad()
 def sync(source: nn.Module, target: nn.Module):
     target.load_state_dict(source.state_dict())
 

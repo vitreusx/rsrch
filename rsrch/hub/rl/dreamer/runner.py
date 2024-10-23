@@ -4,6 +4,7 @@ import logging
 import lzma
 import pickle
 import tempfile
+import threading
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from functools import wraps
@@ -11,7 +12,7 @@ from itertools import islice
 from pathlib import Path
 from queue import Queue
 from threading import Lock, RLock, Thread
-from typing import Literal
+from typing import Callable, Literal, ParamSpec, TypeVar
 
 import numpy as np
 import torch
@@ -20,11 +21,12 @@ from tqdm import tqdm
 
 from rsrch import rl, spaces
 from rsrch.exp import Experiment
+from rsrch.exp.board.sqlite import Sqlite
 from rsrch.exp.board.tensorboard import Tensorboard
 from rsrch.exp.profile import Profiler
 from rsrch.rl.utils import polyak
 from rsrch.utils import cron, repro, sched
-from rsrch.utils.cast import argcast, safe_bind
+from rsrch.utils.cast import safe_bind, with_argcast
 from rsrch.utils.early_stop import EarlyStopping
 
 from . import agent, config, data
@@ -34,16 +36,24 @@ from .config import Config
 from .rl import a2c, ppo, sac
 from .wm import dreamer
 
+P = ParamSpec("P")
+R = TypeVar("R")
 
-def exec_once(method):
+
+def exec_once(method: Callable[P, R]) -> Callable[P, R]:
+    """Mark the method as a one-time-only function. Calls to the function beyond the first one will be skipped."""
+
     name = method.__name__
+    retval = None
 
     @wraps(method)
     def wrapper(self, *args, **kwargs):
-        if getattr(self, f"{name}_done", False):
-            return
-        method(self, *args, **kwargs)
-        setattr(self, f"{name}_done", True)
+        nonlocal retval
+        if getattr(self, f"_{name}_done", False):
+            return retval
+        retval = method(self, *args, **kwargs)
+        setattr(self, f"_{name}_done", True)
+        return retval
 
     return wrapper
 
@@ -53,15 +63,20 @@ class Runner:
         self.cfg = cfg
 
     def main(self):
-        self._setup_common()
+        self.setup_base()
+        if self.cfg.mode == "train":
+            self.setup_train()
 
-        for stage in self.cfg.stages:
-            if isinstance(stage, str):
-                func = lambda: getattr(self, stage)()
+        self.block(self.cfg.stages)
+
+    def block(self, tasks: list):
+        for task in tasks:
+            if isinstance(task, str):
+                func = lambda: getattr(self, task)()
             else:
-                assert len(stage) == 1
-                name = next(iter(stage.keys()))
-                params = stage[name]
+                assert len(task) == 1
+                name = next(iter(task.keys()))
+                params = task[name]
                 if params is None:
                     params = {}
                 func = safe_bind(getattr(self, name), **params)
@@ -69,7 +84,7 @@ class Runner:
             func()
 
     @exec_once
-    def _setup_common(self):
+    def setup_base(self):
         repro.seed_all(self.cfg.repro.seed)
         repro.set_fully_deterministic(self.cfg.repro.determinism == "full")
 
@@ -90,10 +105,56 @@ class Runner:
             create_commit=self.cfg.run.create_commit,
         )
 
-        board = Tensorboard(dir=self.exp.dir / "board")
-        self.exp.boards.append(board)
+        self.exp.boards += [
+            Tensorboard(dir=self.exp.dir / "board"),
+            Sqlite(path=self.exp.dir / "board.db", scalars=False),
+        ]
+
         self.exp.set_as_default(self.cfg.def_step)
 
+        self._setup_wm()
+        self._setup_rl()
+
+        self.wm_trainer = None
+        self.rl_trainer = None
+
+        if self.cfg.profile.enabled:
+            cfg = self.cfg.profile
+            self._prof = Profiler(
+                device=self.device,
+                traces_dir=self.exp.dir / "traces",
+                schedule=cfg.schedule,
+            )
+            for name in cfg.functions:
+                f = self._prof.profiled(getattr(self, name))
+                setattr(self, name, f)
+
+        self.buf = rl.data.Buffer()
+        self.buf = self.sdk.wrap_buffer(self.buf)
+        self.buf_mtx = RLock()
+
+        self.envs = self.sdk.make_envs(
+            self.cfg.train.num_envs,
+            mode="train",
+        )
+        self.agent = self._make_agent(mode="train")
+
+        self.val_envs = self.sdk.make_envs(
+            self.cfg.val.num_envs,
+            mode="val",
+        )
+        self.val_agent = self._make_agent(mode="val")
+
+        self.env_iter = iter(self.sdk.rollout(self.envs, self.agent))
+        self._env_steps = defaultdict(lambda: 0)
+        self._ep_ids = defaultdict(lambda: None)
+
+        self.env_step = 0
+        self.exp.register_step("env_step", lambda: self.env_step)
+        self.agent_step = 0
+        self.exp.register_step("agent_step", lambda: self.agent_step)
+
+    def _setup_wm(self):
         wm_type = self.cfg.wm.type
         if wm_type == "dreamer":
             wm_cfg = self.cfg.wm.dreamer
@@ -109,7 +170,8 @@ class Runner:
         if self.wm is not None:
             self.wm = self.wm.to(self.device)
 
-        if self.cfg.rl.loader == "dream_rl":
+    def _setup_rl(self):
+        if self.cfg.rl.loader == "dreamer_rl":
             self.rl_obs_space = self.wm.state_space
             self.rl_act_space = self.wm.act_space
         else:
@@ -131,40 +193,6 @@ class Runner:
 
         self.actor = self.actor.to(self.device)
 
-        if self.cfg.profile.enabled:
-            cfg = self.cfg.profile
-            self._prof = Profiler(
-                device=self.device,
-                traces_dir=self.exp.dir / "traces",
-                schedule=cfg.schedule,
-            )
-            for name in cfg.functions:
-                f = self._prof.profiled(getattr(self, name))
-                setattr(self, name, f)
-
-        self.buf = rl.data.Buffer()
-        self.buf = self.sdk.wrap_buffer(self.buf)
-        self.buf_mtx = RLock()
-
-        self.envs = self.sdk.make_envs(
-            self.cfg.train.num_envs,
-            mode="train",
-        )
-
-        self.agent = self._make_agent(mode="train")
-
-        self.env_iter = iter(self.sdk.rollout(self.envs, self.agent))
-        self._env_steps = defaultdict(lambda: 0)
-        self._ep_ids = defaultdict(lambda: None)
-
-        self.env_step = 0
-        self.exp.register_step("env_step", lambda: self.env_step)
-        self.agent_step = 0
-        self.exp.register_step("agent_step", lambda: self.agent_step)
-
-    def _compile(self, model: nn.Module):
-        return torch.compile(model, mode="reduce-overhead")
-
     def _make_agent(self, mode: Literal["train", "val"]):
         agent_ = rl_.Agent(
             self.actor,
@@ -172,7 +200,7 @@ class Runner:
             compute_dtype=self.compute_dtype,
         )
 
-        if self.cfg.rl.loader == "dream_rl":
+        if self.cfg.rl.loader == "dreamer_rl":
             agent_ = wm.Agent(
                 agent_,
                 wm=self.wm,
@@ -184,7 +212,7 @@ class Runner:
 
         return agent_
 
-    @argcast
+    @with_argcast
     def _get_until_params(self, spec: config.Until):
         if isinstance(spec, int):
             max_value = spec
@@ -193,17 +221,20 @@ class Runner:
             max_value, of = spec.n, spec.of
         return max_value, of
 
-    @argcast
+    @with_argcast
     def _make_until(self, spec: config.Until):
         max_value, of = self._get_until_params(spec)
         return cron.Until(lambda of=of: getattr(self, of), max_value)
 
-    @argcast
-    def _make_every(self, spec: config.Every):
+    @with_argcast
+    def _make_every(self, spec: config.Every | None):
         if isinstance(spec, int):
             spec = {"n": spec}
         else:
             spec = vars(spec)
+
+        if spec["n"] is None:
+            return cron.Never()
 
         args = {**spec}
         args["period"] = args["n"]
@@ -216,7 +247,7 @@ class Runner:
 
         return cron.Every(**args)
 
-    @argcast
+    @with_argcast
     def _make_sched(self, spec: config.Sched):
         if isinstance(spec, float):
             return sched.Constant(spec)
@@ -257,34 +288,65 @@ class Runner:
         self.buf = rl.data.Observable(self.buf)
         self.buf.attach(SplitHook(), replay=True)
 
-        if self.cfg.wm.loader == "real_wm":
-            self.wm_loader = data.RealLoaderWM(
+        self._setup_wm_loader()
+        self._setup_wm_val_loader()
+        self._setup_rl_loader()
+        self._setup_rl_val_loader()
+
+        self.buf = rl.data.SizeLimited(self.buf, cap=cfg.capacity)
+
+        self._setup_wm_trainer()
+        self._setup_rl_trainer()
+
+        self.wm_opt_step = 0
+        self.exp.register_step("wm_opt_step", lambda: self.wm_opt_step)
+
+        self.rl_opt_step = 0
+        self.exp.register_step("rl_opt_step", lambda: self.rl_opt_step)
+
+        self.should_log_wm = cron.Every(
+            lambda: self.wm_opt_step,
+            period=self.cfg.run.log_every,
+            iters=None,
+        )
+        self.should_log_rl = cron.Every(
+            lambda: self.rl_opt_step,
+            period=self.cfg.run.log_every,
+            iters=None,
+        )
+
+    def _setup_wm_loader(self):
+        cfg = self.cfg.data.loaders
+        if self.cfg.wm.loader == "dreamer_wm":
+            self.wm_loader = data.DreamerWMLoader(
                 buf=self.buf,
                 sampler=self.train_ep_ids,
-                **cfg.loaders.real_wm,
+                **cfg.dreamer_wm,
             )
             self.wm_iter = iter(self.wm_loader)
 
             if self.cfg.repro.determinism != "full":
                 self.wm_iter = data.make_async(self.wm_iter)
 
-        if self.cfg.rl.loader == "dream_rl":
-            self.rl_loader = data.DreamLoaderRL(
+    def _setup_rl_loader(self):
+        cfg = self.cfg.data.loaders
+        if self.cfg.rl.loader == "dreamer_rl":
+            self.rl_loader = data.DreamerRLLoader(
                 real_slices=self.wm_loader,
                 wm=self.wm,
                 actor=self.actor,
                 device=self.device,
                 compute_dtype=self.compute_dtype,
-                **cfg.loaders.dream_rl,
+                **cfg.dreamer_rl,
             )
             self.rl_iter = iter(self.rl_loader)
 
-        elif self.cfg.rl.loader == "real_rl":
-            sig = inspect.signature(data.RealLoaderRL)
+        elif self.cfg.rl.loader == "slices_rl":
+            sig = inspect.signature(data.SlicesRLLoader)
             args = sig.bind(
                 buf=self.buf,
                 sampler=self.train_ep_ids,
-                **cfg.loaders.real_rl,
+                **cfg.slices_rl,
             )
             args.apply_defaults()
 
@@ -294,10 +356,10 @@ class Runner:
             else:
                 sampler = rl.data.PSampler()
 
-            self.rl_loader = data.RealLoaderRL(
+            self.rl_loader = data.SlicesRLLoader(
                 buf=self.buf,
                 sampler=sampler,
-                **cfg.loaders.real_rl,
+                **cfg.slices_rl,
             )
             self.rl_iter = iter(self.rl_loader)
 
@@ -312,15 +374,14 @@ class Runner:
             temp_buf = rl.data.Buffer()
             temp_buf = self.sdk.wrap_buffer(temp_buf)
 
-            self.rl_loader = data.OnPolicyLoaderRL(
+            self.rl_loader = data.OnPolicyRLLoader(
                 do_env_step=self.do_env_step,
                 temp_buf=temp_buf,
-                **cfg.loaders.on_policy,
+                **cfg.on_policy,
             )
             self.rl_iter = iter(self.rl_loader)
 
-        self.buf = rl.data.SizeLimited(self.buf, cap=cfg.capacity)
-
+    def _setup_wm_trainer(self):
         wm_type = self.cfg.wm.type
         if wm_type == "dreamer":
             wm_cfg = self.cfg.wm.dreamer
@@ -328,6 +389,7 @@ class Runner:
         else:
             self.wm_trainer = None
 
+    def _setup_rl_trainer(self):
         rl_type = self.cfg.rl.type
         if rl_type == "a2c":
             rl_cfg = self.cfg.rl.a2c
@@ -356,57 +418,41 @@ class Runner:
         else:
             raise ValueError(rl_type)
 
-        self.wm_opt_step = 0
-        self.exp.register_step("wm_opt_step", lambda: self.wm_opt_step)
-
-        self.rl_opt_step = 0
-        self.exp.register_step("rl_opt_step", lambda: self.rl_opt_step)
-
-        self.should_log_wm = cron.Every(
-            lambda: self.wm_opt_step,
-            period=self.cfg.run.log_every,
-            iters=None,
-        )
-        self.should_log_rl = cron.Every(
-            lambda: self.rl_opt_step,
-            period=self.cfg.run.log_every,
-            iters=None,
-        )
-
-    @exec_once
-    def setup_val(self):
-        if self.cfg.wm.loader == "real_wm":
-            self.wm_val_step_loader = data.RealLoaderWM(
+    def _setup_wm_val_loader(self):
+        if self.cfg.wm.loader == "dreamer_wm":
+            self.wm_val_step_loader = data.DreamerWMLoader(
                 buf=self.buf,
                 sampler=self.val_ep_ids,
-                **self.cfg.data.loaders.real_wm,
+                **self.cfg.data.loaders.dreamer_wm,
             )
             self.wm_val_iter = iter(self.wm_val_step_loader)
 
             if self.cfg.repro.determinism != "full":
                 self.wm_val_iter = data.make_async(self.wm_val_iter)
 
-            self.wm_val_epoch_loader = data.RealLoaderWM(
+            self.wm_val_epoch_loader = data.DreamerWMLoader(
                 buf=self.buf,
                 sampler=self.val_ids,
-                **self.cfg.data.loaders.real_wm,
+                **self.cfg.data.loaders.dreamer_wm,
             )
 
-        if self.cfg.rl.loader == "dream_rl":
-            self.rl_val_loader = data.DreamLoaderRL(
+    def _setup_rl_val_loader(self):
+        if self.cfg.rl.loader == "dreamer_rl":
+            self.rl_val_loader = data.DreamerRLLoader(
                 real_slices=self.wm_val_step_loader,
                 wm=self.wm,
                 actor=self.actor,
                 device=self.device,
                 compute_dtype=self.compute_dtype,
-                **self.cfg.data.loaders.dream_rl,
+                **self.cfg.data.loaders.dreamer_rl,
             )
             self.rl_val_iter = iter(self.rl_val_loader)
 
-        self.val_envs = self.sdk.make_envs(self.cfg.val.num_envs, mode="val")
-        self.val_agent = self._make_agent(mode="val")
-
-    def save_buf(self, path: str | None = None, tag: str | None = None):
+    def save_buf(
+        self,
+        path: str | None = None,
+        tag: str | None = None,
+    ):
         if path is None:
             if tag is None:
                 cur_step = getattr(self, self.cfg.def_step)
@@ -424,6 +470,8 @@ class Runner:
 
     def load_buf(self, path: str | Path):
         path = Path(path)
+        if not path.exists() and (self.exp.dir / path).exists():
+            path = self.exp.dir / path
 
         with lzma.open(path, "rb") as f:
             self.buf.load(pickle.load(f))
@@ -444,11 +492,10 @@ class Runner:
             if self.wm_trainer is not None:
                 state["wm_trainer"] = self.wm_trainer.save()
 
-            state = {
-                **state,
-                "rl_trainer": self.rl_trainer.save(),
-                "repro": repro.state.save(),
-            }
+            if self.rl_trainer is not None:
+                state["rl_trainer"] = self.rl_trainer.save()
+
+            state["repro"] = repro.state.save()
 
         if tag is None:
             cur_step = getattr(self, self.cfg.def_step)
@@ -491,6 +538,24 @@ class Runner:
         while should_do:
             self.do_env_step(mode=mode)
             self._update_pbar(pbar, should_do)
+
+    def prefill(self, until: config.Until, ensure_nonempty: bool = True):
+        pbar = self._make_pbar("Prefill", until=until)
+        should_do = self._make_until(until)
+        while should_do:
+            self.do_env_step(mode="rand")
+            self._update_pbar(pbar, should_do)
+
+        if ensure_nonempty:
+            if self.cfg.wm.loader is not None:
+                while self.wm_loader.empty():
+                    self.do_env_step()
+                    self._update_pbar(pbar, should_do)
+
+            if self.cfg.rl.loader is not None:
+                while self.rl_loader.empty():
+                    self.do_env_step()
+                    self._update_pbar(pbar, should_do)
 
     def _make_pbar(
         self,
@@ -548,9 +613,6 @@ class Runner:
         until: config.Until,
         tasks: list[dict | str],
     ):
-        self.setup_train()
-        self.setup_val()
-
         task_functions = []
         should_run = []
 
@@ -587,16 +649,6 @@ class Runner:
         should_loop = self._make_until(until)
         pbar = self._make_pbar("Train loop", until=until)
 
-        if self.cfg.wm.loader is not None:
-            while self.wm_loader.empty():
-                self.do_env_step()
-                self._update_pbar(pbar, should_loop)
-
-        if self.cfg.rl.loader is not None:
-            while self.rl_loader.empty():
-                self.do_env_step()
-                self._update_pbar(pbar, should_loop)
-
         while should_loop:
             for task_idx in range(len(tasks)):
                 flag = should_run[task_idx]
@@ -612,7 +664,7 @@ class Runner:
 
                 self._update_pbar(pbar, should_loop)
 
-    def do_opt_step(self, n=1):
+    def do_opt_step(self, n: int = 1):
         for _ in range(n):
             self.do_wm_opt_step()
             self.do_rl_opt_step()
@@ -627,10 +679,9 @@ class Runner:
         num_episodes: int = 32,
         step: str | None = None,
     ):
-        self.setup_val()
         _step = step
 
-        if self.cfg.wm.loader is not None:
+        if self.wm_trainer is not None:
             wm_loss = self.do_wm_val_epoch(max_batches)
             if wm_loss is not None:
                 self.exp.add_scalar("val/wm_loss", wm_loss, step="wm_opt_step")
@@ -652,69 +703,9 @@ class Runner:
 
         self.exp.add_scalar("val/mean_ep_ret", np.mean(all_rets), step=_step)
 
-    def train_wm(
-        self,
-        stop_criteria: dict,
-        val_every: int,
-        val_on_loss_improv: float | None = None,
-        max_val_batches: int | None = None,
-    ):
-        self.setup_train()
+        self.check_plasticity()
 
-        should_stop = EarlyStopping(**stop_criteria)
-        should_val = cron.Every(lambda: self.wm_opt_step, val_every)
-
-        best_val_loss = np.inf
-        best_ckpt = tempfile.mktemp(suffix=".pth")
-
-        best_train_loss, prev_loss_val = None, None
-
-        pbar = self._make_pbar("Train WM", of="wm_opt_step")
-        while True:
-            should_val_ = bool(should_val)
-            if val_on_loss_improv is not None:
-                if best_train_loss is not None and (
-                    prev_loss_val is None
-                    or prev_loss_val / best_train_loss > 1.0 + val_on_loss_improv
-                ):
-                    should_val_ = True
-                    prev_loss_val = best_train_loss
-
-            if should_val_:
-                val_loss = self.do_wm_val_epoch(max_val_batches)
-                self.exp.add_scalar("wm/val_loss", val_loss, step="wm_opt_step")
-
-                if val_loss < best_val_loss:
-                    best_val_loss = val_loss
-                    torch.save(
-                        {
-                            "wm": self.wm.state_dict(),
-                            "wm_trainer": self.wm_trainer.save(),
-                        },
-                        best_ckpt,
-                    )
-
-                if should_stop(val_loss, self.wm_opt_step):
-                    break
-
-            train_loss = self.do_wm_opt_step()
-            if val_on_loss_improv is not None:
-                if best_train_loss is None or train_loss < best_train_loss:
-                    best_train_loss = train_loss
-
-            pbar.update()
-
-        with open(best_ckpt, "rb") as f:
-            best_state = torch.load(f, map_location="cpu")
-            self.wm.load_state_dict(best_state["wm"])
-            self.wm_trainer.load(best_state["wm_trainer"])
-
-        Path(best_ckpt).unlink()
-
-    @torch.no_grad()
     def do_wm_val_epoch(self, max_batches=None):
-        self.setup_val()
-
         if len(self.val_ids) == 0:
             return
 
@@ -746,7 +737,7 @@ class Runner:
         val_loss = val_loss / val_n
         return val_loss
 
-    def do_wm_opt_step(self, n=1):
+    def do_wm_opt_step(self, n: int = 1):
         if n > 1:
             for _ in range(n):
                 self.do_wm_opt_step()
@@ -781,7 +772,7 @@ class Runner:
         self.wm_opt_step += 1
         return wm_output.loss
 
-    def do_rl_opt_step(self, n=1):
+    def do_rl_opt_step(self, n: int = 1):
         if n > 1:
             for _ in range(n):
                 self.do_rl_opt_step()
@@ -833,24 +824,177 @@ class Runner:
 
         self.exp.add_scalar(f"wm/val_loss", wm_output.loss, step="wm_opt_step")
 
-        if hasattr(self.wm_trainer, "compute_stats"):
-            for k, v in self.wm_trainer.compute_stats().items():
-                self.exp.add_scalar(f"wm/stats/{k}", v, step="wm_opt_step")
-
     def do_rl_val_step(self):
-        if hasattr(self.rl_trainer, "compute_stats"):
-            for k, v in self.rl_trainer.compute_stats().items():
-                self.exp.add_scalar(f"rl/stats/{k}", v, step="rl_opt_step")
+        pass
 
-    def reset_rl(self):
-        if self.cfg.rl.type == "sac":
+    def check_plasticity(self):
+        if hasattr(self.wm_trainer, "check_plasticity"):
+            with self.buf_mtx:
+                wm_batch = next(self.wm_val_iter)
+
+            wm_batch = wm_batch.to(self.device)
+
+            self.wm_trainer.eval()
+            wm_mets, wm_res = self.wm_trainer.check_plasticity(
+                seq=wm_batch.seq,
+                h_0=wm_batch.h_0,
+            )
+
+            self.exp.add_dict(f"plas/wm/results", wm_res, step="rl_opt_step")
+            for k, v in wm_mets.items():
+                self.exp.add_scalar(f"plas/wm/{k}", v, step="wm_opt_step")
+
+        if hasattr(self.rl_trainer, "check_plasticity"):
+            with self.buf_mtx:
+                rl_batch = next(self.rl_val_iter)
+
+            rl_batch = rl_batch.to(self.device)
+
+            self.rl_trainer.eval()
+            rl_mets, rl_res = self.rl_trainer.check_plasticity(rl_batch)
+
+            self.exp.add_dict(f"plas/rl/results", rl_res, step="rl_opt_step")
+            for k, v in rl_mets.items():
+                self.exp.add_scalar(f"plas/rl/{k}", v, step="rl_opt_step")
+
+    def pretrain_wm(
+        self,
+        stop_criteria: dict,
+        val_every: int,
+        val_on_loss_improv: float | None,
+        max_val_batches: int | None,
+        rl_opt_freq: float,
+    ):
+        should_stop = with_argcast(EarlyStopping)(**stop_criteria)
+        max_steps = should_stop.max_steps
+
+        should_val = cron.Every(lambda: self.wm_opt_step, val_every)
+
+        best_val_loss = np.inf
+        best_ckpt = tempfile.mktemp(suffix=".pth")
+
+        best_train_loss, prev_loss_val = None, None
+
+        if rl_opt_freq > 0:
+            should_opt_rl = cron.Every(
+                lambda: self.wm_opt_step,
+                period=1.0,
+                iters=rl_opt_freq,
+                accumulate=True,
+            )
+        else:
+            should_opt_rl = cron.Never()
+
+        pbar = self._make_pbar("Pretrain", of="wm_opt_step")
+        while True:
+            should_val_ = bool(should_val)
+            if val_on_loss_improv is not None:
+                if best_train_loss is not None and (
+                    prev_loss_val is None
+                    or prev_loss_val / best_train_loss > 1.0 + val_on_loss_improv
+                ):
+                    should_val_ = True
+                    prev_loss_val = best_train_loss
+
+            if should_val_:
+                val_loss = self.do_wm_val_epoch(max_val_batches)
+                self.exp.add_scalar("wm/val_loss", val_loss, step="wm_opt_step")
+
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    torch.save(
+                        {
+                            "wm": self.wm.state_dict(),
+                            "wm_trainer": self.wm_trainer.save(),
+                        },
+                        best_ckpt,
+                    )
+
+                if should_stop(val_loss, self.wm_opt_step):
+                    break
+
+            train_loss = self.do_wm_opt_step()
+            if val_on_loss_improv is not None:
+                if best_train_loss is None or train_loss < best_train_loss:
+                    best_train_loss = train_loss
+
+            while should_opt_rl:
+                self.do_rl_opt_step()
+
+            pbar.update()
+
+            if max_steps is not None:
+                if self.wm_opt_step >= max_steps:
+                    break
+
+        with open(best_ckpt, "rb") as f:
+            best_state = torch.load(f, map_location="cpu")
+            self.wm.load_state_dict(best_state["wm"])
+            self.wm_trainer.load(best_state["wm_trainer"])
+
+        Path(best_ckpt).unlink()
+
+    def pretrain_rl(self, opt_steps: int):
+        self.do_rl_opt_step(opt_steps)
+
+    def reset_wm(
+        self,
+        match_params: str | list[str],
+        shrink_coef: float,
+        pretrain: dict | None = None,
+    ):
+        if isinstance(match_params, list):
+            match_params = "|".join(f"({pat})" for pat in match_params)
+
+        if self.cfg.wm.type == "dreamer":
+            self.wm_trainer: dreamer.Trainer
+
+            def make_wm():
+                wm = dreamer.WorldModel(
+                    cfg=self.cfg.wm.dreamer,
+                    obs_space=self.sdk.obs_space,
+                    act_space=self.sdk.act_space,
+                )
+                wm = wm.to(self.device)
+                return wm
+
+            self.wm_trainer.reset(
+                make_wm=make_wm,
+                match_params=match_params,
+                shrink_coef=shrink_coef,
+            )
+        else:
+            raise ValueError(self.cfg.wm.type)
+
+        if pretrain is not None:
+            with_argcast(self.pretrain_wm)(**pretrain)
+
+    def reset_rl(
+        self,
+        match_params: str | list[str],
+        shrink_coef: float,
+        pretrain: dict | None = None,
+    ):
+        if isinstance(match_params, list):
+            match_params = "|".join(f"({pat})" for pat in match_params)
+
+        if self.cfg.rl.type == "a2c":
+            self.rl_trainer: a2c.Trainer
 
             def make_actor():
-                cfg = self.cfg.rl.sac
-                actor = sac.Actor(cfg.actor, self.rl_obs_space, self.rl_act_space)
+                rl_cfg = self.cfg.rl.a2c
+                actor = a2c.Actor(rl_cfg.actor, self.rl_obs_space, self.rl_act_space)
                 actor = actor.to(self.device)
                 return actor
 
-            self.rl_trainer.reset(make_actor)
+            self.rl_trainer.reset(
+                make_actor=make_actor,
+                match_params=match_params,
+                shrink_coef=shrink_coef,
+            )
+
         else:
             raise ValueError(self.cfg.rl.type)
+
+        if pretrain is not None:
+            with_argcast(self.pretrain_rl)(**pretrain)

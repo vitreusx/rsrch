@@ -29,6 +29,7 @@ class Config:
     device: str
     compute_dtype: Literal["float16", "float32"]
     def_step: str
+    mode: Literal["train", "eval"]
 
     @dataclass
     class Debug:
@@ -50,9 +51,9 @@ class Config:
     class Data:
         @dataclass
         class Loaders:
-            real_wm: dict
-            real_rl: dict
-            dream_rl: dict
+            dreamer_wm: dict
+            dreamer_rl: dict
+            slices_rl: dict
             on_policy: dict
 
         capacity: int
@@ -78,7 +79,7 @@ class Config:
     @dataclass
     class WM:
         type: Literal["dreamer"] | None
-        loader: Literal["real_wm"] | None
+        loader: Literal["dreamer_wm"] | None
         dreamer: dreamer.Config | None
 
     wm: WM
@@ -86,7 +87,7 @@ class Config:
     @dataclass
     class RL:
         type: Literal["a2c", "ppo", "sac"]
-        loader: Literal["real_rl", "dream_rl", "on_policy"] | None
+        loader: Literal["slices_rl", "dreamer_rl", "on_policy"] | None
         a2c: a2c.Config | None
         ppo: ppo.Config | None
         sac: sac.Config | None

@@ -34,6 +34,7 @@ profile:
   enabled: false
   schedule: { wait: 5, warmup: 1, active: 3, repeat: 4 }
   functions: [do_opt_step, do_env_step]
+mode: train
 
 env:
   type: atari
@@ -53,16 +54,16 @@ data:
   capacity: 2e6
   val_frac: 0.0
   loaders:
-    real_wm:
+    dreamer_wm:
       batch_size: 16
       slice_len: 50
       subseq_len: [50, 50]
       prioritize_ends: true
       ongoing: false
-    dream_rl:
-      batch_size: ${real_wm.batch_size * real_wm.slice_len}
+    dreamer_rl:
+      batch_size: ${dreamer_wm.batch_size * dreamer_wm.slice_len}
       slice_len: 16
-    real_rl: {}
+    slices_rl: {}
     on_policy: {}
 
 train:
@@ -162,9 +163,8 @@ rl:
   sac: ~
 
 stages:
-  - env_rollout:
+  - prefill:
       until: 10e3
-      mode: rand
   - train_loop:
       until: 100e6
       tasks:

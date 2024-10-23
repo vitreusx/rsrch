@@ -1,9 +1,10 @@
+import re
 from collections import namedtuple
 from contextlib import contextmanager
 from copy import copy
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Literal
+from typing import Callable, Literal
 
 import numpy as np
 import torch
@@ -13,8 +14,9 @@ import rsrch.distributions as D
 from rsrch import spaces
 from rsrch.nn.utils import over_seq, safe_mode
 from rsrch.rl import gym
+from rsrch.rl.utils import polyak
 
-from ..common import nets
+from ..common import nets, plasticity
 from ..common.trainer import ScaledOptimizer, TrainerBase
 from ..common.types import Slices
 from ..common.utils import autocast, find_class, tf_init
@@ -156,7 +158,7 @@ class Trainer(TrainerBase):
         self.wm = wm
         self.opt = self._make_opt()
         self.reward_fn, _ = get_reward_scheme(cfg)
-        self._p0 = [p.data.clone() for p in self.opt.parameters]
+        self._wm_ref = plasticity.save_ref_state(self.wm)
 
     def _make_opt(self):
         cfg = {**self.cfg.opt}
@@ -257,24 +259,42 @@ class Trainer(TrainerBase):
     def opt_step(self, loss: Tensor):
         self.opt.step(loss, self.cfg.clip_grad)
 
-    @torch.no_grad()
-    def compute_stats(self):
-        p_norms, rel_p_norms, dp_norms, rel_dp_norms = [], [], [], []
-        for p0, p in zip(self._p0, self.opt.parameters):
-            p_norm = torch.linalg.norm(p.data)
-            p_norms.append(p_norm)
-            dp_norm = torch.linalg.norm(p.data - p0)
-            dp_norms.append(dp_norm)
-            p0_norm = torch.linalg.norm(p0)
-            if p0_norm != 0.0:
-                rel_p_norms.append(p_norm / p0_norm)
-                rel_dp_norms.append(dp_norm / p0_norm)
+    def check_plasticity(
+        self,
+        seq: Slices,
+        h_0: list[Tensor | None],
+    ):
+        class Forward(nn.Module):
+            def __init__(fwd):
+                super().__init__()
+                fwd.wm = self.wm
 
-        stats = {}
-        stats["p_norm"] = torch.mean(torch.stack(p_norms))
-        stats["dp_norm"] = torch.mean(torch.stack(dp_norms))
-        if len(rel_p_norms) > 0:
-            stats["rel_p_norm"] = torch.mean(torch.stack(rel_p_norms))
-            stats["rel_dp_norm"] = torch.mean(torch.stack(rel_dp_norms))
+            def forward(self, seq, h_0):
+                out, h_n = self.wm.observe((seq.obs, seq.act), h_0)
+                states, post, prior = out
+                obs_dist = over_seq(self.wm.obs_dec)(states)
+                rew_dist = over_seq(self.wm.reward_dec)(states)
+                term_dist = over_seq(self.wm.term_dec)(states)
 
-        return stats
+        ref_state = {f"wm.{k}": v for k, v in self._wm_ref.items()}
+        _, results = plasticity.full_test(Forward(), ref_state, (seq, h_0, {}))
+        metrics = plasticity.full_metrics(results)
+
+        return metrics, results
+
+    def reset(
+        self,
+        make_wm: Callable[[], WorldModel],
+        match_params: str,
+        shrink_coef: float,
+    ):
+        match_re = re.compile(match_params)
+
+        old_params = dict(self.wm.named_parameters())
+
+        new_wm = make_wm()
+        new_params = dict(new_wm.named_parameters())
+
+        for name in old_params:
+            if match_re.match(name) is not None and name in new_params:
+                polyak.update_param(new_params[name], old_params[name], shrink_coef)

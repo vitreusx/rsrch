@@ -1,0 +1,109 @@
+sac:
+  base:
+    $extends: [no_model]
+    rl:
+      type: sac
+      sac:
+        num_qf: 2
+        gamma: 0.99
+        alpha:
+          adaptive: true
+          value: 1.0
+          target: auto
+          auto_coefs: [0.89, 5e-2]
+          opt:
+            type: adam
+            lr: ${qf.opt.lr}
+            eps: 1e-4
+        clip_grad: ~
+        actor:
+          opt:
+            type: adam
+            eps: 1e-5
+        qf:
+          opt:
+            type: adam
+            eps: 1e-5
+    profile.functions: [do_rl_opt_step]
+  mujoco:
+    $extends: [base]
+    env:
+      type: gym
+      gym:
+        env_id: HalfCheetah-v4
+    data:
+      capacity: 1e6
+      loaders.slices_rl:
+        batch_size: 256
+        slice_len: 2
+    rl.sac:
+      actor:
+        encoder:
+          type: box
+          box:
+            hidden: 256
+            layers: 2
+            act: relu
+        opt.lr: 3e-4
+      qf:
+        polyak:
+          every: 1
+          tau: 0.995
+        encoder:
+          type: box
+          box:
+            hidden: 256
+            layers: 2
+            act: relu
+        opt.lr: 1e-3
+    stages:
+      - prefill:
+          until: { n: 5e3, of: agent_step }
+      - train_loop:
+          until: { n: 1e6, of: agent_step }
+          tasks:
+            - do_rl_opt_step
+            - do_env_step
+  atari:
+    $extends: [base]
+    env:
+      type: atari
+      atari:
+        env_id: Breakout
+        screen_size: 84
+        stack_num: 4
+        term_on_life_loss: true
+    data:
+      capacity: 1e6
+      loaders.slices_rl:
+        batch_size: 64
+        slice_len: 2
+    rl.sac:
+      actor:
+        encoder:
+          type: sac_image
+        opt:
+          lr: 3e-4
+          eps: 1e-4
+      qf:
+        polyak:
+          every: 2000
+          tau: 0.0
+        encoder:
+          type: sac_image
+        opt:
+          lr: 3e-4
+          eps: 1e-4
+    stages:
+      - prefill:
+          until: { n: 20e3, of: agent_step }
+      - train_loop:
+          until: { n: 5e6, of: agent_step }
+          tasks:
+            - do_val_epoch: ~
+              every: 100e3
+            - do_rl_val_step: ~
+              every: { n: 16, of: rl_opt_step }
+            - do_rl_opt_step: ~
+              every: { n: 4, of: agent_step }
+            - do_env_step

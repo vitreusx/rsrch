@@ -12,32 +12,33 @@ from ..common.utils import to_camel_case
 
 
 @dataclass
+class AutoCoefs:
+    disc: float = 0.89
+    cont: float = 5e-2
+
+
+@dataclass
 class Config:
     adaptive: bool = False
     value: float = 1.0
     min_value: float = 1e-8
     target: float | Literal["auto"] = "auto"
-    auto_coefs: tuple[float, float] = (0.89, 5e-2)
+    auto_coefs: AutoCoefs = field(default_factory=AutoCoefs)
     opt: dict = field(default_factory=dict)
 
 
-def auto_target(
-    act_space: spaces.torch.Tensor,
-    coefs: tuple[float, float],
-) -> float:
-    disc_coef, cont_coef = coefs
-
+def auto_target(act_space: spaces.torch.Tensor, coefs: AutoCoefs) -> float:
     if isinstance(act_space, (spaces.torch.Discrete, spaces.torch.OneHot)):
         # Target: `disc_coef` of maximum entropy for discrete space type.
         # Another interpretation is as an analogue of an eps-greedy policy
         logits = torch.zeros([act_space.n])
         max_ent = D.Categorical(logits=logits).entropy()
-        return (disc_coef * max_ent).item()
+        return (coefs.disc * max_ent).item()
 
     elif isinstance(act_space, spaces.torch.Box):
         # Target: normal distribution with scale ratio of `cont_coef` of the extent
         # of the action space.
-        scale = cont_coef * (act_space.high - act_space.low)
+        scale = coefs.cont * (act_space.high - act_space.low)
         dist = D.Normal(0, scale, len(act_space.shape))
         return dist.entropy().item()
 

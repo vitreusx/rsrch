@@ -167,8 +167,6 @@ class Trainer(TrainerBase):
         self.qf_polyak = polyak.Polyak(self.qf, self.qf_t, **cfg.qf.polyak)
         self.alpha = alpha.Alpha(cfg.alpha, act_space, self.device)
 
-        self._save_init_values()
-
     def _make_qf(self):
         qf = Qf(self.cfg.qf, self.actor.obs_space, self.actor.act_space)
         qf = qf.to(self.device)
@@ -181,13 +179,6 @@ class Trainer(TrainerBase):
         opt = cls(parameters, **cfg)
         opt = ScaledOptimizer(opt)
         return opt
-
-    def _save_init_values(self):
-        self._init_values = {}
-        for name in ("actor", "qf"):
-            opt: ScaledOptimizer = getattr(self, f"{name}_opt")
-            values = [p.data.clone() for p in opt.parameters]
-            self._init_values[name] = values
 
     def opt_step(self, batch: Slices):
         with torch.no_grad():
@@ -276,35 +267,8 @@ class Trainer(TrainerBase):
         polyak.sync(new_actor, self.actor)
 
         for idx in range(self.cfg.num_qf):
-            new_qf = self._make_q()
+            new_qf = self._make_qf()
             polyak.sync(new_qf, self.qf[idx])
             polyak.sync(new_qf, self.qf_t[idx])
 
-        self._save_init_values()
-
-    @torch.no_grad()
-    def compute_stats(self):
-        for name in self._init_values:
-            init_values = self._init_values[name]
-            opt: ScaledOptimizer = getattr(self, f"{name}_opt")
-            cur_values = opt.parameters
-
-            p_norms, rel_p_norms, dp_norms, rel_dp_norms = [], [], [], []
-            for init_p, cur_p in zip(init_values, cur_values):
-                p_norm = torch.linalg.norm(cur_p.data)
-                p_norms.append(p_norm)
-                dp_norm = torch.linalg.norm(cur_p.data - init_p)
-                dp_norms.append(dp_norm)
-                p0_norm = torch.linalg.norm(init_p)
-                if p0_norm != 0.0:
-                    rel_p_norms.append(p_norm / p0_norm)
-                    rel_dp_norms.append(dp_norm / p0_norm)
-
-            stats = {}
-            stats[f"{name}/p_norm"] = torch.mean(torch.stack(p_norms))
-            stats[f"{name}/dp_norm"] = torch.mean(torch.stack(dp_norms))
-            if len(rel_p_norms) > 0:
-                stats[f"{name}/rel_p_norm"] = torch.mean(torch.stack(rel_p_norms))
-                stats[f"{name}/rel_dp_norm"] = torch.mean(torch.stack(rel_dp_norms))
-
-        return stats
+        # self._save_ref_state()

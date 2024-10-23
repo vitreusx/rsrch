@@ -12,7 +12,7 @@ Until = int | _Until
 
 @dataclass
 class _Every:
-    n: int = 1
+    n: int | None = 1
     of: str | None = None
     iters: int | None = 1
     accumulate: bool = False

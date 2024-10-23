@@ -1,0 +1,66 @@
+- name: Set up hosts for running training
+  hosts: all
+  vars:
+    conda_prefix: ~/miniforge3
+    conda: "{{ conda_prefix }}/bin/conda"
+    poetry: ~/.local/bin/poetry
+    repo_url: https://github.com/vitreusx/rsrch
+
+  tasks:
+    - name: Check if user has provided 'repo_dir' and 'runs_dir'
+      ansible.builtin.fail:
+        msg: User has not provided all variables necessary to run script.
+      when: repo_dir is undefined or runs_dir is undefined
+
+    - name: Install conda
+      ansible.builtin.shell:
+        creates: "{{ conda_prefix }}"
+        cmd: |-
+          NAME="Miniforge3-$(uname)-$(uname -m).sh"
+          URL="https://github.com/conda-forge/miniforge/releases/latest/download/${NAME}"
+          curl "${URL}" -L -o /tmp/Miniforge3.sh
+          chmod a+x /tmp/Miniforge3.sh
+          /tmp/Miniforge3.sh -b -p "{{ conda_prefix }}"
+          rm -f /tmp/Miniforge3.sh
+
+    - name: Set up base conda env
+      ansible.builtin.shell:
+        cmd: |-
+          eval "$({{ conda }} shell.bash hook)"
+          conda install -y python=3.10 tmux parallel git
+          python3 -m pip install pipx keyring
+          python3 -m pipx install poetry
+
+    - name: Fetch commit SHA for the repo
+      ansible.builtin.shell:
+        cmd: git rev-parse HEAD
+      delegate_to: localhost
+      register: commit_sha
+
+    - name: Set up clones of the repo on the remotes
+      ansible.builtin.git:
+        repo: "{{ repo_url }}"
+        version: "{{ commit_sha.stdout }}"
+        dest: "{{ repo_dir }}"
+        force: true
+
+    - name: Set up python env for the repo
+      ansible.builtin.shell:
+        cmd: |-
+          set -e
+          eval "$({{ conda }} shell.bash hook)"
+          python -m keyring --disable 2>/dev/null || true
+          POETRY_NO_INTERACTION=1 {{ poetry }} install --sync --without dev
+        chdir: "{{ repo_dir }}"
+
+    - name: Set up runs/ as a symlink
+      ansible.builtin.file:
+        src: "{{ runs_dir }}"
+        dest: "{{ repo_dir }}/runs"
+        state: link
+
+    - name: Copy commands to each host
+      ansible.builtin.copy:
+        src: "{{ commands_file }}"
+        dest: "{{ repo_dir }}/commands.txt"
+      when: commands_file is defined

@@ -70,6 +70,7 @@ class Experiment(logging.LogMixin):
         config: dict | None = None,
         create_commit: bool = True,
         interactive: bool = True,
+        overwrite_if_exists: bool = False,
     ):
         self.project = project
         self.interactive = interactive
@@ -84,8 +85,11 @@ class Experiment(logging.LogMixin):
             self.dir = Path("runs") / sanitize(project) / day / filename
 
         if self.dir.exists():
-            shutil.rmtree(self.dir)
-        self.dir.mkdir(parents=True, exist_ok=True)
+            if overwrite_if_exists:
+                shutil.rmtree(self.dir)
+            else:
+                raise RuntimeError(f"Directory {self.dir} already exists.")
+        self.dir.mkdir(parents=True, exist_ok=False)
 
         if not self.interactive:
             self.tee_out = Tee(sys.stdout, self.dir / "out.txt")
@@ -160,3 +164,7 @@ class Experiment(logging.LogMixin):
     def add_video(self, tag: str, vid: VideoClip, *, step: Step = None):
         for board in self.boards:
             board.add_video(tag, vid, step=step)
+
+    def add_dict(self, tag: str, value: dict, *, step: Step = None):
+        for board in self.boards:
+            board.add_dict(tag, value, step=step)

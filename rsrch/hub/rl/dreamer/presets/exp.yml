@@ -1,274 +1,39 @@
-no_model:
-  wm.type: ~
-  wm.loader: ~
-  rl.loader: real_rl
-
-grid_launch:
-  run.interactive: false
-  run.create_commit: false
-
-atari:
-  base:
-    env:
-      type: atari
-      atari.env_id: Pong
-  v4:
-    env.atari:
-      repeat_action_probability: 0.0
-
-dmc:
-  proprio:
-    env:
-      type: dmc
-      dmc:
-        domain: walker
-        task: walk
-        obs_type: proprio
-        frame_skip: 2
-  vision:
-    env:
-      type: dmc
-      dmc:
-        domain: walker
-        task: walk
-        obs_type: visual
-        frame_skip: 2
-        render_size: [64, 64]
-
-sac:
-  base:
-    $extends: [no_model]
-    rl:
-      type: sac
-      sac:
-        num_qf: 2
-        gamma: 0.99
-        alpha:
-          adaptive: true
-          value: 1.0
-          target: auto
-          auto_coefs: [0.89, 5e-2]
-          opt:
-            type: adam
-            lr: ${qf.opt.lr}
-            eps: 1e-4
-        clip_grad: ~
-        actor:
-          opt:
-            type: adam
-            eps: 1e-5
-        qf:
-          opt:
-            type: adam
-            eps: 1e-5
-    profile.functions: [do_rl_opt_step]
-  mujoco:
-    $extends: [base]
-    env:
-      type: gym
-      gym:
-        env_id: HalfCheetah-v4
-    data:
-      capacity: 1e6
-      loaders.real_rl:
-        batch_size: 256
-        slice_len: 2
-    rl.sac:
-      actor:
-        encoder:
-          type: box
-          box:
-            hidden: 256
-            layers: 2
-            act: relu
-        opt.lr: 3e-4
-      qf:
-        polyak:
-          every: 1
-          tau: 0.995
-        encoder:
-          type: box
-          box:
-            hidden: 256
-            layers: 2
-            act: relu
-        opt.lr: 1e-3
-    stages:
-      - env_rollout:
-          until: { n: 5e3, of: agent_step }
-          mode: rand
-      - train_loop:
-          until: { n: 1e6, of: agent_step }
-          tasks:
-            - do_rl_opt_step
-            - do_env_step
-  atari:
-    $extends: [base]
-    env:
-      type: atari
-      atari:
-        env_id: Breakout
-        screen_size: 84
-        stack_num: 4
-        term_on_life_loss: true
-    data:
-      capacity: 1e6
-      loaders.real_rl:
-        batch_size: 64
-        slice_len: 2
-    rl.sac:
-      actor:
-        encoder:
-          type: sac_image
-        opt:
-          lr: 3e-4
-          eps: 1e-4
-      qf:
-        polyak:
-          every: 2000
-          tau: 0.0
-        encoder:
-          type: sac_image
-        opt:
-          lr: 3e-4
-          eps: 1e-4
-    stages:
-      - env_rollout:
-          until: { n: 20e3, of: agent_step }
-          mode: rand
-      - train_loop:
-          until: { n: 5e6, of: agent_step }
-          tasks:
-            - do_val_epoch: ~
-              every: 100e3
-            - do_rl_val_step: ~
-              every: { n: 16, of: rl_opt_step }
-            - do_rl_opt_step: ~
-              every: { n: 4, of: agent_step }
-            - do_env_step
-
-ppo:
-  base:
-    $extends: [no_model]
-    rl:
-      type: ppo
-      loader: on_policy
-      ppo:
-        encoder:
-          type: ppo
-        actor_dist:
-          type: auto
-        adv_norm: true
-        clip_vloss: true
-        vf_coef: 0.5
-        clip_grad: 0.5
-        gamma: 0.99
-        gae_lambda: 0.95
-        alpha:
-          adaptive: false
-        share_encoder: true
-    data.loaders.on_policy:
-      min_seq_len: 16
-  mujoco:
-    $extends: [base]
-    env:
-      type: gym
-      gym.env_id: Humanoid-v4
-    rl.ppo:
-      update_epochs: 10
-      update_batch: 64
-      opt:
-        type: adam
-        lr: 3e-4
-      clip_coef: 0.2
-      alpha:
-        value: 0.0
-    train.num_envs: 1
-    data.loaders.on_policy:
-      steps_per_batch: 2048
-    stages:
-      - train_loop:
-          until: 1e6
-          tasks: [do_rl_opt_step]
-  atari:
-    $extends: [base]
-    env:
-      type: atari
-      atari:
-        env_id: Pong
-        screen_size: 84
-        stack_num: 4
-        term_on_life_loss: true
-    rl.ppo:
-      update_epochs: 4
-      update_batch: 256
-      opt:
-        type: adam
-        lr: 2.5e-4
-        eps: 1e-5
-      clip_coef: 0.1
-      alpha.value: 1e-2
-    train.num_envs: 8
-    data.loaders.on_policy:
-      steps_per_batch: 1024
-    stages:
-      - train_loop:
-          until: 40e6
-          tasks: [do_rl_opt_step]
-
-dreamer:
-  base:
-    wm:
-      type: dreamer
-      loader: real_wm
-    rl:
-      loader: dream_rl
-  atari:
-    $extends: [base]
-    wm.dreamer:
-      rssm:
-        deter_size: 600
-        hidden_size: 600
-        stoch: { num_tokens: 32, vocab_size: 32 }
-      opt.lr: 2e-4
-      coef: { kl: 0.1, term: 5.0 }
-    rl.a2c:
-      gamma: 0.999
-      actor_ent: 1e-3
-      actor_grad: reinforce
-      opt.actor.lr: 4e-5
-      opt.critic.lr: 1e-4
-  dmc:
-    $extends: [base]
-    wm.dreamer:
-      reward_fn: id
-      rssm:
-        hidden_size: 200
-        deter_size: 200
-      opt.lr: 3e-4
-      kl.free: 1.0
-      encoder:
-        type: auto
-        dict.keys: [orientations, velocity]
-      decoders:
-        obs:
-          type: auto
-          dict.keys: [orientations, velocity]
-        term:
-          type: const
-          const.value: false
-    rl.a2c:
-      opt.actor.lr: 8e-5
-      opt.critic.lr: 8e-5
-      actor_ent: 1e-4
-
 exp:
+  debug:
+    $extends: [dreamer.atari, atari.base]
+    stages:
+      - prefill:
+          until: 20e3
+      - do_val_epoch:
+          num_episodes: 4
+      - do_opt_step
+      - do_wm_opt_step
+      - do_rl_opt_step
+      - check_plasticity
+      - pretrain:
+          stop_criteria:
+            rel_patience: 0.5
+            margin: 0.0
+            max_steps: 128
+          val_on_loss_improv: 0.2
+          val_every: 1024
+          max_val_batches: 128
+          rl_opt_freq: 0
+      - reset_wm:
+          match_params: .*
+          shrink_coef: 0.0
+          pretrain: ~
+      - reset_rl:
+          match_params: .*
+          shrink_coef: 0.0
+          pretrain: ~
+      - do_env_step
+
   sanity_check:
     $extends: [dreamer.atari, atari.base]
     stages:
-      - env_rollout:
+      - prefill:
           until: 200e3
-          mode: rand
       - train_loop:
           until: 5e6
           tasks:
@@ -284,9 +49,8 @@ exp:
     _freq: 64
     data.val_frac: 0.15
     stages:
-      - env_rollout:
+      - prefill:
           until: ${max(3e3 * _freq, 20e3)}
-          mode: rand
       - train_loop:
           until: ${max(1e5 * _freq, 400e3)}
           tasks:
@@ -308,9 +72,8 @@ exp:
     _prefill: 20e3
     data.val_frac: 0.15
     stages:
-      - env_rollout:
+      - prefill:
           until: ${_prefill}
-          mode: rand
       - train_loop:
           until: 400e3
           tasks:
@@ -360,13 +123,12 @@ exp:
       gamma: 0.99
     data:
       capacity: 1e6
-      loaders.real_rl:
+      loaders.slices_rl:
         batch_size: 256
         slice_len: 2
     stages:
-      - env_rollout:
+      - prefill:
           until: 5e3
-          mode: rand
       - train_loop:
           until: 500e3
           tasks:
@@ -388,9 +150,8 @@ exp:
     _prefill: 40e3
     data.val_frac: 0.15
     stages:
-      - env_rollout:
+      - prefill:
           until: ${_prefill}
-          mode: rand
       - train_loop:
           until: 400e3
           tasks:
@@ -418,7 +179,7 @@ exp:
       adaptive: true
       value: 1.0
       target: auto
-      auto_coefs: [0.75, 5e-2]
+      auto_coefs: { disc: 0.75, cont: 5e-2 }
       opt:
         type: adam
         lr: ${ppo.opt.lr}
@@ -426,7 +187,7 @@ exp:
   dreamer_ppo:
     $extends: [dreamer.atari]
     rl:
-      loader: dream_rl
+      loader: dreamer_rl
       type: ppo
       ppo:
         encoder:
@@ -451,15 +212,14 @@ exp:
           adaptive: true
           value: 1.0
           target: auto
-          auto_coefs: [0.75, 5e-2]
+          auto_coefs: { disc: 0.75, cont: 5e-2 }
           opt:
             type: adam
             lr: ${ppo.opt.lr}
             eps: 1e-4
     stages:
-      - env_rollout:
+      - prefill:
           until: 50e3
-          mode: rand
       - train_loop:
           until: 5e6
           tasks:
@@ -476,9 +236,8 @@ exp:
     _prefill: 40e3
     data.val_frac: 0.15
     stages:
-      - env_rollout:
+      - prefill:
           until: ${_prefill}
-          mode: rand
       - train_wm:
           stop_criteria:
             rel_patience: 0.5
@@ -506,15 +265,13 @@ exp:
   heavy_priming:
     $extends: [sanity_check]
     stages:
-      - env_rollout:
+      - prefill:
           until: 20e3
-          mode: rand
       - train_loop:
           until: { n: 100e3, of: wm_opt_step }
           tasks: [do_opt_step]
-      - env_rollout:
+      - prefill:
           until: 200e3
-          mode: rand
       - train_loop:
           until: 5e6
           tasks:

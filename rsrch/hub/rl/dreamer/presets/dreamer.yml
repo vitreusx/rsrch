@@ -1,0 +1,45 @@
+dreamer:
+  base:
+    wm:
+      type: dreamer
+      loader: dreamer_wm
+    rl:
+      loader: dreamer_rl
+  atari:
+    $extends: [base]
+    wm.dreamer:
+      rssm:
+        deter_size: 600
+        hidden_size: 600
+        stoch: { num_tokens: 32, vocab_size: 32 }
+      opt.lr: 2e-4
+      coef: { kl: 0.1, term: 5.0 }
+    rl.a2c:
+      gamma: 0.999
+      actor_ent: 1e-3
+      actor_grad: reinforce
+      opt.actor.lr: 4e-5
+      opt.critic.lr: 1e-4
+  dmc:
+    $extends: [base]
+    wm.dreamer:
+      reward_fn: id
+      rssm:
+        hidden_size: 200
+        deter_size: 200
+      opt.lr: 3e-4
+      kl.free: 1.0
+      encoder:
+        type: auto
+        dict.keys: [orientations, velocity]
+      decoders:
+        obs:
+          type: auto
+          dict.keys: [orientations, velocity]
+        term:
+          type: const
+          const.value: false
+    rl.a2c:
+      opt.actor.lr: 8e-5
+      opt.critic.lr: 8e-5
+      actor_ent: 1e-4

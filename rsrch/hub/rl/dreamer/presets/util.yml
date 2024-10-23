@@ -1,0 +1,36 @@
+no_model:
+  wm.type: ~
+  wm.loader: ~
+  rl.loader: slices_rl
+
+grid_launch:
+  run.interactive: false
+  run.create_commit: false
+
+atari:
+  base:
+    env:
+      type: atari
+      atari.env_id: Pong
+  v4:
+    env.atari:
+      repeat_action_probability: 0.0
+
+dmc:
+  proprio:
+    env:
+      type: dmc
+      dmc:
+        domain: walker
+        task: walk
+        obs_type: proprio
+        frame_skip: 2
+  vision:
+    env:
+      type: dmc
+      dmc:
+        domain: walker
+        task: walk
+        obs_type: visual
+        frame_skip: 2
+        render_size: [64, 64]

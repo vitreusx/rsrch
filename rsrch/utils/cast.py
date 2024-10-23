@@ -84,7 +84,7 @@ def cast(x: Any, t: Type[T]) -> T:
         return tuple([cast(xi, ti) for xi, ti in zip(x, t_args)])
 
     elif t in (typing.List, typing.Set, list, set):
-        elem_t = t_args[0]
+        elem_t = t_args[0] if len(t_args) > 0 else Any
         return t([cast(xi, elem_t) for xi in x])
 
     elif t in (typing.Dict, dict):
@@ -113,7 +113,8 @@ def cast(x: Any, t: Type[T]) -> T:
         return x if isinstance(t, type) and isinstance(x, t) else t(x)
 
 
-P, R = ParamSpec("R"), TypeVar("R")
+P = ParamSpec("R")
+R = TypeVar("R")
 
 
 def safe_bind(
@@ -165,7 +166,7 @@ def safe_bind(
     return wrapped
 
 
-def argcast(func: Callable[P, R]) -> Callable[P, R]:
+def with_argcast(func: Callable[P, R]) -> Callable[P, R]:
     """Create a variant of a function, in which passed arguments are automatically converted to proper types, as indicated with parameter annotations."""
 
     @wraps(func)

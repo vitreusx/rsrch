@@ -32,3 +32,33 @@ def exp_mov_avg(arr: np.ndarray, alpha: float):
     b, a = [1.0 - alpha], [1.0, -alpha]
     zi = lfiltic(b, a, arr[:1], [0])
     return lfilter(b, a, arr, zi=zi)[0]
+
+
+ATARI_100k = [
+    "Alien",
+    "Amidar",
+    "Assault",
+    "Asterix",
+    "Bank Heist",
+    "Battle Zone",
+    "Boxing",
+    "Breakout",
+    "Chopper Command",
+    "Crazy Climber",
+    "Demon Attack",
+    "Freeway",
+    "Frostbite",
+    "Gopher",
+    "Hero",
+    "James bond",
+    "Kangaroo",
+    "Krull",
+    "Kung Fu Master",
+    "Ms Pacman",
+    "Pong",
+    "Private Eye",
+    "Qbert",
+    "Road Runner",
+    "Seaquest",
+    "Up N Down",
+]

@@ -327,49 +327,64 @@ def eval_vars(data: dict):
 def cli(
     config_yml: str | Path,
     presets_yml: str | Path | None = None,
-    def_presets: list[str] | None = [],
+    presets_dir: str | Path | None = None,
 ):
+    if (presets_yml is not None) and (presets_dir is not None):
+        raise ValueError("Only one of `presets_yml`, `presets_dir` can be provided.")
+
     p = argparse.ArgumentParser()
     p.add_argument(
-        "-c",
+        "-C",
         "--config-file",
         type=Path,
         default=Path(config_yml),
         help="Path to config.yml file with default config values.",
     )
     p.add_argument(
+        "-P",
+        "--preset-files",
+        type=Path,
+        nargs="*",
+        default=[],
+        help="Extra preset files to use.",
+    )
+    p.add_argument(
         "-o",
         "--options",
         help="Manual options, in the form of a preset.",
     )
-    if presets_yml is not None:
-        p.add_argument(
-            "-P",
-            "--presets-file",
-            type=Path,
-            default=Path(presets_yml),
-            help="Path to presets.yml file with available presets.",
-        )
-        p.add_argument(
-            "-p",
-            "--presets",
-            type=str,
-            nargs="+",
-            default=def_presets,
-            help="List of presets to be used.",
-        )
     p.add_argument(
         "--dump-config",
         action="store_true",
         help="Dump the config to stdout and exit.",
+    )
+    p.add_argument(
+        "-p",
+        "--presets",
+        type=str,
+        nargs="+",
+        default=[],
+        help="List of presets to be used.",
     )
 
     args = p.parse_args()
 
     cfg = open(args.config_file)
 
+    preset_files = []
     if presets_yml is not None:
-        all_presets = open(args.presets_file)
+        preset_files = [args.presets_yml]
+    elif presets_dir is not None:
+        preset_files = [*Path(presets_dir).iterdir()]
+
+    if len(args.preset_files):
+        preset_files.extend(args.preset_files)
+
+    all_presets = {}
+    for preset_file in preset_files:
+        all_presets.update(open(preset_file))
+
+    if all_presets is not None:
         apply_presets(cfg, all_presets, args.presets)
 
     if args.options is not None:
