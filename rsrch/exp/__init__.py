@@ -70,7 +70,7 @@ class Experiment(logging.LogMixin):
         config: dict | None = None,
         create_commit: bool = True,
         interactive: bool = True,
-        overwrite_if_exists: bool = False,
+        overwrite_if_exists: bool = True,
     ):
         self.project = project
         self.interactive = interactive
