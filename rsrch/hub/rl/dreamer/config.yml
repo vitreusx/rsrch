@@ -162,7 +162,7 @@ rl:
       adaptive: true
       value: 2.5e-3
       target: auto
-      auto_coefs: { disc: 0.5, cont: 5e-2 }
+      auto_coefs: { disc: 0.2, cont: 5e-2 }
       opt:
         type: adam
         lr: 1e-3
