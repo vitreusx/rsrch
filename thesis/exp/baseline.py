@@ -27,6 +27,7 @@ def baseline(test_name, suffix=""):
         opts = {
             "env": {"type": "atari", "atari.env_id": env},
             "repro.seed": seed,
+            "_ratio": ratio,
             "run.dir": f"runs/{test_name}/{env}-ratio={ratio}-seed={seed}" + suffix,
             **common_opts,
         }
