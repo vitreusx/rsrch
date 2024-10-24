@@ -19,7 +19,7 @@ def sanity_check(test_name, suffix=""):
     ]
     common_opts = {}
 
-    envs = A100k_MONO[:1]
+    envs = A100k_MONO
     seeds = [*range(5)]
 
     for env, seed in product(envs, seeds):
