@@ -7,7 +7,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
-from torch.nn.utils.parametrizations import _SpectralNorm, spectral_norm
+from torch.nn.utils.parametrizations import _SpectralNorm
 
 import rsrch.distributions as D
 from rsrch import spaces
@@ -15,7 +15,7 @@ from rsrch.nn import dh
 from rsrch.nn.utils import safe_mode
 from rsrch.types.tensorlike.core import Tensorlike
 
-from .utils import to_camel_case
+from ..common.utils import tf_init
 
 ActType = Literal["relu", "elu", "tanh"]
 
@@ -196,8 +196,8 @@ def make_decoder(in_features: int, space: spaces.torch.Tensor, **kwargs):
         return cls(in_features, space, **kwargs.get(cls_type, {}))
 
 
-@register_encoder("image")
-class ImageEncoder(nn.Sequential):
+@register_encoder("dreamer_image")
+class DreamerImageEncoder(nn.Sequential):
     def __init__(
         self,
         space: spaces.torch.Image,
@@ -226,6 +226,8 @@ class ImageEncoder(nn.Sequential):
         super().__init__(*layers)
         self.space = space
 
+        self.apply(tf_init)
+
     def forward(self, input: Tensor):
         return super().forward(input - 0.5)
 
@@ -235,8 +237,8 @@ class Flatten(nn.Module):
         return x.reshape(*x.shape[:1], -1)
 
 
-@register_encoder("box")
-class BoxEncoder(nn.Sequential):
+@register_encoder("dreamer_box")
+class DreamerBoxEncoder(nn.Sequential):
     def __init__(
         self,
         space: spaces.torch.Box | spaces.torch.Tensorlike,
@@ -249,14 +251,16 @@ class BoxEncoder(nn.Sequential):
         )
         self.space = space
 
+        self.apply(tf_init)
+
     def forward(self, input: Tensor | Tensorlike):
         if not isinstance(input, Tensor):
             input = input.as_tensor()
         return super().forward(input)
 
 
-@register_encoder("discrete")
-class DiscreteEncoder(nn.Module):
+@register_encoder("one_hot")
+class OneHotEncoder(nn.Module):
     def __init__(self, space: spaces.torch.Discrete):
         super().__init__()
         self.space = space
@@ -287,7 +291,7 @@ class DictEncoder(nn.ModuleDict):
         return torch.cat(outputs, dim=1)
 
 
-@register_encoder("auto")
+@register_encoder("dreamer_auto")
 def AutoEncoder(space, **args):
     if isinstance(space, spaces.torch.Dict):
         return DictEncoder(
@@ -296,17 +300,17 @@ def AutoEncoder(space, **args):
             **args.get("dict", {}),
         )
     elif isinstance(space, spaces.torch.Image):
-        return ImageEncoder(space, **args.get("image", {}))
+        return DreamerImageEncoder(space, **args.get("image", {}))
     elif isinstance(space, spaces.torch.Discrete):
-        return DiscreteEncoder(space, **args.get("discrete", {}))
+        return OneHotEncoder(space, **args.get("discrete", {}))
     elif isinstance(space, (spaces.torch.Box, spaces.torch.Tensorlike)):
-        return BoxEncoder(space, **args.get("box", {}))
+        return DreamerBoxEncoder(space, **args.get("box", {}))
     else:
         raise ValueError(type(space))
 
 
-@register_decoder("image")
-class ImageDecoder(nn.Sequential):
+@register_decoder("dreamer_image")
+class DreamerImageDecoder(nn.Sequential):
     def __init__(
         self,
         in_features: int,
@@ -335,6 +339,9 @@ class ImageDecoder(nn.Sequential):
                 act_layer(),
             ]
 
+        for layer in layers:
+            layer.apply(tf_init)
+
         layer_ctor = lambda out: nn.ConvTranspose2d(channels[-1], out, kernels[-1], 2)
         layers.append(dh.make(layer_ctor, space, **dist))
 
@@ -345,8 +352,8 @@ class ImageDecoder(nn.Sequential):
         return D.Affine(dist, loc=0.5, scale=1.0)
 
 
-@register_decoder("box")
-class BoxDecoder(nn.Sequential):
+@register_decoder("dreamer_box")
+class DreamerBoxDecoder(nn.Sequential):
     def __init__(
         self,
         in_features: int,
@@ -357,23 +364,26 @@ class BoxDecoder(nn.Sequential):
         act: ActType = "elu",
         dist={},
     ):
-        body = MLP(in_features, None, hidden, layers, norm, act)
-        layer_ctor = lambda out: nn.Linear(body.out_features, out)
+        mlp = MLP(in_features, None, hidden, layers, norm, act)
+        mlp.apply(tf_init)
+        layer_ctor = lambda out: nn.Linear(mlp.out_features, out)
         head = dh.make(layer_ctor, space, **dist)
-        super().__init__(body, head)
+        super().__init__(mlp, head)
 
 
-@register_decoder("discrete")
-class DiscreteDecoder(nn.Sequential):
+@register_decoder("dreamer_discrete")
+class DreamerDiscreteDecoder(nn.Sequential):
     def __init__(
         self,
         in_features: int,
         space: spaces.torch.Discrete,
+        dist={},
         **mlp,
     ):
         mlp = MLP(in_features, None, **mlp)
+        mlp.apply(tf_init)
         layer_ctor = lambda out: nn.Linear(mlp.out_features, out)
-        head = dh.make(layer_ctor, space)
+        head = dh.make(layer_ctor, space, **dist)
         super().__init__(mlp, head)
 
 
@@ -410,24 +420,24 @@ class DictDecoder(nn.ModuleDict):
         return {name: self[name](input) for name in self}
 
 
-@register_decoder("auto")
-def AutoDecoder(in_features: int, space: spaces.torch.Tensor, **args):
+@register_decoder("dreamer_auto")
+def DreamerAutoDecoder(in_features: int, space: spaces.torch.Tensor, **args):
     if isinstance(space, spaces.torch.Dict):
         return DictDecoder(
             in_features,
             space,
             {
-                name: AutoDecoder(in_features, value, **args)
+                name: DreamerAutoDecoder(in_features, value, **args)
                 for name, value in space.items()
             },
             **args.get("dict", {}),
         )
     elif isinstance(space, spaces.torch.Image):
-        return ImageDecoder(in_features, space, **args.get("image", {}))
+        return DreamerImageDecoder(in_features, space, **args.get("image", {}))
     elif isinstance(space, spaces.torch.Discrete):
-        return DiscreteDecoder(in_features, space, **args.get("discrete", {}))
+        return DreamerDiscreteDecoder(in_features, space, **args.get("discrete", {}))
     elif isinstance(space, spaces.torch.Box):
-        return BoxDecoder(in_features, space, **args.get("box", {}))
+        return DreamerBoxDecoder(in_features, space, **args.get("box", {}))
     else:
         raise ValueError(type(space))
 

@@ -20,7 +20,8 @@ from rsrch.utils import sched
 from ..common import nets, plasticity
 from ..common.trainer import ScaledOptimizer, TrainerBase
 from ..common.types import Slices
-from ..common.utils import autocast, find_class, null_ctx, tf_init
+from ..common.utils import autocast, find_class, null_ctx
+from . import _alpha as alpha
 
 
 @dataclass
@@ -45,8 +46,8 @@ class Config:
     clip_grad: float | None
     gamma: float
     gae_lambda: float
-    actor_grad_mix: float | dict
-    actor_ent: float | dict
+    actor_grad_mix: float
+    alpha: alpha.Config
 
 
 class Actor(nn.Module):
@@ -68,8 +69,6 @@ class Actor(nn.Module):
 
         layer_ctor = partial(nn.Linear, enc_size)
         self.head = dh.make(layer_ctor, act_space, **cfg.dist)
-
-        self.apply(tf_init)
 
     def forward(self, obs):
         return self.head(self.enc(obs))
@@ -93,8 +92,6 @@ class Critic(nn.Module):
         layer_ctor = partial(nn.Linear, enc_size)
         vf_space = spaces.torch.Box((), dtype=torch.float32)
         self.head = dh.make(layer_ctor, vf_space, **cfg.dist)
-
-        self.apply(tf_init)
 
     def forward(self, obs):
         return self.head(self.enc(obs))
@@ -156,8 +153,9 @@ class Trainer(TrainerBase):
         self.opt_iter = 0
 
         self.rew_norm = nets.StreamNorm(**cfg.rew_norm)
-        self.actor_grad_mix = self._make_sched(cfg.actor_grad_mix)
-        self.actor_ent = self._make_sched(cfg.actor_ent)
+
+        device = next(actor.parameters()).device
+        self.alpha = alpha.Alpha(cfg.alpha, actor.act_space, device)
 
         self._actor_ref = plasticity.save_ref_state(self.actor)
         self._critic_ref = plasticity.save_ref_state(self.critic)
@@ -241,10 +239,10 @@ class Trainer(TrainerBase):
                 baseline = over_seq(self.target_critic)(batch.obs[:-2]).mode
                 adv = (target[1:] - baseline).detach()
                 objective = adv * policies.log_prob(batch.act[:-1].detach())
-                mix = self.actor_grad_mix(self.opt_iter)
+                mix = self.cfg.actor_grad_mix
                 objective = mix * target[1:] + (1.0 - mix) * objective
 
-            ent_scale = self.actor_ent(self.opt_iter)
+            ent_scale = self.alpha.value
             policy_ent = policies.entropy()
             objective = objective + ent_scale * policy_ent
             losses["actor"] = -(weight[:-2] * objective).mean()
@@ -257,9 +255,10 @@ class Trainer(TrainerBase):
             loss = sum(coef.get(k, 1.0) * v for k, v in losses.items())
 
         self.opt.step(loss, self.cfg.clip_grad)
-        self.opt_iter += 1
+        self.alpha.opt_step(policy_ent)
         if self.update_target is not None:
             self.update_target.step()
+        self.opt_iter += 1
 
         with torch.no_grad():
             with self.autocast():
@@ -273,7 +272,7 @@ class Trainer(TrainerBase):
                 metrics["value_mean"] = (value_dist.mean).mean()
 
                 if "mix" in locals():
-                    metrics["mix"] = mix
+                    metrics["actor_grad_mix"] = mix
 
                 metrics["loss"] = loss
                 for k, v in losses.items():

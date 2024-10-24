@@ -101,11 +101,6 @@ class WorldModel(nn.Module):
             **self.cfg.decoders["term"],
         )
 
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        self.apply(tf_init)
-
     def _make_decoder(self, space: spaces.torch.Tensor, **kwargs):
         return nn.Sequential(
             rssm.AsTensor(),

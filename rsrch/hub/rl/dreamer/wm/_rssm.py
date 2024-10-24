@@ -149,10 +149,11 @@ class GenericRSSM(nn.Module):
             layer_ctor = partial(nn.Linear, in_features)
             if typ == "discrete":
                 space = spaces.torch.TokenSeq(**cfg)
-                return dh.Discrete(layer_ctor, space)
+                return dh.Discrete(layer_ctor, space, init="tf")
             elif typ == "normal":
                 space = spaces.torch.Tensor((cfg["size"],))
                 del cfg["size"]
+                cfg = {**cfg, "init": "tf"}
                 return dh.Normal(layer_ctor, space, **cfg)
 
         return ctor

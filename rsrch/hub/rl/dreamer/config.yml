@@ -16,6 +16,10 @@ _:
     layers: 4
     act: ${_.act}
     norm: ${_.norm}
+  mse: &mse
+    type: mse
+    mse:
+      init: tf
 
 run:
   dir: ~
@@ -103,26 +107,31 @@ wm:
     coef: {}
     clip_grad: 1.0e2
     encoder:
-      type: auto
+      type: dreamer_auto
       box: *mlp
       image: *conv
     decoders:
       obs:
-        type: auto
+        type: dreamer_auto
         box:
           <<: [*mlp]
-          dist: { type: mse }
+          dist: *mse
         image:
           <<: [*conv_t]
-          dist: { type: mse }
+          dist: *mse
       reward:
-        type: box
-        box:
+        type: dreamer_box
+        dreamer_box:
           <<: [*mlp]
-          dist: { type: mse }
+          dist: *mse
       term:
-        type: discrete
-        discrete: *mlp
+        type: dreamer_discrete
+        dreamer_discrete:
+          <<: [*mlp]
+          dist:
+            type: bern
+            bern:
+              init: tf
 
 rl:
   type: a2c
@@ -130,24 +139,34 @@ rl:
   a2c:
     actor:
       encoder:
-        type: box
-        box: *mlp
+        type: dreamer_box
+        dreamer_box: *mlp
       dist:
         type: auto
-        beta:
+        box:
           min_std: 0.1
+          init: tf
+        one_hot:
+          init: tf
     critic:
       encoder:
-        type: box
-        box: *mlp
-      dist:
-        type: mse
+        type: dreamer_box
+        dreamer_box: *mlp
+      dist: *mse
     target_critic: { every: 100 }
     gamma: 0.99
     gae_lambda: 0.95
     actor_grad: auto
     actor_grad_mix: 0.1
-    actor_ent: 2e-3
+    alpha:
+      adaptive: true
+      value: 2.5e-3
+      target: auto
+      auto_coefs: { disc: 0.5, cont: 5e-2 }
+      opt:
+        type: adam
+        lr: 1e-3
+        eps: 1e-4
     coef: {}
     opt:
       type: adam_w

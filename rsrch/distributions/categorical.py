@@ -121,11 +121,22 @@ class Categorical(Distribution, Tensorlike):
         return -sum_rightmost(ce, len(self.event_shape))
 
     def entropy(self):
-        log_p = self.log_probs
-        eps = torch.finfo(log_p.dtype).eps
-        log_neg_p_log_p = log_p + (-log_p).clamp(min=eps).log()
-        log_ent = torch.logsumexp(log_neg_p_log_p, dim=-1)
-        return sum_rightmost(log_ent.exp(), len(self.event_shape))
+        # log_p = self.log_probs
+        # eps = torch.finfo(log_p.dtype).eps
+        # log_neg_p_log_p = log_p + (-log_p).clamp(min=eps).log()
+        # log_ent = torch.logsumexp(log_neg_p_log_p, dim=-1)
+        # return sum_rightmost(log_ent.exp(), len(self.event_shape))
+        if self._param_type == "probs":
+            log_p = self.log_probs
+            return (log_p * self.probs).sum(-1)
+        else:
+            logits = self.logits
+            m = logits.amax(-1, keepdim=True)
+            x = logits - m
+            lse_logits = m[..., 0] + torch.logsumexp(x, dim=-1)
+            x_exp = x.exp()
+            sum_exp_x = x_exp.sum(-1)
+            return lse_logits - (logits * x_exp).sum(-1) / sum_exp_x
 
 
 @register_kl(Categorical, Categorical)

@@ -130,3 +130,10 @@ def frozen(*nets: nn.Module):
     finally:
         for net in nets:
             net.requires_grad_(True)
+
+
+def tf_init_(module: nn.Module):
+    if isinstance(module, (nn.Linear, nn.Conv2d, nn.ConvTranspose2d)):
+        nn.init.xavier_uniform_(module.weight)
+        if module.bias is not None:
+            nn.init.zeros_(module.bias)
