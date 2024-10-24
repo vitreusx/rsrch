@@ -26,6 +26,8 @@ def split_ratios(test_name, suffix=""):
     for env, wm_ratio, rl_ratio, seed in product(envs, ratios, ratios, seeds):
         opts = {
             "env": {"type": "atari", "atari.env_id": env},
+            "_wm_ratio": wm_ratio,
+            "_rl_ratio": rl_ratio,
             "repro.seed": seed,
             "run.dir": f"runs/{test_name}/{env}-wm_ratio={wm_ratio}-rl_ratio={rl_ratio}-seed={seed}"
             + suffix,
