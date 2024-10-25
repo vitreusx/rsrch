@@ -24,7 +24,7 @@ class Config:
     min_value: float = 1e-8
     target: float | Literal["auto"] = "auto"
     auto_coefs: AutoCoefs = field(default_factory=AutoCoefs)
-    opt: dict = field(default_factory=dict)
+    opt: dict | None = field(default_factory=lambda: None)
 
 
 def auto_target(act_space: spaces.torch.Tensor, coefs: AutoCoefs) -> float:
@@ -81,12 +81,13 @@ class Alpha(nn.Module):
         return cls(parameters, **cfg)
 
     def opt_step(self, entropy: Tensor):
-        value = self.log_value.clamp_min(self.min_log_value).exp()
-        loss = value * (entropy.detach().mean() - self.target)
-        self.opt.zero_grad(set_to_none=True)
-        loss.backward()
-        self.opt.step()
-        self.value = math.exp(self.log_value.item())
+        if self.adaptive:
+            value = self.log_value.clamp_min(self.min_log_value).exp()
+            loss = value * (entropy.detach().mean() - self.target)
+            self.opt.zero_grad(set_to_none=True)
+            loss.backward()
+            self.opt.step()
+            self.value = math.exp(self.log_value.item())
 
     def __float__(self):
         return self.value

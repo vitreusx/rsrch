@@ -192,21 +192,6 @@ class DreamerWMLoader(data.IterableDataset):
 
             yield self.collate_fn(batch)
 
-    def _subseq(self, seq: list[dict], start, end):
-        seq = [*seq[start:end]]
-
-        res = {
-            "obs": [step["obs"] for step in seq],
-            "reward": [step.get("reward", 0.0) for step in seq],
-            "term": [step.get("term", False) for step in seq],
-        }
-
-        res["act"] = [step.get("act") for step in seq]
-        if res["act"][0] is None:
-            res["act"][0] = torch.zeros_like(res["act"][-1])
-
-        return res
-
     def collate_fn(self, batch):
         all_seq = [item["seq"] for item in batch]
         batch_size, seq_len = len(all_seq), len(all_seq[0])
@@ -217,7 +202,7 @@ class DreamerWMLoader(data.IterableDataset):
             for idx in range(batch_size):
                 step = all_seq[idx][t]
                 obs.append(step["obs"])
-                term.append(step["term"])
+                term.append(step.get("term", False))
                 reward.append(step.get("reward", 0.0))
                 if "act" in step:
                     act.append(step["act"])

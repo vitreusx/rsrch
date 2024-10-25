@@ -1,4 +1,16 @@
 exp:
+  _fix:
+    $extends: [dreamer.atari, atari.base]
+    run.create_commit: false
+    env: { type: atari, atari.env_id: Assault }
+    repro.seed: 0
+    stages:
+      - prefill:
+          until: 50e3
+      - train_loop:
+          until: 5e6
+          tasks: [do_opt_step, do_env_step]
+
   debug:
     $extends: [dreamer.atari, atari.base]
     stages:

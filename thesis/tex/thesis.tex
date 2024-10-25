@@ -116,6 +116,9 @@ Our goal is to develop a framework for sample-efficient RL, in a similar fashion
 
 \section{Method}
 
+\subsection{Introduction}
+
+
 
 \subsection{Base architecture}
 
@@ -160,23 +163,25 @@ To be specific, we will implement and analyze following schemes: (...)
 
 \subsection{Experimental setup}
 
-We are interested in evaluating performance on the Atari-100k benchmark. However, performing training runs on the entire set and with a full range of RNG seeds for every modification is computationally infeasible. Thus, we will use a subset of these games and a reduced number of seeds as a proxy. In order to properly gauge the effect of changes on the broader set, we require these games to have a number of properties.
+We are interested in evaluating performance on the Atari-100k benchmark. However, performing training runs on the entire set of 26 games and with a full range of RNG seeds for every modification is computationally infeasible. Thus, we will use a subset of these games and a reduced number of seeds as a proxy. To be specific, we shall limit ourselves to a choice of 3 environments and 5 RNG seeds. In order to properly gauge the effect of changes on the full set, we want to construct a subset of Atari-100k with following properties:
 
 \begin{enumerate}
   % Recheck the claim? Also, define "reasonable"
-  \item First, the agent should attain reasonable performance in the first $6 \times 10^6$ env steps. The rationale behind this is as follows - at the speedup rate of $15\times$, making the agent achieve performance at $6 \times 10^6$ steps in $400 \times 10^3$ steps only, the median human-normalized performance on Atari-100k would be $0.87$, and the mean human-normalized performance equal to $3.39$, which would make it state-of-the-art solution without look-ahead/planning (Ref: PapersWithCode). Moreover, methods such as SPR have successfully increased the replay ratios by such an amount. We consider it therefore sufficient to only consider such a horizon.
-  \item Second, the performance of the agent should consistently increase with the number of environment/optimization steps. This way, we will be better able to compare performance curves for different agents.
-  \item Third, the variance of the results with respect to different RNG seeds used should be minimized.
+  \item Since we are interested in \emph{speeding up} the algorithm, we ought to select such environments, in which the method makes consistent progress in a given extended interaction budget. For example, given a maximum speedup target of $15 \times$, we would focus on the horizon of $15 \dot 400 \times 10^3 = 6 \times 10^6$ environment steps. If the method doesn't improve much beyond the performance of a random agent, or solves the task immediately, gauging the precise speedup factor becomes impossible.
+  \item The variance of the results with respect to different RNG seeds used should be minimized, so as to be able to derive the expected score with a limited number of RNG seeds with any degree of accuracy.
+  \item The subset should be as representative of the performance on the whole subset as possible.
 \end{enumerate}
 
-These considerations lead us to a choice of three Atari games: Pong, Crazy Climber and Assault. The performance curves can be seen in \autoref{fig:a100k_mono_perf}.
+First, let us filter out the environments which do not satisfy first two criteria. In the absence of standardized metrics which would inform our choice quantitatively, we resort to visual inspection of the performance curves for each environment in the first $6 \times 10^6$ steps. We select following games for further evaluation: Amidar, Assault, Asterix, Crazy Climber, James Bond, Ms Pacman and Pong.
+
+Next, we shall select out of this subset 3 games, which are most predictive of the performance on the complete 26-game benchmark. We follow the approach of (Atari-5), and use the source code provided by the authors to arrive at the final result. The three environments selected by the algorithm are: Assault, Crazy Climber and Ms Pacman.
 
 \begin{figure}
   \centering
-  \includegraphics[width=0.8\linewidth,height=0.8\paperheight,keepaspectratio]{assets/perf_curves.pdf}
-  \caption{Performance curves for a three-game subset of Atari-100k. The dashed line denotes mean score when choosing random actions. The colored lines represent different RNG seeds chosen. We use the scores provided by the authors of DreamerV2.}
-  \label{fig:a100k_mono_perf}
+  \includegraphics[width=0.8\linewidth,height=0.8\paperheight,keepaspectratio]{assets/env_selection.pdf}
+  \caption{Performance curves for Atari-100k, with default settings. The values have been provided by the authors of the DreamerV2 paper. The x-axis represents the number of environment steps passed. The y-axis represents the validation score. Blue curves indicate environments, which we have selected for further evaluation.}
 \end{figure}
+
 
 \subsection{Na\"ive speedup test}
 

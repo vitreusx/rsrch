@@ -169,10 +169,7 @@ def make_encoder(space, **kwargs):
     cls_type = kwargs["type"]
     cls = ENCODERS[kwargs["type"]]
     del kwargs["type"]
-    if cls_type == "auto":
-        return cls(space, **kwargs)
-    else:
-        return cls(space, **kwargs.get(cls_type, {}))
+    return cls(space, **kwargs.get(cls_type, {}))
 
 
 DECODERS = {}
@@ -190,10 +187,7 @@ def make_decoder(in_features: int, space: spaces.torch.Tensor, **kwargs):
     cls_type = kwargs["type"]
     cls = DECODERS[kwargs["type"]]
     del kwargs["type"]
-    if cls_type == "auto":
-        return cls(in_features, space, **kwargs)
-    else:
-        return cls(in_features, space, **kwargs.get(cls_type, {}))
+    return cls(in_features, space, **kwargs.get(cls_type, {}))
 
 
 @register_encoder("dreamer_image")

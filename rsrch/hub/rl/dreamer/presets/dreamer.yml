@@ -17,6 +17,7 @@ dreamer:
     rl.a2c:
       gamma: 0.999
       actor_grad: reinforce
+      alpha.value: 1e-3
       opt.actor.lr: 4e-5
       opt.critic.lr: 1e-4
   dmc:
@@ -29,15 +30,18 @@ dreamer:
       opt.lr: 3e-4
       kl.free: 1.0
       encoder:
-        type: auto
-        dict.keys: [orientations, velocity]
+        type: dreamer_auto
+        dreamer_auto:
+          dict.keys: [orientations, velocity]
       decoders:
         obs:
-          type: auto
-          dict.keys: [orientations, velocity]
+          type: dreamer_auto
+          dreamer_auto:
+            dict.keys: [orientations, velocity]
         term:
           type: const
           const.value: false
     rl.a2c:
       opt.actor.lr: 8e-5
       opt.critic.lr: 8e-5
+      alpha.value: 1e-4

@@ -108,17 +108,19 @@ wm:
     clip_grad: 1.0e2
     encoder:
       type: dreamer_auto
-      box: *mlp
-      image: *conv
+      dreamer_auto:
+        box: *mlp
+        image: *conv
     decoders:
       obs:
         type: dreamer_auto
-        box:
-          <<: [*mlp]
-          dist: *mse
-        image:
-          <<: [*conv_t]
-          dist: *mse
+        dreamer_auto:
+          box:
+            <<: [*mlp]
+            dist: *mse
+          image:
+            <<: [*conv_t]
+            dist: *mse
       reward:
         type: dreamer_box
         dreamer_box:
@@ -159,14 +161,8 @@ rl:
     actor_grad: auto
     actor_grad_mix: 0.1
     alpha:
-      adaptive: true
-      value: 2.5e-3
-      target: auto
-      auto_coefs: { disc: 0.2, cont: 5e-2 }
-      opt:
-        type: adam
-        lr: 1e-3
-        eps: 1e-4
+      adaptive: false
+      value: 2e-3
     coef: {}
     opt:
       type: adam_w
