@@ -134,7 +134,7 @@ class Trainer(TrainerBase):
 
         if self.cfg.target_critic is not None:
             self.target_critic = self._make_critic()
-            # polyak.sync(self.critic, self.target_critic)
+            polyak.sync(self.critic, self.target_critic)
             self.update_target = polyak.Polyak(
                 source=self.critic,
                 target=self.target_critic,
@@ -212,8 +212,14 @@ class Trainer(TrainerBase):
             with self.autocast():
                 gamma = self.cfg.gamma * (1.0 - batch.term.float())
                 vt = over_seq(self.target_critic)(batch.obs).mode
-                reward = torch.cat([torch.zeros_like(batch.reward[:1]), batch.reward])
 
+                reward = torch.cat(
+                    [
+                        torch.zeros_like(batch.reward[:1]),
+                        batch.reward,
+                    ],
+                    dim=0,
+                )
                 target = gae_lambda(
                     reward=reward[:-1],
                     val=vt[:-1],

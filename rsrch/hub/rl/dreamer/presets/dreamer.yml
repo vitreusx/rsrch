@@ -17,7 +17,7 @@ dreamer:
     rl.a2c:
       gamma: 0.999
       actor_grad: reinforce
-      alpha.value: 1e-3
+      alpha.value: 2e-3
       opt.actor.lr: 4e-5
       opt.critic.lr: 1e-4
   dmc:

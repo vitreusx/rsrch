@@ -15,7 +15,7 @@ thesis:
           until: 5e6
           tasks:
             - do_val_epoch: ~
-              every: 1e6
+              every: 250e3
             - do_opt_step: ~
               every:
                 n: 64
