@@ -30,16 +30,16 @@ class Config:
     class Actor:
         encoder: dict
         dist: dict
+        opt: dict
 
     @dataclass
     class Critic:
         encoder: dict
         dist: dict
+        opt: dict
 
     actor: Actor
     critic: Critic
-    opt: dict
-    coef: dict
     target_critic: dict | None
     rew_norm: dict
     actor_grad: Literal["dynamics", "reinforce", "auto"]
@@ -149,8 +149,8 @@ class Trainer(TrainerBase):
         else:
             self.actor_grad = self.cfg.actor_grad
 
-        self.opt = self._make_opt()
-        self.opt_iter = 0
+        self.actor_opt = self._make_opt(self.actor.parameters(), cfg.actor.opt)
+        self.critic_opt = self._make_opt(self.critic.parameters(), cfg.critic.opt)
 
         self.rew_norm = nets.StreamNorm(**cfg.rew_norm)
 
@@ -174,33 +174,13 @@ class Trainer(TrainerBase):
         super().load(state)
         self.opt_iter = state["opt_iter"]
 
-    def _make_opt(self):
-        cfg = {**self.cfg.opt}
-
+    def _make_opt(self, parameters: list[nn.Parameter], cfg: dict):
+        cfg = {**cfg}
         cls = find_class(torch.optim, cfg["type"])
         del cfg["type"]
-
-        actor, critic = cfg["actor"], cfg["critic"]
-        del cfg["actor"]
-        del cfg["critic"]
-
-        opt = cls(
-            [
-                {"params": self.actor.parameters(), **actor},
-                {"params": self.critic.parameters(), **critic},
-            ],
-            **cfg,
-        )
-        return ScaledOptimizer(opt)
-
-    def _make_sched(self, cfg: float | dict):
-        if isinstance(cfg, float):
-            return sched.Constant(cfg)
-        else:
-            cfg = {**cfg}
-            cls = getattr(sched, cfg["type"])
-            del cfg["type"]
-            return cls(**cfg)
+        opt = cls(parameters, **cfg)
+        opt = ScaledOptimizer(opt)
+        return opt
 
     def opt_step(self, batch: Slices):
         losses = {}
@@ -213,15 +193,8 @@ class Trainer(TrainerBase):
                 gamma = self.cfg.gamma * (1.0 - batch.term.float())
                 vt = over_seq(self.target_critic)(batch.obs).mode
 
-                reward = torch.cat(
-                    [
-                        torch.zeros_like(batch.reward[:1]),
-                        batch.reward,
-                    ],
-                    dim=0,
-                )
                 target = gae_lambda(
-                    reward=reward[:-1],
+                    reward=batch.reward[:-1],
                     val=vt[:-1],
                     gamma=gamma[:-1],
                     bootstrap=vt[-1],
@@ -251,20 +224,19 @@ class Trainer(TrainerBase):
             ent_scale = self.alpha.value
             policy_ent = policies.entropy()
             objective = objective + ent_scale * policy_ent
-            losses["actor"] = -(weight[:-2] * objective).mean()
+            actor_loss = -(weight[:-2] * objective).mean()
 
+        self.actor_opt.step(actor_loss, self.cfg.clip_grad)
+        self.alpha.opt_step(policy_ent)
+
+        with self.autocast():
             value_dist = over_seq(self.critic)(batch.obs[:-1].detach())
             critic_losses = -value_dist.log_prob(target.detach())
-            losses["critic"] = (weight[:-1] * critic_losses).mean()
+            critic_loss = (weight[:-1] * critic_losses).mean()
 
-            coef = self.cfg.coef
-            loss = sum(coef.get(k, 1.0) * v for k, v in losses.items())
-
-        self.opt.step(loss, self.cfg.clip_grad)
-        self.alpha.opt_step(policy_ent)
-        if self.update_target is not None:
+        self.critic_opt.step(critic_loss, self.cfg.clip_grad)
+        if self.cfg.target_critic is not None:
             self.update_target.step()
-        self.opt_iter += 1
 
         with torch.no_grad():
             with self.autocast():
@@ -276,13 +248,11 @@ class Trainer(TrainerBase):
                 metrics["ent_scale"] = ent_scale
                 metrics["entropy"] = policy_ent.mean()
                 metrics["value_mean"] = (value_dist.mean).mean()
+                metrics["actor_loss"] = actor_loss
+                metrics["critic_loss"] = critic_loss
 
-                if "mix" in locals():
+                if self.actor_grad == "both":
                     metrics["actor_grad_mix"] = mix
-
-                metrics["loss"] = loss
-                for k, v in losses.items():
-                    metrics[f"{k}_loss"] = v.detach()
 
         return metrics
 

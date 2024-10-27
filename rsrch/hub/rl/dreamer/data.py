@@ -414,7 +414,7 @@ class DreamerRLLoader(data.IterableDataset):
                 actions = torch.stack(actions)
 
                 reward_dist = over_seq(self.wm.reward_dec)(states)
-                reward = reward_dist.mode[1:]
+                reward = reward_dist.mode
 
                 term_dist = over_seq(self.wm.term_dec)(states)
                 term_ = term_dist.mean.contiguous()

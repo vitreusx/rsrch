@@ -74,7 +74,7 @@ train:
   num_envs: 1
   agent_noise: 0.0
 val:
-  num_envs: 4
+  num_envs: 8
   agent_noise: 0.0
 
 wm:
@@ -150,11 +150,21 @@ rl:
           init: tf
         one_hot:
           init: tf
+      opt:
+        type: adam_w
+        lr: 8e-5
+        weight_decay: "${1e-6/lr}"
+        eps: 1e-5
     critic:
       encoder:
         type: dreamer_box
         dreamer_box: *mlp
       dist: *mse
+      opt:
+        type: adam_w
+        lr: 2e-4
+        weight_decay: "${1e-6/lr}"
+        eps: 1e-5
     target_critic: { every: 100 }
     gamma: 0.99
     gae_lambda: 0.95
@@ -163,12 +173,6 @@ rl:
     alpha:
       adaptive: false
       value: 2e-3
-    coef: {}
-    opt:
-      type: adam_w
-      actor: { lr: 8e-5, weight_decay: "${1e-6/lr}" }
-      critic: { lr: 2e-4, weight_decay: "${1e-6/lr}" }
-      eps: 1e-5
     clip_grad: 1.0e2
     rew_norm:
       momentum: 1.0

@@ -43,8 +43,6 @@ class OneHot(Distribution, Tensorlike):
         return value
 
     def log_prob(self, value: Tensor):
-        # indices = value.argmax(-1)
-        # return self.index_dist.log_prob(indices)
         logits = self.index_dist.logits
         logits = logits.expand(value.shape)
         ce = F.cross_entropy(

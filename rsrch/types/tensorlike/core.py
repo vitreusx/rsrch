@@ -13,33 +13,7 @@ import torch
 _TORCH_FUNCTIONS = {}
 
 
-class _NOT_FOUND:
-    ...
-
-
 T = TypeVar("T")
-
-
-class defer_eval(property):
-    """This descriptor class acts like @cached_property in tensor-like classes. Cached values are not carried over when creating new objects (e.g. via `stack` or `cat`). Moreover, this descriptor is safe to use when tracing or compiling."""
-
-    def __init__(self, func: Callable[..., T]):
-        super().__init__(func)
-        self.func = func
-        self._prop = cached_property(func)
-        self.__doc__ = func.__doc__
-
-    def __set_name__(self, owner, name):
-        self._prop.__set_name__(owner, name)
-        super().__set_name__(owner, name)
-
-    def __get__(self, instance, owner=None) -> T:
-        if torch.compiler.is_compiling():
-            # Behave like `@property`
-            return super().__get__(instance, owner)
-        else:
-            # Behave like `@cached_property`
-            return self._prop.__get__(instance, owner)
 
 
 class Tensorlike:
@@ -102,10 +76,13 @@ class Tensorlike:
         new._batched = copy.copy(self._batched)
 
         for name in dir(new.__class__):
-            val = getattr(new.__class__, name)
-            if isinstance(val, defer_eval) and name in new.__dict__:
-                # @cached_property / @defer_eval stores true value in __dict__
-                delattr(new, name)
+            if isinstance(getattr(new.__class__, name), cached_property):
+                try:
+                    delattr(new, name)
+                except:
+                    # If cached_property hasn't been accessed, delattr will
+                    # throw an error.
+                    pass
 
         for name, value in fields.items():
             setattr(new, name, value)
@@ -522,4 +499,4 @@ class Tensorlike:
         return repr(cls)
 
 
-__all__ = ["Tensorlike", "defer_eval"]
+__all__ = ["Tensorlike"]

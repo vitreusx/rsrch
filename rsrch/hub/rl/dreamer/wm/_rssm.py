@@ -1,6 +1,6 @@
 from collections import namedtuple
 from dataclasses import dataclass
-from functools import partial
+from functools import cached_property, partial
 from typing import List
 
 import numpy as np
@@ -13,7 +13,6 @@ from rsrch import spaces
 from rsrch.nn import dh
 from rsrch.nn.utils import over_seq, pass_gradient, safe_mode
 from rsrch.types import Tensorlike
-from rsrch.types.tensorlike.core import defer_eval
 
 from ..common import nets
 from ..common.utils import tf_init
@@ -44,7 +43,7 @@ class State(Tensorlike):
         self.stoch.zero_()
         return self
 
-    @defer_eval
+    @cached_property
     def _as_tensor(self):
         return torch.cat((self.deter, self.stoch), -1)
 
@@ -375,6 +374,7 @@ class OptRSSM(nn.Module):
         return logits
 
     def _discrete_sample(self, logits: Tensor):
+        logits = logits.to(torch.float32)
         probs = F.softmax(logits, -1)
         eps = self._get_eps(probs)
         unif = torch.rand_like(probs).clamp(eps, 1.0 - eps)

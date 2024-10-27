@@ -1,11 +1,11 @@
 import math
+from functools import cached_property
 from numbers import Number
 
 import torch
 from torch import Tensor
 
-from rsrch.nn.utils import pass_gradient
-from rsrch.types.tensorlike import Tensorlike, defer_eval
+from rsrch.spaces.torch import Tensorlike
 
 from .affine import Affine
 from .distribution import Distribution
@@ -33,31 +33,31 @@ class TruncStdNormal(Distribution, Tensorlike):
 
         self.eps = torch.finfo(self.low.dtype).eps
 
-    @defer_eval
+    @cached_property
     def low_pdf(self):
         return _normal_pdf(self.low)
 
-    @defer_eval
+    @cached_property
     def high_pdf(self):
         return _normal_pdf(self.high)
 
-    @defer_eval
+    @cached_property
     def low_cdf(self) -> Tensor:
         return torch.special.ndtr(self.low)
 
-    @defer_eval
+    @cached_property
     def high_cdf(self) -> Tensor:
         return torch.special.ndtr(self.high)
 
-    @defer_eval
+    @cached_property
     def Z(self):
         return (self.high_cdf - self.low_cdf).clamp_min(self.eps)
 
-    @defer_eval
+    @cached_property
     def log_Z(self):
         return self.Z.log()
 
-    @defer_eval
+    @cached_property
     def var_term(self):
         return (self.high * self.high_pdf - self.low * self.low_pdf) / self.Z
 

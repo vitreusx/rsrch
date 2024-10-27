@@ -1,9 +1,10 @@
+from functools import cached_property
+
 import torch
 import torch.nn.functional as F
 from torch import Tensor
 
 from rsrch.types.tensorlike import Tensorlike
-from rsrch.types.tensorlike.core import defer_eval
 
 from .distribution import Distribution
 from .kl import register_kl
@@ -40,9 +41,10 @@ class Categorical(Distribution, Tensorlike):
         self.num_events = param.shape[-1]
 
         self._param_type = param_type
+        param = param.to(torch.float32)
         self._param = self.register("_param", param)
 
-    @defer_eval
+    @cached_property
     def logits(self) -> Tensor:
         if self._param_type == "logits":
             logits = self._param
@@ -50,7 +52,7 @@ class Categorical(Distribution, Tensorlike):
             logits = self.log_probs
         return logits
 
-    @defer_eval
+    @cached_property
     def log_probs(self) -> Tensor:
         if self._param_type == "log_probs":
             log_probs = self._param
@@ -62,7 +64,7 @@ class Categorical(Distribution, Tensorlike):
             log_probs = probs.log()
         return log_probs
 
-    @defer_eval
+    @cached_property
     def probs(self) -> Tensor:
         if self._param_type == "probs":
             probs = self._param
@@ -87,16 +89,6 @@ class Categorical(Distribution, Tensorlike):
         raise NotImplementedError
 
     def sample(self, sample_shape=()) -> Tensor:
-        # if not isinstance(sample_shape, torch.Size):
-        #     sample_shape = (sample_shape,)
-        # probs_2d = self.probs.reshape(-1, self.num_events)
-        # if sample_shape.numel() == 1:
-        #     q = torch.empty_like(probs_2d).exponential_(1)
-        #     q = probs_2d / q
-        #     samples_2d = q.argmax(dim=-1, keepdim=True)
-        # else:
-        #     samples_2d = torch.multinomial(probs_2d, sample_shape.numel(), True).T
-        # return samples_2d.reshape([*sample_shape, *self.batch_shape, *self.event_shape])
         logits = self.logits.expand(*sample_shape, *self.logits.shape)
         eps = torch.finfo(logits.dtype).eps
         unif = torch.rand_like(logits).clamp(eps, 1.0 - eps)
@@ -106,11 +98,6 @@ class Categorical(Distribution, Tensorlike):
         raise NotImplementedError
 
     def log_prob(self, value: Tensor) -> Tensor:
-        # value = value.long().unsqueeze(-1)
-        # value, log_pmf = torch.broadcast_tensors(value, self.log_probs)
-        # value = value[..., :1]
-        # logp = log_pmf.gather(-1, value).squeeze(-1)
-        # return sum_rightmost(logp, len(self.event_shape))
         logits = self.logits.expand(*value.shape, self.num_events)
         ce = F.cross_entropy(
             logits.reshape(-1, self.num_events),

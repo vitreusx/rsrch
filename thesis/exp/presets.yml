@@ -12,7 +12,7 @@ thesis:
       - prefill:
           until: 200e3
       - train_loop:
-          until: 5e6
+          until: 6e6
           tasks:
             - do_val_epoch: ~
               every: 250e3
