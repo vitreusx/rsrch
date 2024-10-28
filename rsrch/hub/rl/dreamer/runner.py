@@ -906,6 +906,7 @@ class Runner:
                         {
                             "wm": self.wm.state_dict(),
                             "wm_trainer": self.wm_trainer.save(),
+                            "actor": self.actor.state_dict(),
                             "rl_trainer": self.rl_trainer.save(),
                         },
                         best_ckpt,
@@ -932,6 +933,7 @@ class Runner:
             best_state = torch.load(f, map_location="cpu")
             self.wm.load_state_dict(best_state["wm"])
             self.wm_trainer.load(best_state["wm_trainer"])
+            self.actor.load_state_dict(best_state["actor"])
             self.rl_trainer.load(best_state["rl_trainer"])
 
         Path(best_ckpt).unlink()

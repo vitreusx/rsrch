@@ -37,3 +37,10 @@ class Polyak:
         while self._step - self._last >= self.every:
             update(self.source, self.target, self.tau)
             self._last += self.every
+
+    def state_dict(self):
+        return {"step": self._step, "last": self._last}
+
+    def load_state_dict(self, state: dict):
+        self._step = state["step"]
+        self._last = state["last"]

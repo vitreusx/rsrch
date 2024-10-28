@@ -166,13 +166,33 @@ class Trainer(TrainerBase):
         return critic
 
     def save(self):
-        state = super().save()
-        state["opt_iter"] = self.opt_iter
+        state = {
+            "critic": self.critic.state_dict(),
+            "critic_ref": self._critic_ref,
+            "actor_opt": self.actor_opt.state_dict(),
+            "critic_opt": self.critic_opt.state_dict(),
+            "alpha": self.alpha.state_dict(),
+        }
+
+        if self.cfg.target_critic is not None:
+            state = {
+                **state,
+                "target_critic": self.target_critic.state_dict(),
+                "update_target": self.update_target.state_dict(),
+            }
+
         return state
 
     def load(self, state):
-        super().load(state)
-        self.opt_iter = state["opt_iter"]
+        self.critic.load_state_dict(state["critic"])
+        self._critic_ref = state["critic_ref"]
+        self.actor_opt.load_state_dict(state["actor_opt"])
+        self.critic_opt.load_state_dict(state["critic_opt"])
+        self.alpha.load_state_dict(state["alpha"])
+
+        if self.cfg.target_critic is not None:
+            self.target_critic.load_state_dict(state["target_critic"])
+            self.update_target.load_state_dict(state["update_target"])
 
     def _make_opt(self, parameters: list[nn.Parameter], cfg: dict):
         cfg = {**cfg}
