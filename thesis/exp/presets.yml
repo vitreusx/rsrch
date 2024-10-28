@@ -82,6 +82,7 @@ thesis:
 
   pretrain:
     # Perform offline pretraining stage after the prefill stage
+    $extends: [base]
     _wm_ratio: 64
     _rl_ratio: 64
     _prefill: 20e3

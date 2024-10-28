@@ -857,7 +857,7 @@ class Runner:
             for k, v in rl_mets.items():
                 self.exp.add_scalar(f"plas/rl/{k}", v, step="rl_opt_step")
 
-    def pretrain_wm(
+    def pretrain(
         self,
         stop_criteria: dict,
         val_every: int,
@@ -906,6 +906,7 @@ class Runner:
                         {
                             "wm": self.wm.state_dict(),
                             "wm_trainer": self.wm_trainer.save(),
+                            "rl_trainer": self.rl_trainer.save(),
                         },
                         best_ckpt,
                     )
@@ -931,6 +932,7 @@ class Runner:
             best_state = torch.load(f, map_location="cpu")
             self.wm.load_state_dict(best_state["wm"])
             self.wm_trainer.load(best_state["wm_trainer"])
+            self.rl_trainer.load(best_state["rl_trainer"])
 
         Path(best_ckpt).unlink()
 

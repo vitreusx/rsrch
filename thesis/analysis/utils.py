@@ -2,6 +2,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 import plotly.io as pio
 from ruamel.yaml import YAML
 from scipy.signal import lfilter, lfiltic
@@ -62,3 +64,38 @@ ATARI_100k = [
     "Seaquest",
     "Up N Down",
 ]
+
+
+def _to_rgba(desc: str, alpha: float = 0.2):
+    r, g, b = eval(desc.removeprefix("rgb"))
+    return f"rgba{(r, g, b, alpha)}"
+
+
+def err_line(x: np.ndarray, y: np.ndarray, std: np.ndarray, color: str):
+    y_lower, y_upper = y - std, y + std
+    return [
+        go.Scatter(
+            x=x,
+            y=y,
+            mode="lines",
+            line=dict(color=color),
+            showlegend=False,
+        ),
+        go.Scatter(
+            x=[*x, *x[::-1]],
+            y=[*y_upper, *y_lower[::-1]],
+            fill="tozerox",
+            fillcolor=_to_rgba(color),
+            line=dict(color="rgba(255, 255, 255, 0)"),
+            showlegend=False,
+        ),
+    ]
+
+
+def make_color_iter():
+    while True:
+        for hex in px.colors.qualitative.Plotly:
+            hex = hex.removeprefix("#")
+            r, g, b = hex[0:2], hex[2:4], hex[4:6]
+            r, g, b = (int(v, 16) for v in (r, g, b))
+            yield f"rgb{(r, g, b)}"

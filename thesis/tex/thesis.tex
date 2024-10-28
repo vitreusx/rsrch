@@ -114,13 +114,40 @@ The main idea of this paper is inspired and motivated by Rainbow architecture an
 % I've already gone through literature, but it would be wise to recheck it a few times since it's quite a provocative statement.
 Our goal is to develop a framework for sample-efficient RL, in a similar fashion to Rainbow - taking a base architecture, an array of approaches developed to improve sample efficiency, and combine them together into a single architecture. To our knowledge, this has not yet been investigated.
 
-\section{Method}
+\section{Framework overview}
 
-\subsection{Introduction}
+We will start with a description of a general framework for constructing sample-efficient agents.
 
+The use of world models in a number of state-of-the-art approaches for data-efficient RL informs our choice to design the architecture in a model-based fashion. To be precise, the framework consists of a world model module, as well as the RL agent module (henceforth we shall refer to them briefly as ``model'' and ``agent'' respectively), along with a replay buffer.
 
+Learning the world model is, essentially, a standard supervised learning task. The data used for this purpose shall be drawn from the replay buffer, containing the experience collected during environment interaction.
+
+Improving the agent in a model-based setting can be realized in a number of ways:
+
+\begin{enumerate}
+  \item The input data for the optimization step may consist purely of \emph{imaginary} rollouts, wherein we sample a real state from a replay buffer, and use the model and the agent to simulate new rollouts in imagination. This approach forms the basis of the Dreamer series of architectures. In this case, the RL module may be \emph{any} model-free RL algorithm.
+  \item A strategy developed in MBPO is to supplement on-policy real-environment data with simulated sequences. We are thus presented with a solution neither model-free, nor fully model-based.
+  \item The agent module may not even require any training per se. For example, PETS and PlaNet use cross-entropy method (CEM) for selecting actions to perform by planning with the learned model.
+  \item Planning methods may be augmented with neural networks, as was done in MuZero and EfficientZero.
+\end{enumerate}
+
+Thus, fundamentally, the training process can be thought of as a stream of: environment interactions, model optimization steps, and agent optimization steps. The precise design of the loop is, however, non-trivial, for a couple of reasons:
+
+\begin{enumerate}
+  \item We ought to interleave optimization and environment steps, in order to continue improving the model and the policy as we collect more data. Misspecifying the update frequency may, however, lead to under- or overfitting, making it a hyperparameter to be tuned.
+  \item After collecting the initial experience dataset, we may opt to perform a ``pretraining stage'', in which we perform optimization steps without collecting any additional environment transitions. Without it, the model is badly underoptimized in the initial stages of the training process, which may lead to lesser overall sample efficiency.
+  \item Recent research in Continual Learning and in model-free data-efficient RL points to the emergence of a phenomenon of plasticity loss/primacy bias in continual settings, such as RL, whereby the neural networks lose their ability to fit new data. We should, therefore, investigate whether it occurs in the specific setting of model-based RL, as well as the efficacy of the possible solutions proposed in the literature.
+\end{enumerate}
+
+With this in mind, we split our investigation into two parts. First, we will look into optimizing the structure of the training loop for a given fixed pair of model and RL architectures. The purpose is twofold: to assess the impact of loop improvement techniques, as presented in e.g. SR-SPR paper, in the model-based setting; and to see if (and to what extent) the relevant hyperparameters can be tuned automatically.
+
+With this done, we will examine a selection of architectural improvements, such as the choice of different RL modules, or the use of data augmentation techniques.
+
+\section{Training recipe optimization}
 
 \subsection{Base architecture}
+
+As noted,
 
 We'll use the DreamerV2 architecture as a starting point in our inquiry. This choice is motivated by following reasons:
 
@@ -154,12 +181,6 @@ These are optimized using \autoref{code:dreamer_loop}.
     \EndWhile
   \end{algorithmic}
 \end{algorithm}
-
-\section{Training recipe optimization}
-
-In the first order, we wish to examine the speedup achievable from tuning the training loop. The hypothesis is as follows: it's highly unlikely that the training structure at a limit of $400 \times 10^3$ environment steps is the same as for $200 \times 10^6$ interactions. Moreover, the base loop is fairly straightforward, consisting of interleaved environment and optimization steps - drawing on works such as MBPO, which train the model to convergence, or SR-SPR, which ``break'' the replay ratio limit with the use of periodic resets, we can imagine more sophisticated designs being more optimal.
-
-To be specific, we will implement and analyze following schemes: (...)
 
 \subsection{Experimental setup}
 
