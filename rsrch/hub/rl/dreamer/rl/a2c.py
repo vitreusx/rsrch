@@ -171,7 +171,7 @@ class Trainer(TrainerBase):
             "critic_ref": self._critic_ref,
             "actor_opt": self.actor_opt.state_dict(),
             "critic_opt": self.critic_opt.state_dict(),
-            "alpha": self.alpha.state_dict(),
+            "alpha": self.alpha.save(),
         }
 
         if self.cfg.target_critic is not None:
@@ -186,9 +186,10 @@ class Trainer(TrainerBase):
     def load(self, state):
         self.critic.load_state_dict(state["critic"])
         self._critic_ref = state["critic_ref"]
+        self._critic_ref = {k: v.to(self.device) for k, v in self._critic_ref.items()}
         self.actor_opt.load_state_dict(state["actor_opt"])
         self.critic_opt.load_state_dict(state["critic_opt"])
-        self.alpha.load_state_dict(state["alpha"])
+        self.alpha.load(state["alpha"])
 
         if self.cfg.target_critic is not None:
             self.target_critic.load_state_dict(state["target_critic"])

@@ -72,6 +72,17 @@ class Alpha(nn.Module):
         else:
             self.value = cfg.value
 
+    def save(self):
+        if self.adaptive:
+            return {"state": self.state_dict(), "opt": self.opt.state_dict()}
+        else:
+            return {}
+
+    def load(self, state):
+        if self.adaptive:
+            self.load_state_dict(state["state"])
+            self.opt.load_state_dict(state["opt"])
+
     def _make_opt(
         self, parameters: list[nn.Parameter], cfg: Config
     ) -> torch.optim.Optimizer:

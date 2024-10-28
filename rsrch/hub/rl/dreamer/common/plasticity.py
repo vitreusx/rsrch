@@ -8,7 +8,7 @@ from torch import Tensor, nn
 from rsrch.nn.utils import safe_mode
 
 
-def save_ref_state(module: nn.Module):
+def save_ref_state(module: nn.Module) -> dict[str, Tensor]:
     state = module.state_dict()
     return {name: tensor.data.clone() for name, tensor in state.items()}
 
