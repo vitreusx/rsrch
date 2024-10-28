@@ -71,7 +71,7 @@ def _to_rgba(desc: str, alpha: float = 0.2):
     return f"rgba{(r, g, b, alpha)}"
 
 
-def err_line(x: np.ndarray, y: np.ndarray, std: np.ndarray, color: str):
+def err_line(x: np.ndarray, y: np.ndarray, std: np.ndarray, color: str, **kwargs):
     y_lower, y_upper = y - std, y + std
     return [
         go.Scatter(
@@ -79,7 +79,7 @@ def err_line(x: np.ndarray, y: np.ndarray, std: np.ndarray, color: str):
             y=y,
             mode="lines",
             line=dict(color=color),
-            showlegend=False,
+            **kwargs,
         ),
         go.Scatter(
             x=[*x, *x[::-1]],
@@ -88,14 +88,18 @@ def err_line(x: np.ndarray, y: np.ndarray, std: np.ndarray, color: str):
             fillcolor=_to_rgba(color),
             line=dict(color="rgba(255, 255, 255, 0)"),
             showlegend=False,
+            hoverinfo="skip",
         ),
     ]
 
 
-def make_color_iter():
+def make_color_iter(palette="Plotly"):
     while True:
-        for hex in px.colors.qualitative.Plotly:
-            hex = hex.removeprefix("#")
-            r, g, b = hex[0:2], hex[2:4], hex[4:6]
-            r, g, b = (int(v, 16) for v in (r, g, b))
-            yield f"rgb{(r, g, b)}"
+        for color in getattr(px.colors.qualitative, palette):
+            if color.startswith("#"):
+                color = color.removeprefix("#")
+                r, g, b = color[0:2], color[2:4], color[4:6]
+                r, g, b = (int(v, 16) for v in (r, g, b))
+                yield f"rgb{(r, g, b)}"
+            elif color.startswith("rgb("):
+                yield color
