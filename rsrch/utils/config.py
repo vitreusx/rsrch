@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
 import math
 import os
 import re
@@ -393,7 +394,7 @@ def cli(
     cfg = eval_vars(cfg)
 
     if args.dump_config:
-        yaml.dump(cfg, sys.stdout)
+        json.dump(cfg, sys.stdout)
         exit(0)
 
     return cfg

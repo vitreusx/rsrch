@@ -96,17 +96,14 @@ class Runner:
 
         self.sdk = rl.sdk.make(self.cfg.env)
 
-        try:
-            self.exp = Experiment(
-                project="dreamer",
-                prefix=self.sdk.id,
-                run_dir=self.cfg.run.dir,
-                config=asdict(self.cfg),
-                interactive=self.cfg.run.interactive,
-                create_commit=self.cfg.run.create_commit,
-            )
-        except ExpDirExists:
-            exit(0)
+        self.exp = Experiment(
+            project="dreamer",
+            prefix=self.sdk.id,
+            run_dir=self.cfg.run.dir,
+            config=asdict(self.cfg),
+            interactive=self.cfg.run.interactive,
+            create_commit=self.cfg.run.create_commit,
+        )
 
         self.exp.boards += [
             Tensorboard(dir=self.exp.dir / "board"),

@@ -27,7 +27,7 @@
       ansible.builtin.shell:
         cmd: |-
           eval "$({{ conda }} shell.bash hook)"
-          conda install -y python=3.10 tmux parallel git
+          conda install -y python=3.10 tmux parallel git conda-forge::jq
           python3 -m pip install pipx keyring
           python3 -m pipx install poetry
 
