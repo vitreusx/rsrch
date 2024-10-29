@@ -20,7 +20,7 @@ def baseline(test_name, suffix=""):
     common_opts = {}
 
     envs = A100k_MONO
-    ratios = [64, 32, 16, 8, 4, 2]
+    ratios = [64, 32, 16, 8, 4, 2, 1]
     seeds = [*range(5)]
 
     for env, ratio, seed in product(envs, ratios, seeds):

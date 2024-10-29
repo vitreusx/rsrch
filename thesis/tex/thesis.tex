@@ -89,7 +89,7 @@ Similarly, self-supervised RL techniques attempt to incorporate pretext tasks in
 
 \subsection{Model-based RL}
 
-Whereas a model-free RL agent seeks only to learn the policy $\pi$, a model-based agent seeks also to model the probability, or simply allow sampling, of future states $\widetilde{s_{t+1}}, \ldots, \widetilde{s_{t+H}}$ given past observations $o_{\leq T}$ and actions to perform $a_{t}, \ldots, a_{t+H-1}$ (where $H$ denotes imagination horizon).
+Whereas a model-free RL agent seeks only to learn the policy $\pi$, a model-based agent seeks also to model the probability, or simply allow sampling, of future states and rewards $\widetilde{s_{t+1}}, \widetilde{r_{t+1}}, \ldots, \widetilde{s_{t+H}}, \widetilde{r_{t+H}}$ given past observations $o_{\leq T}$ and actions to perform $a_{t}, \ldots, a_{t+H-1}$, where $H$ denotes the imagination horizon.
 
 \subsubsection{Learning the model}
 
@@ -114,57 +114,60 @@ The main idea of this paper is inspired and motivated by Rainbow architecture an
 % I've already gone through literature, but it would be wise to recheck it a few times since it's quite a provocative statement.
 Our goal is to develop a framework for sample-efficient RL, in a similar fashion to Rainbow - taking a base architecture, an array of approaches developed to improve sample efficiency, and combine them together into a single architecture. To our knowledge, this has not yet been investigated.
 
-\section{Framework overview}
+\section{Method}
 
-We will start with a description of a general framework for constructing sample-efficient agents.
+Let us now consider how these advancements can be integrated into a single unified, modular framework for constructing sample-efficient RL agents.
 
-The use of world models in a number of state-of-the-art approaches for data-efficient RL informs our choice to design the architecture in a model-based fashion. To be precise, the framework consists of a world model module, as well as the RL agent module (henceforth we shall refer to them briefly as ``model'' and ``agent'' respectively), along with a replay buffer.
+The use of world models in a number of state-of-the-art approaches for data-efficient RL informs our choice to design the architecture in a model-based fashion. Thus, the framework shall consist of a world model, the RL agent proper, along with a replay buffer.
 
-Learning the world model is, essentially, a standard supervised learning task. The data used for this purpose shall be drawn from the replay buffer, containing the experience collected during environment interaction.
-
-Improving the agent in a model-based setting can be realized in a number of ways:
+In many cases, the advances in sample efficiency result from the development of better model or RL algorithm architectures \emph{in isolation}. With this in mind, we wish to make the framework allow for possibly seamless swapping out of the model and RL modules. In order to do this, we need to examine how different model-based architectures structure the interaction between the model and the RL modules.
 
 \begin{enumerate}
-  \item The input data for the optimization step may consist purely of \emph{imaginary} rollouts, wherein we sample a real state from a replay buffer, and use the model and the agent to simulate new rollouts in imagination. This approach forms the basis of the Dreamer series of architectures. In this case, the RL module may be \emph{any} model-free RL algorithm.
-  \item A strategy developed in MBPO is to supplement on-policy real-environment data with simulated sequences. We are thus presented with a solution neither model-free, nor fully model-based.
+  \item Dreamer series takes the approach of training a (possibly arbitrary) model-free RL algorithm purely with simulated experience. The model and the RL modules are essentially independent of each other.
+  \item One may mix real and simulated data for the purposes of training the RL agent. For example, in MBPO, the authors use an on-policy method, but augment the data with imaginary rollouts.
   \item The agent module may not even require any training per se. For example, PETS and PlaNet use cross-entropy method (CEM) for selecting actions to perform by planning with the learned model.
-  \item Planning methods may be augmented with neural networks, as was done in MuZero and EfficientZero.
+  \item Methods using value-equivalent models, such as MuZero or EfficientZero, train the model and the RL module jointly. In this instance, the interaction is more complex.
 \end{enumerate}
 
-Thus, fundamentally, the training process can be thought of as a stream of: environment interactions, model optimization steps, and agent optimization steps. The precise design of the loop is, however, non-trivial, for a couple of reasons:
+Our desiderata are best fit with a generic approach inspired by the Dreamer series. To be precise, we consider a following scheme:
 
 \begin{enumerate}
-  \item We ought to interleave optimization and environment steps, in order to continue improving the model and the policy as we collect more data. Misspecifying the update frequency may, however, lead to under- or overfitting, making it a hyperparameter to be tuned.
-  \item After collecting the initial experience dataset, we may opt to perform a ``pretraining stage'', in which we perform optimization steps without collecting any additional environment transitions. Without it, the model is badly underoptimized in the initial stages of the training process, which may lead to lesser overall sample efficiency.
-  \item Recent research in Continual Learning and in model-free data-efficient RL points to the emergence of a phenomenon of plasticity loss/primacy bias in continual settings, such as RL, whereby the neural networks lose their ability to fit new data. We should, therefore, investigate whether it occurs in the specific setting of model-based RL, as well as the efficacy of the possible solutions proposed in the literature.
+  \item The world model is independent of the RL module, and is optimized on samples from a replay buffer.
+  \item The RL module may use the model actively, and may require optimization using batches of on- or off-policy rollouts, either real or simulated, or a mixture of both (if the observation and model state spaces coincide.)
 \end{enumerate}
 
-With this in mind, we split our investigation into two parts. First, we will look into optimizing the structure of the training loop for a given fixed pair of model and RL architectures. The purpose is twofold: to assess the impact of loop improvement techniques, as presented in e.g. SR-SPR paper, in the model-based setting; and to see if (and to what extent) the relevant hyperparameters can be tuned automatically.
+This formulation subsumes most of the algorithms we have considered so far, such as Dreamer, MBPO, PlaNet, SimPLe, or IRIS: the specific method can be replicated by adjusting the architectures of the model and of the RL module, or the form of the input data for the RL module optimization step. Data augmentation may, for example, be implemented by placing a layer between the replay data loader and the model.
 
-With this done, we will examine a selection of architectural improvements, such as the choice of different RL modules, or the use of data augmentation techniques.
+% Something is missing here, I believe.
+
+Beyond the network architecture, a major component of the design of sample-efficient agents is the structure of the training loop, meaning the order and frequency in which environment interaction, model optimization and RL module optimization occur. Indeed, works such as Data-Efficient Rainbow or SR-SPR prove that ordinarily inefficient methods can be made vastly more data-efficient by refining the training process. We wish to extend these findings to the domain of model-based RL. This is, however, non-trivial, and requires further investigation.
+
+First, there are purely technical difficulties. Let us, for example, consider scaling up the frequency of model and RL updates. As opposed to the model-free case, we are dealing with two separate learning processes, that of the model and of the RL module, resulting in two separate update frequencies to be tuned. If we were to search for the optimal configuration through a grid search, we would be faced with a quadratic number of training runs to perform, relative to the model-free case, which would quickly become infeasible. It is therefore imperative to reduce the extent of the hyperparameter sweep as much as feasible.
+
+Next, insofar as the collapse of the performance for regular model-free RL agents, when increasing the update-to-data frequency, is attributed to plasticity loss, it is not immediately clear whether model-based agents undergo the same process, whether the model and the RL module suffer from the primacy bias or perhaps only one of them does, and whether interventions proposed in the literature prove beneficial here as well. If such interventions require tuning, as is for example the case for periodic resets, then we possibly encounter another computationally expensive grid search.
+
+Because the optimal training loop parameters are dependent on the specific model and RL modules used, we split our investigation into two parts. First, we shall use a baseline model and RL setup to examine the impact of various design choices in the training loop optimization, with the view of developing architecture-agnostic solution for tuning it. Thereafter, we will look into architectural ablations, to investigate their impact on the performance of the agent.
 
 \section{Training recipe optimization}
 
 \subsection{Base architecture}
 
-As noted,
-
-We'll use the DreamerV2 architecture as a starting point in our inquiry. This choice is motivated by following reasons:
+We choose DreamerV2 architecture as the baseline for the purposes of optimizing the training recipe. The choice is driven by a number of factors:
 
 \begin{enumerate}
-  \item A flexible, modular architecture, described below, is capable of accomodating the changes we wish to make;
-  \item The system has \emph{not} been designed with sample-efficiency in mind, which allows us to test the effect of the modifications on a ``blank slate''.
-  \item The paper is well-known by researchers in the field (having 788 citations as of Sep 2024). We hope that, because of this, strategies we propose will be easier to adopt by other practitioners.
+  \item We wish to start with a non-sample-efficient setup, and (hopefully) make it more data-efficient.
+  \item We want to focus on the visual domains, such as Atari-100k.
+  \item The model and the RL module are, asymptotically, capable of reaching high performance, meaning we will not be bottlenecked by the insufficiency in the model/RL modules themselves.
 \end{enumerate}
 
 The agent consists of two modules:
 
 \begin{itemize}
-  \item A world model. For DreamerV2, it consists of an observation encoder and a Recurrent State Space Model (RSSM) for modeling stochastic latent dynamics.
-  \item An RL algorithm. The implementation is, in essence, entropy-regularized Advantage Actor-Critic (A2C) using multi-step predictions for better value estimates.
+  \item The world model -- an observation encoder and a Recurrent State Space Model (RSSM) for modeling stochastic latent dynamics.
+  \item The RL module -- an actor-critic algorithm, optimized either via backpropagation on the values themselves, or through the use of policy gradients.
 \end{itemize}
 
-These are optimized using \autoref{code:dreamer_loop}.
+The training loop is structured as depicted in \autoref{code:dreamer_loop}.
 
 \begin{algorithm}
   \caption{Dreamer training recipe}
@@ -172,15 +175,14 @@ These are optimized using \autoref{code:dreamer_loop}.
   \begin{algorithmic}[1]
     \State Gather $P$ env samples with an agent acting randomly, and put them into a replay buffer
     \While{Total number of env steps $<T$}
-    \State Fetch a batch of $N$ sequences $(o_{1:L}, a_{1:L-1}, r_{1:L-1}, \gamma)$ from the replay buffer.
-    \State Optimize the world model using batch of real data.
-    \State Imagine a batch of $M$ sequences $(s_{1:H}, a_{1:H-1}, \widetilde{r}_{1:H-1}, \widetilde{\gamma}_{1:H})$ with the world model and the behavior policy.
-    \State {\it $\triangleright$ Note: $\widetilde{\gamma} \in [0, 1]$ denote ``terminal-ness'' of the state. Using imaginary rollouts requires slight modification to RL algorithms in order to accept sequences in which reality of the states is fuzzy, e.g. the middle state is terminal, and the ones after undefined.}
-    \State Optimize the RL agent using the batch of dream data.
-    \State Gather environment steps using the behavior policy, and store them in the replay buffer.
+    \State Optimize the world model using batch of real rollouts $(o_{1:L}, a_{1:L-1}, r_{1:L-1}, \gamma)$ drawn from the replay buffer.
+    \State Optimize the RL agent using the batch of dream data $(s_{1:H}, a_{1:H-1}, \widetilde{r}_{1:H-1}, \widetilde{\gamma}_{1:H})$, generated by starting from the states obtained through an inference process on real-world rollouts, and imagining next $H-1$ states with the world model.
+    \State Perform $E=64$ environment steps using the behavior policy, and store them in the replay buffer.
     \EndWhile
   \end{algorithmic}
 \end{algorithm}
+
+For more details, we refer the reader to the source paper. For our purposes, though, we wish to treat these modules as ``black boxes''.
 
 \subsection{Experimental setup}
 
@@ -188,7 +190,7 @@ We are interested in evaluating performance on the Atari-100k benchmark. However
 
 \begin{enumerate}
   % Recheck the claim? Also, define "reasonable"
-  \item Since we are interested in \emph{speeding up} the algorithm, we ought to select such environments, in which the method makes consistent progress in a given extended interaction budget. For example, given a maximum speedup target of $15 \times$, we would focus on the horizon of $15 \dot 400 \times 10^3 = 6 \times 10^6$ environment steps. If the method doesn't improve much beyond the performance of a random agent, or solves the task immediately, gauging the precise speedup factor becomes impossible.
+  \item Since we are interested in \emph{speeding up} the algorithm, we ought to select such environments, in which the method makes consistent progress in a given extended interaction budget. For example, given a maximum speedup target of $15 \times$, we would focus on the horizon of $15 \cdot (400 \times 10^3) = 6 \times 10^6$ environment steps. If the method doesn't improve much beyond the performance of a random agent, or solves the task immediately, gauging the speedup factor becomes impossible.
   \item The variance of the results with respect to different RNG seeds used should be minimized, so as to be able to derive the expected score with a limited number of RNG seeds with any degree of accuracy.
   \item The subset should be as representative of the performance on the whole subset as possible.
 \end{enumerate}
@@ -203,16 +205,15 @@ Next, we shall select out of this subset 3 games, which are most predictive of t
   \caption{Performance curves for Atari-100k, with default settings. The values have been provided by the authors of the DreamerV2 paper. The x-axis represents the number of environment steps passed. The y-axis represents the validation score. Blue curves indicate environments, which we have selected for further evaluation.}
 \end{figure}
 
-
 \subsection{Na\"ive speedup test}
 
-Let us begin with the simplest way to speed up the learning process - increasing the frequency of optimization steps without any other changes.
+We begin with an experiment involving a straightforward increase of the frequency of optimization steps, without any further changes. The goals are as follows: to establish a baseline for further performance, to find the update-to-data regime where the agent performance degrades, and to investigate what happens at that point with the networks in question.
 
 \paragraph{Setup} Base DreamerV2 training recipe begins with a prefill of $P = 200 \times 10^3$ and continues until the total step count is $T = 200 \times 10^6$. The latter loop consists of $E = 64$ env steps (at the frame skip value of $4$, this corresponds to $16$ agent steps) and a single optimization step.
 
-As discussed previously, we replace $T$ by $6.4 \times 10^6$. With that, we can parametrize the recipe as follows: begin with a prefill of $P = \max((3 \times 10^3)E, 20 \times 10^3)$ env steps, and continue until $\max(10^5 E, 400 \times 10^3)$ env steps, making an optimization step every $E$ env steps. Then, setting $E$ to $64$ roughly corresponds to the original training setting, and until $E \geq 4$ the number of total optimization steps is constant while the total number of env steps decreases. For $E < 4$, the number of optimization steps increases, since we keep the total number of env steps at $400 \times 10^3$.
+We replace $T$ by $400 \times 10^3$ to match Atari-100k benchmark environment budget, and $P$ with $20 \times 10^3$. Then, we perform tests with varying values of $E \in \{64, 32, 16, 8, 4, 2\}$, for a set of $3$ selected environments and $5$ RNG seeds.
 
-Beyond that, for testing purposes, we also add an online train-validation split mechanism: each episode in the replay buffer is assigned either to the training set or the validation set, with probability $p = 0.15$. Every $K$ optimization steps, a batch is sampled from the validation set, and validation loss and possibly other metrics are computed.
+Beyond that, for testing purposes, we also add an online train-validation split mechanism: each episode in the replay buffer is assigned either to the training set or the validation set -- to be precise, every $(1/p)$-th episode is assigned to the validation set, where $p = 0.15$. Every $K$ optimization steps, a batch is sampled from the validation set, and validation loss and possibly other metrics are computed.
 
 \paragraph{Results} Let us first look at performance curves (\autoref{fig:naive_perf}). For $E \geq 16$, the final score is in the order of the target scores at $E = 64$, which indicates that we are able to speed up the training procedure by a factor of $4$ without any further modifications, whilst keeping the agent performance intact. However, as we may observe for $E \in \{2, 4, 8\}$, at a certain point the training process deteriorates.
 
