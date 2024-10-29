@@ -8,6 +8,7 @@
 \usepackage[preprint]{styles/jmlr2e}
 
 \newcommand{\algorithmautorefname}{Algorithm}
+\newcommand{\env}[1]{{\tt #1}}
 
 \begin{document}
 
@@ -195,47 +196,70 @@ We are interested in evaluating performance on the Atari-100k benchmark. However
   \item The subset should be as representative of the performance on the whole subset as possible.
 \end{enumerate}
 
-First, let us filter out the environments which do not satisfy first two criteria. In the absence of standardized metrics which would inform our choice quantitatively, we resort to visual inspection of the performance curves for each environment in the first $6 \times 10^6$ steps. We select following games for further evaluation: Amidar, Assault, Asterix, Crazy Climber, James Bond, Ms Pacman and Pong.
-
-Next, we shall select out of this subset 3 games, which are most predictive of the performance on the complete 26-game benchmark. We follow the approach of (Atari-5), and use the source code provided by the authors to arrive at the final result. The three environments selected by the algorithm are: Assault, Crazy Climber and Ms Pacman.
+First, let us filter out the environments which do not satisfy first two criteria. In the absence of standardized metrics which would inform our choice quantitatively, we resort to visual inspection of the performance curves for each environment in the first $6 \times 10^6$ steps. The relevant data can be found in \autoref{fig:atari_100k_comp}. Based on it, we select following games for further evaluation: \env{Amidar}, \env{Assault}, \env{Asterix}, \env{CrazyClimber}, \env{JamesBond}, \env{MsPacman} and \env{Pong}.
 
 \begin{figure}
   \centering
-  \includegraphics[width=0.8\linewidth,height=0.8\paperheight,keepaspectratio]{assets/env_selection.pdf}
+  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/env_selection.pdf}
   \caption{Performance curves for Atari-100k, with default settings. The values have been provided by the authors of the DreamerV2 paper. The x-axis represents the number of environment steps passed. The y-axis represents the validation score. Blue curves indicate environments, which we have selected for further evaluation.}
+  \label{fig:atari_100k_comp}
 \end{figure}
+
+Next, we shall select out of this subset 3 games, which are most predictive of the performance on the complete 26-game benchmark. We follow the approach of (Atari-5), and use the source code provided by the authors to arrive at the final result. The three environments selected by the algorithm are: \env{Assault}, \env{CrazyClimber} and \env{MsPacman}.
+
+We use the same environment settings (frame skip values, time limit etc.) as the original DreamerV2. (See Appendix for more details?)
 
 \subsection{Na\"ive speedup test}
 
-We begin with an experiment involving a straightforward increase of the frequency of optimization steps, without any further changes. The goals are as follows: to establish a baseline for further performance, to find the update-to-data regime where the agent performance degrades, and to investigate what happens at that point with the networks in question.
+We begin with an experiment involving a straightforward increase of the frequency of optimization steps, without any further changes. The goals are as follows: to establish a baseline for further analysis, to find the update-to-data regime where the agent performance degrades, and to investigate what happens at that point with the networks in question.
 
 \paragraph{Setup} Base DreamerV2 training recipe begins with a prefill of $P = 200 \times 10^3$ and continues until the total step count is $T = 200 \times 10^6$. The latter loop consists of $E = 64$ env steps (at the frame skip value of $4$, this corresponds to $16$ agent steps) and a single optimization step.
 
 We replace $T$ by $400 \times 10^3$ to match Atari-100k benchmark environment budget, and $P$ with $20 \times 10^3$. Then, we perform tests with varying values of $E \in \{64, 32, 16, 8, 4, 2\}$, for a set of $3$ selected environments and $5$ RNG seeds.
 
-Beyond that, for testing purposes, we also add an online train-validation split mechanism: each episode in the replay buffer is assigned either to the training set or the validation set -- to be precise, every $(1/p)$-th episode is assigned to the validation set, where $p = 0.15$. Every $K$ optimization steps, a batch is sampled from the validation set, and validation loss and possibly other metrics are computed.
+Beyond that, for testing purposes, we also add an online train-validation split mechanism: each episode in the replay buffer is assigned either to the training set or the validation set -- to be precise, every $(1/p)$-th episode is assigned to the validation set, where $p = 0.15$.
 
-\paragraph{Results} Let us first look at performance curves (\autoref{fig:naive_perf}). For $E \geq 16$, the final score is in the order of the target scores at $E = 64$, which indicates that we are able to speed up the training procedure by a factor of $4$ without any further modifications, whilst keeping the agent performance intact. However, as we may observe for $E \in \{2, 4, 8\}$, at a certain point the training process deteriorates.
-
-\begin{figure}
-  \centering
-  \includegraphics[width=0.8\linewidth,height=0.8\paperheight,keepaspectratio]{assets/naive_perf.pdf}
-  \caption{Performance curves for a three-game subset of Atari-100k with different environment-to-update-step ratios. The columns represent different environments. The rows represent different ratio values, $64$ being the default one.}
-  \label{fig:naive_perf}
-\end{figure}
-
-To determine what the performance would be with the step count limit of $400 \times 10^3$, we have also performed tests with prefill and total step counts equivalent to the setup for $E \leq 4$ ($400 \times 10^3$ and $20 \times 10^3$ respectively), with $E > 4$. The results can be found in \autoref{fig:at_400k_perf}. As we can see, at $E = 4$, the final score is the greatest across all three environments. Even so, it is significantly smaller than for the full horizon of $6.4 \times 10^6$ environment steps, as well as being more ``erratic''.
+\paragraph{Results} Let us first analyze final test performance, depending on the data-to-update ratio $E$, for each environment (\autoref{fig:baseline_score}). The mean final score is maximized for a given region of the values of $E$, beyond which it decreases, presumably either due to under- or overoptimization. For each task, the optimal value is different: $2-4$ for \env{CrazyClimber}, $\approx 8$ for \env{Assault} and a wide range for \env{MsPacman}.
 
 \begin{figure}
   \centering
-  \includegraphics[width=0.8\linewidth,height=0.8\paperheight,keepaspectratio]{assets/at_400k.perf.pdf}
-  \caption{Performance curves for a three-game subset of Atari-100k with different environment-to-update-step ratios, at a fixed env step limit of $400 \times 10^3$. The columns represent different environments. The rows represent different ratio values, $64$ being the default one.}
-  \label{fig:at_400k_perf}
+  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/baseline_score.pdf}
+  \caption{Final test episode returns for each of the 3 tested environments, relative to the data-to-update ratio $E$. The line indicates the mean across the RNG seeds, and the shaded area indicates the standard deviation. \emph{Note}: The x-axis is logarithmic.}
+  \label{fig:baseline_score}
 \end{figure}
 
-A preliminary conclusion we may draw is that the system underfits for $E > 4$ and overfits for $E < 4$. Our next step is to investigate whether we can pinpoint the underlying causes of this phenomenon.
+Our next goal is to take a closer look at the behavior of the agent throughout  training, to see if we can discover the causes of the performance collapse. To investigate model overfitting, we analyze the model validation loss curves. We will start with the relationship between final model validation loss and final validation score (\autoref{fig:baseline_model_val}). We can see that, perhaps somewhat surprisingly, there is no clear correlation between lower model validation loss, and higher final scores - in fact, the opposite seems to hold for \env{MsPacman}. If we take a look at a similar figure, except for the training loss (\autoref{fig:baseline_model_train}), the correlation is more apparent. This would seem to indicate that (1) computing model loss on the validation set is not a reliable metric for measuring ``true'' out-of-distribution loss, in this instance; (2) the model, even at such ratios, is \emph{underfitting}.
 
-  [Analysis of the val loss and metrics related to plasticity loss.]
+\begin{figure}
+  \centering
+  \includegraphics[width=0.8\linewidth,height=0.8\paperheight,keepaspectratio]{assets/baseline_model_val.pdf}
+  \caption{Relationship between final validation score and final model validation loss. Each point represents a single training run. The x-axis represents the agent performance. The y-axis represents the value of the model validation loss at the end of the training.}
+  \label{fig:baseline_model_val}
+\end{figure}
+
+\begin{figure}
+  \centering
+  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/baseline_model_train.pdf}
+  \caption{Relationship between final validation score and final model train loss. Each point represents a single training run. The x-axis represents the agent performance. The y-axis represents the value of the model train loss at the end of the training.}
+  \label{fig:baseline_model_train}
+\end{figure}
+
+[Return to this later; I'm not precisely sure what to make of it.]
+
+\subsection{Decoupling model and RL optimization}
+
+As noted previously, the optimal training schedules for the model and the RL module need not coincide - we may, for example, find that the model is overfitting, yet the RL head remains underoptimized.
+
+\paragraph{Setup} We adjust the code, so that the model is optimized once every $K_{\rm WM}$ environment steps, and the RL module is optimized once every $K_{\rm RL}$ environment steps. A grid search is performed for \env{Assault} environment [Extend to all three, if there's enough compute time], with ratios $K_{\rm WM}, K_{\rm RL} \in \{2, 4, 8\}$, corresponding to the observed regime, where the performance starts decreasing.
+
+\paragraph{Results} \autoref{fig:split_ratios_perf} shows the agent performance depending on the configuration of the ratios.
+
+\begin{figure}
+  \centering
+  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/split_ratios_perf.pdf}
+  \caption{Final validation score for each model/RL update ratio configuration. The x-axis represents each run, marked by a tag in the form of '$K_{\rm WM}/K_{\rm RL}$'. The points represent the scores for each seed, with the corresponding violin plot to the right.}
+  \label{fig:split_ratios_perf}
+\end{figure}
 
 \subsection{Pre-training the world model and RL agent}
 
