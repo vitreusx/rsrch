@@ -20,7 +20,7 @@ from torch import Tensor, nn
 from tqdm import tqdm
 
 from rsrch import rl, spaces
-from rsrch.exp import Experiment
+from rsrch.exp import ExpDirExists, Experiment
 from rsrch.exp.board.sqlite import Sqlite
 from rsrch.exp.board.tensorboard import Tensorboard
 from rsrch.exp.profile import Profiler
@@ -96,14 +96,17 @@ class Runner:
 
         self.sdk = rl.sdk.make(self.cfg.env)
 
-        self.exp = Experiment(
-            project="dreamer",
-            prefix=self.sdk.id,
-            run_dir=self.cfg.run.dir,
-            config=asdict(self.cfg),
-            interactive=self.cfg.run.interactive,
-            create_commit=self.cfg.run.create_commit,
-        )
+        try:
+            self.exp = Experiment(
+                project="dreamer",
+                prefix=self.sdk.id,
+                run_dir=self.cfg.run.dir,
+                config=asdict(self.cfg),
+                interactive=self.cfg.run.interactive,
+                create_commit=self.cfg.run.create_commit,
+            )
+        except ExpDirExists:
+            exit(0)
 
         self.exp.boards += [
             Tensorboard(dir=self.exp.dir / "board"),

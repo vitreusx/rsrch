@@ -21,6 +21,11 @@ _:
     mse:
       init: tf
 
+device: cuda
+compute_dtype: float16
+def_step: env_step
+mode: train
+
 run:
   dir: ~
   interactive: true
@@ -29,16 +34,12 @@ run:
 repro:
   seed: 42
   determinism: sufficient
-device: cuda
-compute_dtype: float16
-def_step: env_step
 debug:
   detect_anomaly: false
 profile:
   enabled: false
   schedule: { wait: 5, warmup: 1, active: 3, repeat: 4 }
   functions: [do_opt_step, do_env_step]
-mode: train
 
 env:
   type: atari

@@ -60,6 +60,10 @@ class Tee:
         os.dup2(self.tee.stdin.fileno(), stream.fileno())
 
 
+class ExpDirExists(RuntimeError):
+    pass
+
+
 class Experiment(logging.LogMixin):
     def __init__(
         self,
@@ -70,7 +74,6 @@ class Experiment(logging.LogMixin):
         config: dict | None = None,
         create_commit: bool = True,
         interactive: bool = True,
-        overwrite_if_exists: bool = True,
     ):
         self.project = project
         self.interactive = interactive
@@ -85,10 +88,7 @@ class Experiment(logging.LogMixin):
             self.dir = Path("runs") / sanitize(project) / day / filename
 
         if self.dir.exists():
-            if overwrite_if_exists:
-                shutil.rmtree(self.dir)
-            else:
-                raise RuntimeError(f"Directory {self.dir} already exists.")
+            raise ExpDirExists(f"Directory {self.dir} already exists.")
         self.dir.mkdir(parents=True, exist_ok=False)
 
         if not self.interactive:

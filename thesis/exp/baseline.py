@@ -1,9 +1,9 @@
-from itertools import product
-from pathlib import Path
-from .utils import *
-
 import argparse
 import shlex
+from itertools import product
+from pathlib import Path
+
+from .utils import *
 
 
 def baseline(test_name, suffix=""):
