@@ -200,7 +200,7 @@ First, let us filter out the environments which do not satisfy first two criteri
 
 \begin{figure}
   \centering
-  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/env_selection.pdf}
+  \includegraphics[width=\linewidth,height=0.6\paperheight,keepaspectratio]{assets/env_selection.pdf}
   \caption{Performance curves for Atari-100k, with default settings. The values have been provided by the authors of the DreamerV2 paper. The x-axis represents the number of environment steps passed. The y-axis represents the validation score. Blue curves indicate environments, which we have selected for further evaluation.}
   \label{fig:atari_100k_comp}
 \end{figure}
@@ -208,6 +208,15 @@ First, let us filter out the environments which do not satisfy first two criteri
 Next, we shall select out of this subset 3 games, which are most predictive of the performance on the complete 26-game benchmark. We follow the approach of (Atari-5), and use the source code provided by the authors to arrive at the final result. The three environments selected by the algorithm are: \env{Assault}, \env{CrazyClimber} and \env{MsPacman}.
 
 We use the same environment settings (frame skip values, time limit etc.) as the original DreamerV2. (See Appendix for more details?)
+
+The original implementation of DreamerV2 is written in Tensorflow - we have ported the relevant source code (mainly the implementation of the world model and the actor critic) to Pytorch, resulting in slight changes in overall performance. It remains, however, comparable: \autoref{fig:torch_v_ref} depicts the validation score curves for both the original implementation, and the Pytorch version.
+
+\begin{figure}
+  \centering
+  \includegraphics[width=\linewidth,height=\paperheight,keepaspectratio]{assets/torch_v_ref.pdf}
+  \caption{Comparison of the validation scores for Tensorflow and Pytorch versions. \emph{Note:} The scores for the reference (Tensorflow) version have been supplied by the authors, and were not verified independently.}
+  \label{fig:torch_v_ref}
+\end{figure}
 
 \subsection{Na\"ive speedup test}
 
@@ -263,9 +272,11 @@ As noted previously, the optimal training schedules for the model and the RL mod
 
 \subsection{Pre-training the world model and RL agent}
 
-\section{Architectural changes}
+\subsection{Periodic resets}
 
-\subsection{Explicit exploration strategies}
+\subsection{Auto-tuning update frequencies}
+
+\section{Architectural changes}
 
 \subsection{Choice of the RL algorithm choice}
 
