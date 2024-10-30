@@ -1048,7 +1048,7 @@ class Runner:
             )
             self.best_wm_val_loss = val_loss
         elif val_loss > self.best_wm_val_loss:
-            self.wm_ratio /= self.ratio_update_mult
+            self.wm_ratio *= self.ratio_update_mult
             self.wm_ratio = min(
                 max(self.wm_ratio, self.min_wm_ratio), self.max_wm_ratio
             )
