@@ -1022,7 +1022,7 @@ class Runner:
             period=self.wm_ratio,
             accumulate=True,
         )
-        self.best_wm_val_loss = None
+        self.prev_wm_val_loss = None
 
         self.should_opt_rl = cron.Every(
             lambda: self.wm_opt_step,
@@ -1033,31 +1033,16 @@ class Runner:
     def update_adaptive_opt(self):
         val_loss = self.do_wm_val_epoch()
         self.exp.add_scalar("ada/val_loss", val_loss)
-        if self.best_wm_val_loss is None:
-            self.best_wm_val_loss = val_loss
-        elif val_loss < self.best_wm_val_loss:
-            self.wm_ratio /= self.ratio_update_mult
-            self.wm_ratio = min(
-                max(self.wm_ratio, self.min_wm_ratio), self.max_wm_ratio
-            )
+        if self.prev_wm_val_loss is not None:
+            if val_loss < self.prev_wm_val_loss:
+                self.wm_ratio /= self.ratio_update_mult
+            else:
+                self.wm_ratio *= self.ratio_update_mult
+            self.wm_ratio = max(self.wm_ratio, self.min_wm_ratio)
+            self.wm_ratio = min(self.wm_ratio, self.max_wm_ratio)
             self.exp.add_scalar("ada/wm_ratio", self.wm_ratio)
-            self.should_opt_wm = cron.Every(
-                lambda: self.env_step,
-                period=self.wm_ratio,
-                accumulate=True,
-            )
-            self.best_wm_val_loss = val_loss
-        elif val_loss > self.best_wm_val_loss:
-            self.wm_ratio *= self.ratio_update_mult
-            self.wm_ratio = min(
-                max(self.wm_ratio, self.min_wm_ratio), self.max_wm_ratio
-            )
-            self.exp.add_scalar("ada/wm_ratio", self.wm_ratio)
-            self.should_opt_wm = cron.Every(
-                lambda: self.env_step,
-                period=self.wm_ratio,
-                accumulate=True,
-            )
+            self.should_opt_wm.period = self.wm_ratio
+        self.prev_wm_val_loss = val_loss
 
     def do_adaptive_opt_step(self):
         while self.should_opt_wm:
