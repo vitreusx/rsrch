@@ -197,7 +197,7 @@ thesis:
           full: false
           tag: final
 
-  adaptive_ratio_model_only:
+  adaptive_wm_ratio:
     # Like `adaptive_ratio`, except that we apply it only to the model, and set RL update ratio to be low (= high frequency)
     $extends: [base]
     _prefill: 20e3

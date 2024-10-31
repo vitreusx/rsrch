@@ -1024,11 +1024,14 @@ class Runner:
         )
         self.prev_wm_val_loss = None
 
-        self.should_opt_rl = cron.Every(
-            lambda: self.wm_opt_step,
-            period=rl_to_wm_ratio,
-            accumulate=True,
-        )
+        if rl_to_wm_ratio > 0:
+            self.should_opt_rl = cron.Every(
+                lambda: self.wm_opt_step,
+                period=rl_to_wm_ratio,
+                accumulate=True,
+            )
+        else:
+            self.should_opt_rl = cron.Never()
 
     def update_adaptive_opt(self):
         val_loss = self.do_wm_val_epoch()

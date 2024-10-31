@@ -6,7 +6,7 @@ from pathlib import Path
 from .utils import *
 
 
-def adaptive_ratio_model_only(test_name, suffix=""):
+def adaptive_wm_ratio(test_name, suffix=""):
     all_tests = []
 
     preset_file = Path(__file__).parent / "presets.yml"
@@ -14,7 +14,7 @@ def adaptive_ratio_model_only(test_name, suffix=""):
         "-P",
         str(preset_file.relative_to(Path.cwd())),
         "-p",
-        "thesis.adaptive_ratio_model_only",
+        "thesis.adaptive_wm_ratio",
         "grid_launch",
     ]
     common_opts = {}
@@ -37,10 +37,10 @@ def adaptive_ratio_model_only(test_name, suffix=""):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--name", default="adaptive_ratio_model_only")
+    p.add_argument("--name", default="adaptive_wm_ratio")
     args = p.parse_args()
 
-    all_tests = adaptive_ratio_model_only(args.name)
+    all_tests = adaptive_wm_ratio(args.name)
 
     prefix = ["python", "-m", "rsrch.hub.rl.dreamer"]
     for test in all_tests:
