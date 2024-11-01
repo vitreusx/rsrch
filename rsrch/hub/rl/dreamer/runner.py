@@ -2,6 +2,7 @@ import concurrent.futures
 import inspect
 import logging
 import lzma
+import math
 import pickle
 import tempfile
 import threading
@@ -56,6 +57,47 @@ def exec_once(method: Callable[P, R]) -> Callable[P, R]:
         return retval
 
     return wrapper
+
+
+class AdaptiveRatioSearch:
+    def __init__(self, values: list[float], initial_index: int = -1):
+        self.values = values
+        assert np.all(np.diff(self.values) >= 0)
+        self.index = range(len(values))[initial_index]
+        self._prev_loss, self._prev_time = None, None
+        self._prev_index, self._prev_vel = None, None
+
+    def update(self, loss: float, time: float):
+        if self._prev_loss is not None:
+            vel = (loss - self._prev_loss) / (time - self._prev_time)
+            if self._prev_vel is None:
+                self._prev_vel = vel
+                self._prev_index = self.index
+                if self.index > 0:
+                    self.index -= 1
+                else:
+                    self.index += 1
+            else:
+                acc = (self._prev_vel < vel) ^ (self._prev_index < self.index)
+                self._prev_index = self.index
+                self._prev_vel = vel
+                if acc:
+                    if self.index < len(self.values) - 1:
+                        self.index += 1
+                    else:
+                        self.index -= 1
+                else:
+                    if self.index > 0:
+                        self.index -= 1
+                    else:
+                        self.index += 1
+
+        self._prev_loss = loss
+        self._prev_time = time
+
+    @property
+    def value(self):
+        return self.values[self.index]
 
 
 class Runner:
@@ -1046,6 +1088,48 @@ class Runner:
             self.exp.add_scalar("ada/wm_ratio", self.wm_ratio)
             self.should_opt_wm.period = self.wm_ratio
         self.prev_wm_val_loss = val_loss
+
+    def adaptive_setup_v2(
+        self,
+        wm_ratio_range: tuple[float, float],
+        rl_to_wm_ratio: float,
+        ratio_update_mult: float,
+    ):
+        min_wm_ratio, max_wm_ratio = wm_ratio_range
+        num_values = (
+            int(
+                (math.log(max_wm_ratio) - math.log(min_wm_ratio))
+                / math.log(ratio_update_mult)
+            )
+            + 1
+        )
+        ratio_values = np.geomspace(min_wm_ratio, max_wm_ratio, num_values)
+        self.wm_ratio_search = AdaptiveRatioSearch(
+            values=ratio_values,
+            initial_index=len(ratio_values) // 2,
+        )
+
+        self.should_opt_wm = cron.Every(
+            lambda: self.env_step,
+            period=self.wm_ratio_search.value,
+            accumulate=True,
+        )
+
+        if rl_to_wm_ratio > 0:
+            self.should_opt_rl = cron.Every(
+                lambda: self.wm_opt_step,
+                period=rl_to_wm_ratio,
+                accumulate=True,
+            )
+        else:
+            self.should_opt_rl = cron.Never()
+
+    def update_adaptive_opt_v2(self):
+        val_loss = self.do_wm_val_epoch()
+        self.exp.add_scalar("ada/val_loss", val_loss)
+        self.wm_ratio_search.update(val_loss, self.env_step)
+        self.exp.add_scalar("ada/wm_ratio", self.wm_ratio_search.value)
+        self.should_opt_wm.period = self.wm_ratio_search.value
 
     def do_adaptive_opt_step(self):
         while self.should_opt_wm:

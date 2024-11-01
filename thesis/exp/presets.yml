@@ -224,7 +224,6 @@ thesis:
       - prefill:
           until: ${_prefill}
       - adaptive_setup:
-          init_wm_ratio: 64
           wm_ratio_range: [1, 128]
           rl_to_wm_ratio: 0.0
           ratio_update_mult: 1.3
@@ -235,6 +234,33 @@ thesis:
               every: 20e3
             - update_adaptive_opt: ~
               every: 1e3
+            - do_adaptive_opt_step
+            - do_rl_opt_step: ~
+              every: { n: 2, accumulate: true }
+            - do_env_step
+      - do_val_epoch
+      - save_ckpt:
+          full: false
+          tag: final
+
+  adaptive_wm_ratio_v2:
+    # Like `adaptive_ratio`, except that we apply it only to the model, and set RL update ratio to be low (= high frequency)
+    $extends: [base]
+    _prefill: 20e3
+    stages:
+      - prefill:
+          until: ${_prefill}
+      - adaptive_setup_v2:
+          wm_ratio_range: [1, 128]
+          rl_to_wm_ratio: 0.0
+          ratio_update_mult: 1.3
+      - train_loop:
+          until: 400e3
+          tasks:
+            - do_val_epoch: ~
+              every: 20e3
+            - update_adaptive_opt_v2: ~
+              every: 2e3
             - do_adaptive_opt_step
             - do_rl_opt_step: ~
               every: { n: 2, accumulate: true }
