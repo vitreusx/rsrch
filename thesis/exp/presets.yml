@@ -247,6 +247,7 @@ thesis:
     # Like `adaptive_ratio`, except that we apply it only to the model, and set RL update ratio to be low (= high frequency)
     $extends: [base]
     _prefill: 20e3
+    _rl_ratio: 2
     stages:
       - prefill:
           until: ${_prefill}
@@ -263,7 +264,9 @@ thesis:
               every: 2e3
             - do_adaptive_opt_step
             - do_rl_opt_step: ~
-              every: { n: 2, accumulate: true }
+              every:
+                n: ${_rl_ratio}
+                accumulate: true
             - do_env_step
       - do_val_epoch
       - save_ckpt:
