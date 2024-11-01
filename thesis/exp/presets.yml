@@ -23,6 +23,25 @@ thesis:
             - do_env_step
       - do_val_epoch
 
+  no_sticky:
+    # Check what the scores are (at 6m horizon) with Atari-100k env setup (i.e. without sticky actions.)
+    $extends: [base, atari.v4]
+    data.val_frac: 0.0
+    stages:
+      - prefill:
+          until: 200e3
+      - train_loop:
+          until: 6e6
+          tasks:
+            - do_val_epoch: ~
+              every: 250e3
+            - do_opt_step: ~
+              every:
+                n: 64
+                accumulate: true
+            - do_env_step
+      - do_val_epoch
+
   baseline:
     # A baseline test - run the loop for 400k steps, with variable update freq
     $extends: [base]
