@@ -65,23 +65,23 @@ class AdaptiveRatioSearch:
         assert np.all(np.diff(self.values) >= 0)
         self.index = range(len(values))[initial_index]
         self._prev_loss, self._prev_time = None, None
-        self._prev_index, self._prev_vel = None, None
+        self._prev_index, self.vel = None, None
 
     def update(self, loss: float, time: float):
         if self._prev_loss is not None:
             vel = (loss - self._prev_loss) / (time - self._prev_time)
-            if self._prev_vel is None:
-                self._prev_vel = vel
+            if self.vel is None:
+                self.vel = vel
                 self._prev_index = self.index
                 if self.index > 0:
                     self.index -= 1
                 else:
                     self.index += 1
             else:
-                acc = (self._prev_vel < vel) ^ (self._prev_index < self.index)
+                accel = (vel - self.vel) / (self.index - self._prev_index)
+                self.vel = vel
                 self._prev_index = self.index
-                self._prev_vel = vel
-                if acc:
+                if accel < 0:
                     if self.index < len(self.values) - 1:
                         self.index += 1
                     else:
@@ -91,7 +91,6 @@ class AdaptiveRatioSearch:
                         self.index -= 1
                     else:
                         self.index += 1
-
         self._prev_loss = loss
         self._prev_time = time
 
@@ -1129,6 +1128,8 @@ class Runner:
         self.exp.add_scalar("ada/val_loss", val_loss)
         self.wm_ratio_search.update(val_loss, self.env_step)
         self.exp.add_scalar("ada/wm_ratio", self.wm_ratio_search.value)
+        if self.wm_ratio_search.vel is not None:
+            self.exp.add_scalar("ada/loss_vel", self.wm_ratio_search.vel)
         self.should_opt_wm.period = self.wm_ratio_search.value
 
     def do_adaptive_opt_step(self):
