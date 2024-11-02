@@ -142,88 +142,73 @@ thesis:
           tag: final
 
   adaptive_ratio:
-    # A setup, where an adaptive model/RL module update frequencies is used
-    $extends: [base]
-    _prefill: 20e3
-    _rl_to_wm_ratio: 1.0
-    stages:
-      - prefill:
-          until: ${_prefill}
-      - adaptive_setup:
-          init_wm_ratio: 64
-          wm_ratio_range: [1, 128]
-          rl_to_wm_ratio: ${_rl_to_wm_ratio}
-          ratio_update_mult: 1.3
-      - train_loop:
-          until: 400e3
-          tasks:
-            - do_val_epoch: ~
-              every: 20e3
-            - update_adaptive_opt: ~
-              every: 1e3
-            - do_adaptive_opt_step
-            - do_env_step
-      - do_val_epoch
-      - save_ckpt:
-          full: false
-          tag: final
+    base:
+      # A setup, where an adaptive model/RL module update frequencies is used
+      $extends: [thesis.base]
+      _prefill: 20e3
+      _rl_ratio: 0.0
+      _adaptive_setup: {}
+      stages:
+        - prefill:
+            until: ${_prefill}
+        - adaptive_setup: "${_adaptive_setup}"
+        - train_loop:
+            until: 400e3
+            tasks:
+              - do_val_epoch: ~
+                every: 20e3
+              - update_adaptive_opt: ~
+                every: 1e3
+              - do_adaptive_opt_step
+              - do_rl_opt_step: ~
+                every:
+                  n: ${_rl_ratio}
+                  accumulate: true
+              - do_env_step
+        - do_val_epoch
+        - save_ckpt:
+            full: false
+            tag: final
 
-  adaptive_wm_ratio:
-    # Like `adaptive_ratio`, except that we apply it only to the model, and set RL update ratio to be low (= high frequency)
-    $extends: [base]
-    _prefill: 20e3
-    stages:
-      - prefill:
-          until: ${_prefill}
-      - adaptive_setup:
-          wm_ratio_range: [1, 128]
-          rl_to_wm_ratio: 0.0
-          ratio_update_mult: 1.3
-      - train_loop:
-          until: 400e3
-          tasks:
-            - do_val_epoch: ~
-              every: 20e3
-            - update_adaptive_opt: ~
-              every: 1e3
-            - do_adaptive_opt_step
-            - do_rl_opt_step: ~
-              every: { n: 2, accumulate: true }
-            - do_env_step
-      - do_val_epoch
-      - save_ckpt:
-          full: false
-          tag: final
+    v1:
+      $extends: [base]
+      _rl_ratio: 0.0
+      _v1_variant: "0"
+      _adaptive_setup:
+        rl_to_wm_ratio: 1.0
+        type: v1
+        v1:
+          variant: "${_v1_variant}"
+          ratio_range: [1, 128]
+          update_mult: 1.3
+          initial_value: 64
 
-  adaptive_wm_ratio_v2:
-    # Like `adaptive_ratio`, except that we apply it only to the model, and set RL update ratio to be low (= high frequency)
-    $extends: [base]
-    _prefill: 20e3
-    _rl_ratio: 2
-    stages:
-      - prefill:
-          until: ${_prefill}
-      - adaptive_setup_v2:
-          wm_ratio_range: [1, 128]
-          rl_to_wm_ratio: 0.0
-          ratio_update_mult: 1.3
-      - train_loop:
-          until: 400e3
-          tasks:
-            - do_val_epoch: ~
-              every: 20e3
-            - update_adaptive_opt_v2: ~
-              every: 2e3
-            - do_adaptive_opt_step
-            - do_rl_opt_step: ~
-              every:
-                n: ${_rl_ratio}
-                accumulate: true
-            - do_env_step
-      - do_val_epoch
-      - save_ckpt:
-          full: false
-          tag: final
+    wm_v1:
+      $extends: [v1]
+      _rl_ratio: 2.0
+      _adaptive_setup.rl_to_wm_ratio: 0.0
+
+    wm_v2:
+      $extends: [base]
+      _rl_ratio: 4.0
+      _adaptive_setup:
+        rl_to_wm_ratio: 0.0
+        type: v2
+        v2:
+          ratio_range: [1, 128]
+          update_mult: 1.3
+          initial_value: 64
+          try_unused_after: 100e3
+
+    wm_v3:
+      $extends: [base]
+      _rl_ratio: 4.0
+      _adaptive_setup:
+        rl_to_wm_ratio: 0.0
+        type: v3
+        v3:
+          ratio_range: [2, 128]
+          update_mult: 1.3
 
   warm_start:
     # Like `sanity_check`, except that we load the parameters from another run to check if it impacts the performance. We use the same base env ID, but "randomize" it (swap channels, flip axes, permute actions etc.) to simulate continual setting.

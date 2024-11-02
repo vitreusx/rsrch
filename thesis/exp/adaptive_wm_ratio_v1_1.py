@@ -6,7 +6,7 @@ from pathlib import Path
 from .utils import *
 
 
-def adaptive_ratio(test_name, suffix=""):
+def adaptive_wm_ratio_v1_1(test_name, suffix=""):
     all_tests = []
 
     preset_file = Path(__file__).parent / "presets.yml"
@@ -14,19 +14,22 @@ def adaptive_ratio(test_name, suffix=""):
         "-P",
         str(preset_file.relative_to(Path.cwd())),
         "-p",
-        "thesis.adaptive_ratio",
+        "thesis.adaptive_ratio.wm_v1",
         "grid_launch",
     ]
-    common_opts = {}
+    common_opts = {"_v1_variant": "1"}
 
     envs = A100k_MONO
     seeds = [*range(5)]
+    rl_ratios = [2, 4, 8]
 
-    for env, seed in product(envs, seeds):
+    for env, rl_ratio, seed in product(envs, rl_ratios, seeds):
         opts = {
             "env": {"type": "atari", "atari.env_id": env},
             "repro.seed": seed,
-            "run.dir": f"runs/{test_name}/{env}-seed={seed}" + suffix,
+            "_rl_ratio": rl_ratio,
+            "run.dir": f"runs/{test_name}/{env}-rl_ratio={rl_ratio}-seed={seed}"
+            + suffix,
             **common_opts,
         }
         args = [*common_args, "-o", format_opts(opts)]
@@ -37,10 +40,10 @@ def adaptive_ratio(test_name, suffix=""):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--name", default="adaptive_ratio")
+    p.add_argument("--name", default="adaptive_wm_ratio_v1_1")
     args = p.parse_args()
 
-    all_tests = adaptive_ratio(args.name)
+    all_tests = adaptive_wm_ratio_v1_1(args.name)
 
     prefix = ["python", "-m", "rsrch.hub.rl.dreamer"]
     for test in all_tests:

@@ -29,6 +29,9 @@ class Every:
         self._acc = 0
 
     def __bool__(self):
+        if self.period == 0 or self.iters == 0:
+            return False
+
         step = self.step_fn()
         if self._last is None or step - self._last >= self.period:
             if self.accumulate and self._last is not None:

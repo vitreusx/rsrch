@@ -33,6 +33,7 @@ from rsrch.utils.early_stop import EarlyStopping
 from . import agent, config, data
 from . import rl as rl_
 from . import wm
+from .adaptive import *
 from .config import Config
 from .rl import a2c, ppo, sac
 from .wm import dreamer
@@ -57,50 +58,6 @@ def exec_once(method: Callable[P, R]) -> Callable[P, R]:
         return retval
 
     return wrapper
-
-
-class AdaptiveRatioSearch:
-    def __init__(self, values: list[float], initial_index: int = -1):
-        self.values = values
-        assert np.all(np.diff(self.values) >= 0)
-        self.index = range(len(values))[initial_index]
-        self._prev_loss, self._prev_time = None, None
-        self._prev_index, self.vel = None, None
-
-    def update(self, loss: float, time: float):
-        if self._prev_loss is not None:
-            index = self.index
-            vel = (loss - self._prev_loss) / (time - self._prev_time)
-            if self.vel is None:
-                self._try_decrement()
-            elif vel > 0:
-                self._try_increment()
-            else:
-                accel = (vel - self.vel) / (self.index - self._prev_index)
-                if accel < 0:
-                    self._try_increment()
-                else:
-                    self._try_decrement()
-            self.vel = vel
-            self._prev_index = index
-        self._prev_loss = loss
-        self._prev_time = time
-
-    def _try_decrement(self):
-        if self.index > 0:
-            self.index -= 1
-        else:
-            self.index += 1
-
-    def _try_increment(self):
-        if self.index < len(self.values) - 1:
-            self.index += 1
-        else:
-            self.index -= 1
-
-    @property
-    def value(self):
-        return self.values[self.index]
 
 
 class Runner:
@@ -750,6 +707,7 @@ class Runner:
 
         self.check_plasticity()
 
+    @torch.no_grad()
     def do_wm_val_epoch(self, max_batches=None):
         if len(self.val_ids) == 0:
             return
@@ -847,6 +805,7 @@ class Runner:
         else:
             return x
 
+    @torch.no_grad()
     def do_wm_val_step(self):
         if len(self.val_ids) == 0:
             return
@@ -869,6 +828,7 @@ class Runner:
 
         self.exp.add_scalar(f"wm/val_loss", wm_output.loss, step="wm_opt_step")
 
+    @torch.no_grad()
     def do_rl_val_step(self):
         pass
 
@@ -1050,64 +1010,22 @@ class Runner:
 
     def adaptive_setup(
         self,
-        init_wm_ratio: float,
-        wm_ratio_range: tuple[float, float],
         rl_to_wm_ratio: float,
-        ratio_update_mult: float,
+        type: Literal["v1", "v2", "v3"],
+        v1: dict = {},
+        v2: dict = {},
+        v3: dict = {},
     ):
-        self.min_wm_ratio, self.max_wm_ratio = wm_ratio_range
-        self.rl_to_wm_ratio = rl_to_wm_ratio
-        self.wm_ratio = init_wm_ratio
-        self.wm_ratio = min(max(self.wm_ratio, self.min_wm_ratio), self.max_wm_ratio)
-        self.exp.add_scalar("ada/wm_ratio", self.wm_ratio)
-        self.ratio_update_mult = ratio_update_mult
-
-        self.should_opt_wm = cron.Every(
-            lambda: self.env_step,
-            period=self.wm_ratio,
-            accumulate=True,
-        )
-        self.prev_wm_val_loss = None
-
-        if rl_to_wm_ratio > 0:
-            self.should_opt_rl = cron.Every(
-                lambda: self.wm_opt_step,
-                period=rl_to_wm_ratio,
-                accumulate=True,
-            )
-        else:
-            self.should_opt_rl = cron.Never()
-
-    def update_adaptive_opt(self):
-        val_loss = self.do_wm_val_epoch()
-        self.exp.add_scalar("ada/val_loss", val_loss)
-        if self.prev_wm_val_loss is not None:
-            if val_loss < self.prev_wm_val_loss:
-                self.wm_ratio /= self.ratio_update_mult
-            else:
-                self.wm_ratio *= self.ratio_update_mult
-            self.wm_ratio = max(self.wm_ratio, self.min_wm_ratio)
-            self.wm_ratio = min(self.wm_ratio, self.max_wm_ratio)
-            self.exp.add_scalar("ada/wm_ratio", self.wm_ratio)
-            self.should_opt_wm.period = self.wm_ratio
-        self.prev_wm_val_loss = val_loss
-
-    def adaptive_setup_v2(
-        self,
-        wm_ratio_range: tuple[float, float],
-        rl_to_wm_ratio: float,
-        ratio_update_mult: float,
-    ):
-        min_wm_ratio, max_wm_ratio = wm_ratio_range
-        num_values = (
-            int(
-                (math.log(max_wm_ratio) - math.log(min_wm_ratio))
-                / math.log(ratio_update_mult)
-            )
-            + 1
-        )
-        ratio_values = np.geomspace(min_wm_ratio, max_wm_ratio, num_values)
-        self.wm_ratio_search = AdaptiveRatioSearch(ratio_values, -1)
+        if type == "v1":
+            cls = AdaptiveRatioSearchV1
+            kw = v1
+        elif type == "v2":
+            cls = AdaptiveRatioSearchV2
+            kw = v2
+        elif type == "v3":
+            cls = AdaptiveRatioSearchV3
+            kw = v3
+        self.wm_ratio_search = with_argcast(cls)(**kw)
 
         self.should_opt_wm = cron.Every(
             lambda: self.env_step,
@@ -1124,14 +1042,14 @@ class Runner:
         else:
             self.should_opt_rl = cron.Never()
 
-    def update_adaptive_opt_v2(self):
-        val_loss = self.do_wm_val_epoch()
+    def update_adaptive_opt(self):
+        val_loss = self.do_wm_val_epoch().item()
         self.exp.add_scalar("ada/val_loss", val_loss)
-        self.wm_ratio_search.update(val_loss, self.env_step)
-        self.exp.add_scalar("ada/wm_ratio", self.wm_ratio_search.value)
-        if self.wm_ratio_search.vel is not None:
-            self.exp.add_scalar("ada/loss_vel", self.wm_ratio_search.vel)
+        metrics = self.wm_ratio_search.update(val_loss, self.env_step)
         self.should_opt_wm.period = self.wm_ratio_search.value
+        self.exp.add_scalar("ada/wm_ratio", self.should_opt_wm.period)
+        for k, v in metrics.items():
+            self.exp.add_scalar(f"ada/{k}", v)
 
     def do_adaptive_opt_step(self):
         while self.should_opt_wm:
