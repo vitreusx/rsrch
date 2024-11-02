@@ -141,54 +141,6 @@ thesis:
           full: false
           tag: final
 
-  periodic_resets:
-    # Perform periodic parameter resets
-    $extends: [base]
-    _wm_ratio: 64
-    _wm_reset_period: ~
-    _rl_ratio: 64
-    _rl_reset_period: ~
-    _prefill: 20e3
-    stages:
-      - prefill:
-          until: ${_prefill}
-      - train_loop:
-          until: 400e3
-          tasks:
-            - do_val_epoch: ~
-              every: 20e3
-            - reset_rl:
-                match_params: .*
-                shrink_coef: 0.0
-                pretrain: ~
-              every:
-                n: ${_rl_reset_period}
-                of: rl_opt_step
-            - reset_wm:
-                match_params: .*
-                shrink_coef: 0.0
-                pretrain: ~
-              every:
-                n: ${_wm_reset_period}
-                of: wm_opt_step
-            - do_wm_val_step: ~
-              every: { n: 16, of: wm_opt_step }
-            - do_rl_val_step: ~
-              every: { n: 16, of: rl_opt_step }
-            - do_wm_opt_step: ~
-              every:
-                n: ${_wm_ratio}
-                accumulate: true
-            - do_rl_opt_step: ~
-              every:
-                n: ${_rl_ratio}
-                accumulate: true
-            - do_env_step
-      - do_val_epoch
-      - save_ckpt:
-          full: false
-          tag: final
-
   adaptive_ratio:
     # A setup, where an adaptive model/RL module update frequencies is used
     $extends: [base]
@@ -272,3 +224,28 @@ thesis:
       - save_ckpt:
           full: false
           tag: final
+
+  warm_start:
+    # Like `sanity_check`, except that we load the parameters from another run to check if it impacts the performance. We use the same base env ID, but "randomize" it (swap channels, flip axes, permute actions etc.) to simulate continual setting.
+    $extends: [base]
+    _ckpt_path: ~
+    env:
+      type: atari
+      atari.randomize: true
+    data.val_frac: 0.0
+    stages:
+      - load_ckpt:
+          path: "${_ckpt_path}"
+      - prefill:
+          until: 200e3
+      - train_loop:
+          until: 6e6
+          tasks:
+            - do_val_epoch: ~
+              every: 250e3
+            - do_opt_step: ~
+              every:
+                n: 64
+                accumulate: true
+            - do_env_step
+      - do_val_epoch

@@ -7,6 +7,7 @@ from typing import Literal, Sequence
 import gymnasium
 import numpy as np
 import torch
+from scipy.stats import special_ortho_group
 
 from rsrch import spaces
 from rsrch.rl.gym.wrappers import VecRecordStats
@@ -30,6 +31,7 @@ class Config:
     stack_num: int | None = 4
     use_envpool: bool = True
     repeat_action_probability: float = 0.25
+    randomize: bool = False
 
 
 class NoopResetEnv(gymnasium.Wrapper):
@@ -138,7 +140,7 @@ class EpisodicLifeEnv(gymnasium.Wrapper):
         return obs, info
 
 
-class ToChannelLast(gymnasium.ObservationWrapper):
+class ToChannelFirst(gymnasium.ObservationWrapper):
     def __init__(self, env: gymnasium.Env):
         super().__init__(env)
         obs_space = self.observation_space
@@ -148,6 +150,24 @@ class ToChannelLast(gymnasium.ObservationWrapper):
 
     def observation(self, x):
         return np.transpose(x, (2, 0, 1))
+
+
+class ApplyFunc(gym.EnvWrapper):
+    def __init__(self, env: gym.Env, obs_f, act_f):
+        super().__init__(env)
+        self.obs_f = obs_f
+        self.act_f = act_f
+
+    def reset(self):
+        step = super().reset()
+        step["obs"] = self.obs_f(step["obs"])
+        return step
+
+    def step(self, act):
+        act = self.act_f(act)
+        step, final = super().step(act)
+        step["obs"] = self.obs_f(step["act"])
+        return step, final
 
 
 class VecAgentWrapper(gym.VecAgentWrapper):
@@ -245,7 +265,7 @@ class BufferWrapper(data.Wrapper):
     def _obs_f(self, obs):
         if isinstance(obs, tuple):
             obs = np.concatenate(obs, 0)
-        obs = torch.as_tensor(obs)
+        obs = torch.as_tensor(obs.copy())
         if self.obs_type != "ram":
             obs = obs / 255.0
         else:
@@ -259,8 +279,11 @@ class BufferWrapper(data.Wrapper):
 class SDK:
     def __init__(self, cfg: Config):
         self.cfg = cfg
+        self.randomize = False
         self._derive_spec()
         self.id = self.cfg.env_id
+        if self.cfg.randomize:
+            self._setup_randomize()
 
     def _derive_spec(self):
         env = self._env(mode="val", seed=0, render=False)
@@ -285,6 +308,13 @@ class SDK:
             self.obs_space = spaces.torch.Tensor(obs.shape, dtype=obs.dtype)
         else:
             self.obs_space = spaces.torch.Image(obs.shape)
+
+    def _setup_randomize(self):
+        self.obs_perm = np.random.permutation(self.obs_space.num_channels)
+        self.act_perm = np.random.permutation(self.act_space.n)
+        self.flip_h = np.random.rand() < 0.5
+        self.flip_w = np.random.rand() < 0.5
+        self.randomize = True
 
     def make_envs(
         self,
@@ -337,8 +367,14 @@ class SDK:
         if seed is None:
             seed = np.random.randint(int(2**31))
 
+        if self.randomize:
+            kw = dict(obs_f=self._randomize_obs, act_f=self._randomize_act)
+        else:
+            kw = dict()
+
         envs = gym.envs.Envpool(
             task_id=f"{self.cfg.env_id}-v5",
+            **kw,
             num_envs=num_envs,
             max_episode_steps=max_steps,
             img_height=img_h,
@@ -363,6 +399,18 @@ class SDK:
             do_stat_reset=lambda step: step["terminated"] == 1,
         )
         return envs
+
+    def _randomize_obs(self, obs: np.ndarray):
+        # obs: [..., C, H, W]
+        obs = np.take(obs, self.obs_perm, axis=-3)
+        if self.flip_w:
+            obs = np.flip(obs, -1)
+        if self.flip_h:
+            obs = np.flip(obs, -2)
+        return obs
+
+    def _randomize_act(self, act: np.ndarray):
+        return self.act_perm[act]
 
     def _env(
         self,
@@ -393,7 +441,7 @@ class SDK:
                 grayscale_newaxis=True,
                 scale_obs=False,
             )
-            env = ToChannelLast(env)
+            env = ToChannelFirst(env)
         else:
             env = NoopResetEnv(env, self.cfg.noop_max)
             if episodic:
@@ -407,6 +455,13 @@ class SDK:
             env = gymnasium.wrappers.TimeLimit(env, self.cfg.time_limit)
 
         env = gym.envs.GymEnv(env, seed=seed, render=render)
+
+        if self.randomize:
+            env = ApplyFunc(
+                env,
+                obs_f=self._randomize_obs,
+                act_f=self._randomize_act,
+            )
 
         return env
 

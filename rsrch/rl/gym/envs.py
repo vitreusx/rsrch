@@ -69,7 +69,7 @@ class ComposeF:
             x = f(x)
         return x
 
-    def __codomain__(self, X):
+    def codomain(self, X):
         for f in self.fs:
             X = f.codomain(X)
         return X
@@ -90,7 +90,7 @@ class Envpool(VecEnv):
         self._batch_size = self.pool.config["batch_size"]
 
         self.obs_space = from_gym(self.pool.observation_space)
-        if self.obs_f is not None:
+        if self.obs_f is not None and hasattr(self.obs_f, "codomain"):
             self.obs_space = self.obs_f.codomain(self.obs_space)
         self.obs_space = {"obs": self.obs_space}
 
@@ -160,6 +160,8 @@ class Envpool(VecEnv):
                 policy_ids = np.array(policy_ids)
                 actions = agent.policy(policy_ids)
                 for env_id, action in zip(policy_ids, actions):
+                    if self.act_f is not None:
+                        action = self.act_f(action)
                     self._actions[env_id] = action
 
             self.pool.send({"action": self._actions[env_ids], "env_id": env_ids})
