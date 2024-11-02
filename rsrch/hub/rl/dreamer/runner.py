@@ -69,30 +69,34 @@ class AdaptiveRatioSearch:
 
     def update(self, loss: float, time: float):
         if self._prev_loss is not None:
+            index = self.index
             vel = (loss - self._prev_loss) / (time - self._prev_time)
             if self.vel is None:
-                self.vel = vel
-                self._prev_index = self.index
-                if self.index > 0:
-                    self.index -= 1
-                else:
-                    self.index += 1
+                self._try_decrement()
+            elif vel > 0:
+                self._try_increment()
             else:
                 accel = (vel - self.vel) / (self.index - self._prev_index)
-                self.vel = vel
-                self._prev_index = self.index
                 if accel < 0:
-                    if self.index < len(self.values) - 1:
-                        self.index += 1
-                    else:
-                        self.index -= 1
+                    self._try_increment()
                 else:
-                    if self.index > 0:
-                        self.index -= 1
-                    else:
-                        self.index += 1
+                    self._try_decrement()
+            self.vel = vel
+            self._prev_index = index
         self._prev_loss = loss
         self._prev_time = time
+
+    def _try_decrement(self):
+        if self.index > 0:
+            self.index -= 1
+        else:
+            self.index += 1
+
+    def _try_increment(self):
+        if self.index < len(self.values) - 1:
+            self.index += 1
+        else:
+            self.index -= 1
 
     @property
     def value(self):
@@ -1103,10 +1107,7 @@ class Runner:
             + 1
         )
         ratio_values = np.geomspace(min_wm_ratio, max_wm_ratio, num_values)
-        self.wm_ratio_search = AdaptiveRatioSearch(
-            values=ratio_values,
-            initial_index=len(ratio_values) // 2,
-        )
+        self.wm_ratio_search = AdaptiveRatioSearch(ratio_values, -1)
 
         self.should_opt_wm = cron.Every(
             lambda: self.env_step,
