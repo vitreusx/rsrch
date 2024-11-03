@@ -13,7 +13,7 @@ def _grid_of_values(value_range: tuple[float, float], gap: float):
     return np.geomspace(min_value, max_value, num_values)
 
 
-class AdaptiveRatioSearchV1:
+class V1:
     def __init__(
         self,
         ratio_range: tuple[float, float],
@@ -80,7 +80,7 @@ class AdaptiveRatioSearchV1:
         return self.values[self.index]
 
 
-class AdaptiveRatioSearchV2:
+class V2:
     def __init__(
         self,
         ratio_range: tuple[float, float],
@@ -138,11 +138,12 @@ class AdaptiveRatioSearchV2:
         return self.values[self.index]
 
 
-class AdaptiveRatioSearchV3:
+class V3:
     def __init__(
         self,
         ratio_range: tuple[float, float],
         update_mult: float,
+        variant: Literal["0", "1"] = "0",
         alpha: float = 0.05,
         window: float = 25e3,
     ):
@@ -188,4 +189,33 @@ class AdaptiveRatioSearchV3:
         return self.values[self.index]
 
 
-__all__ = ["AdaptiveRatioSearchV1", "AdaptiveRatioSearchV2", "AdaptiveRatioSearchV3"]
+class V4:
+    NO_VAL_LOSS = True
+
+    def __init__(
+        self,
+        init_ratio: float,
+        init_time: float,
+        final_ratio: float,
+        final_time: float,
+    ):
+        t0, r0, t1, r1 = init_time, init_ratio, final_time, final_ratio
+        self.gamma = (math.log(r1) - math.log(r0)) / (math.log(t1) - math.log(t0))
+        self.log_A = math.log(r1) - self.gamma * math.log(t1)
+        self.time = init_time
+
+    def update(self, loss: float, time: float):
+        self.time = time
+        return {}
+
+    @property
+    def value(self):
+        return math.exp(self.gamma * math.log(self.time) + self.log_A)
+
+
+__all__ = [
+    "V1",
+    "V2",
+    "V3",
+    "V4",
+]

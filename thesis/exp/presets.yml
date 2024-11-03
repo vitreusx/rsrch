@@ -147,18 +147,19 @@ thesis:
       $extends: [thesis.base]
       _prefill: 20e3
       _rl_ratio: 0.0
+      _update_period: 2e3
       _adaptive_setup: {}
       stages:
         - prefill:
             until: ${_prefill}
-        - adaptive_setup: "${_adaptive_setup}"
+        - adaptive_setup: ${_adaptive_setup}
         - train_loop:
             until: 400e3
             tasks:
               - do_val_epoch: ~
                 every: 20e3
               - update_adaptive_opt: ~
-                every: 1e3
+                every: ${_update_period}
               - do_adaptive_opt_step
               - do_rl_opt_step: ~
                 every:
@@ -178,7 +179,7 @@ thesis:
         rl_to_wm_ratio: 1.0
         type: v1
         v1:
-          variant: "${_v1_variant}"
+          variant: ${_v1_variant}
           ratio_range: [1, 128]
           update_mult: 1.3
           initial_value: 64
@@ -210,6 +211,17 @@ thesis:
           ratio_range: [2, 128]
           update_mult: 1.3
 
+    v4:
+      $extends: [base]
+      _adaptive_setup:
+        rl_to_wm_ratio: 1.0
+        type: v4
+        v4:
+          init_ratio: 16
+          init_time: ${_prefill}
+          final_ratio: 4
+          final_time: 400e3
+
   warm_start:
     # Like `sanity_check`, except that we load the parameters from another run to check if it impacts the performance. We use the same base env ID, but "randomize" it (swap channels, flip axes, permute actions etc.) to simulate continual setting.
     $extends: [base]
@@ -234,3 +246,9 @@ thesis:
                 accumulate: true
             - do_env_step
       - do_val_epoch
+
+  data_aug:
+    $extends: [adaptive_ratio.wm_v1]
+    _rl_ratio: 4.0
+    data.loaders.dreamer_wm:
+      augment: drq

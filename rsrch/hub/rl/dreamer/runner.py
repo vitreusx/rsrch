@@ -6,7 +6,7 @@ import math
 import pickle
 import tempfile
 import threading
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import asdict, dataclass
 from functools import wraps
 from itertools import islice
@@ -30,10 +30,9 @@ from rsrch.utils import cron, repro, sched
 from rsrch.utils.cast import safe_bind, with_argcast
 from rsrch.utils.early_stop import EarlyStopping
 
-from . import agent, config, data
+from . import adaptive, agent, config, data
 from . import rl as rl_
 from . import wm
-from .adaptive import *
 from .config import Config
 from .rl import a2c, ppo, sac
 from .wm import dreamer
@@ -264,7 +263,10 @@ class Runner:
     def setup_train(self):
         cfg = self.cfg.data
 
-        self.train_ids, self.val_ids = set(), set()
+        # self.val_ids is a deque in order to allow for sampling the newest val
+        # episodes when doing a val epoch and limiting the number of batches to
+        # be used
+        self.train_ids, self.val_ids = set(), deque()
         self.train_ep_ids = rl.data.Sampler()
         self.val_ep_ids = rl.data.Sampler()
 
@@ -274,18 +276,18 @@ class Runner:
                 is_val = len(self.val_ids) <= self.cfg.data.val_frac * total
                 if is_val:
                     self.val_ep_ids.add(seq_id)
-                    self.val_ids.add(seq_id)
+                    self.val_ids.appendleft(seq_id)
                 else:
                     self.train_ep_ids.add(seq_id)
                     self.train_ids.add(seq_id)
 
             def on_delete(hook, seq_id: int):
-                if seq_id in self.val_ids:
-                    del self.val_ep_ids[seq_id]
-                    self.val_ids.remove(seq_id)
-                else:
+                if seq_id in self.train_ids:
                     del self.train_ep_ids[seq_id]
                     self.train_ids.remove(seq_id)
+                else:
+                    del self.val_ep_ids[seq_id]
+                    self.val_ids.remove(seq_id)
 
         self.buf = rl.data.Observable(self.buf)
         self.buf.attach(SplitHook(), replay=True)
@@ -432,10 +434,12 @@ class Runner:
             if self.cfg.repro.determinism != "full":
                 self.wm_val_iter = data.make_async(self.wm_val_iter)
 
+            cfg = self.cfg.data.loaders.dreamer_wm
             self.wm_val_epoch_loader = data.DreamerWMLoader(
                 buf=self.buf,
                 sampler=self.val_ids,
-                **self.cfg.data.loaders.dreamer_wm,
+                batch_size=cfg["batch_size"],
+                slice_len=cfg["slice_len"],
             )
 
     def _setup_rl_val_loader(self):
@@ -737,6 +741,8 @@ class Runner:
             val_loss += wm_output.loss
             val_n += 1
 
+        if isinstance(val_loss, Tensor):
+            val_loss = val_loss.item()
         val_loss = val_loss / val_n
         return val_loss
 
@@ -1011,20 +1017,16 @@ class Runner:
     def adaptive_setup(
         self,
         rl_to_wm_ratio: float,
-        type: Literal["v1", "v2", "v3"],
-        v1: dict = {},
-        v2: dict = {},
-        v3: dict = {},
+        type: Literal["v1", "v2", "v3", "v4"],
+        **kwargs,
     ):
-        if type == "v1":
-            cls = AdaptiveRatioSearchV1
-            kw = v1
-        elif type == "v2":
-            cls = AdaptiveRatioSearchV2
-            kw = v2
-        elif type == "v3":
-            cls = AdaptiveRatioSearchV3
-            kw = v3
+        cls = {
+            "v1": adaptive.V1,
+            "v2": adaptive.V2,
+            "v3": adaptive.V3,
+            "v4": adaptive.V4,
+        }[type]
+        kw = kwargs.get(type, {})
         self.wm_ratio_search = with_argcast(cls)(**kw)
 
         self.should_opt_wm = cron.Every(
@@ -1043,7 +1045,7 @@ class Runner:
             self.should_opt_rl = cron.Never()
 
     def update_adaptive_opt(self):
-        val_loss = self.do_wm_val_epoch().item()
+        val_loss = self.do_wm_val_epoch(max_batches=128)
         self.exp.add_scalar("ada/val_loss", val_loss)
         metrics = self.wm_ratio_search.update(val_loss, self.env_step)
         self.should_opt_wm.period = self.wm_ratio_search.value

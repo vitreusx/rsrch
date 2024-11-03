@@ -6,6 +6,7 @@ from typing import Any, Callable, Iterator, Literal, Sequence
 
 import numpy as np
 import torch
+from kornia.geometry.transform import translate
 from torch import Tensor
 from torch.utils import data
 from torch.utils.data import DataLoader
@@ -90,6 +91,7 @@ class DreamerWMLoader(data.IterableDataset):
         subseq_len: int | tuple[int, int] | None = None,
         prioritize_ends: bool = False,
         pin_memory: bool = False,
+        augment: Literal["none", "drq"] = "none",
     ):
         super().__init__()
         self.buf = buf
@@ -100,6 +102,7 @@ class DreamerWMLoader(data.IterableDataset):
         self.subseq_len = subseq_len
         self.prioritize_ends = prioritize_ends
         self.pin_memory = pin_memory
+        self.augment = augment
 
         if isinstance(subseq_len, int):
             self.minlen, self.maxlen = subseq_len, subseq_len
@@ -210,6 +213,7 @@ class DreamerWMLoader(data.IterableDataset):
                     act.append(undef_act)
 
         obs = torch.stack(obs)
+        obs = self._augment(obs)
         obs = obs.reshape(seq_len, batch_size, *obs.shape[1:])
         act = torch.stack(act)
         act = act.reshape(seq_len, batch_size, *act.shape[1:])
@@ -226,6 +230,13 @@ class DreamerWMLoader(data.IterableDataset):
             seq=seq,
             **{k: [item[k] for item in batch] for k in ("index", "h_0", "end_pos")},
         )
+
+    def _augment(self, obs: Tensor):
+        if self.augment == "drq":
+            batch_size = obs.shape[0]
+            shifts = torch.randint(-4, 5, size=(batch_size, 2), dtype=obs.dtype)
+            obs = translate(obs, shifts, mode="nearest")
+        return obs
 
 
 class SliceWMLoader(data.IterableDataset):
