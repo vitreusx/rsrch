@@ -252,3 +252,28 @@ thesis:
     _rl_ratio: 4.0
     data.loaders.dreamer_wm:
       augment: drq
+
+  warm_start_actor:
+    $extends: [base]
+    _ckpt_path: ~
+    env:
+      type: atari
+      atari.randomize: true
+    data.val_frac: 0.0
+    stages:
+      - load_ckpt:
+          path: "${_ckpt_path}"
+          only: [actor]
+      - prefill:
+          until: 200e3
+      - train_loop:
+          until: 6e6
+          tasks:
+            - do_val_epoch: ~
+              every: 250e3
+            - do_opt_step: ~
+              every:
+                n: 64
+                accumulate: true
+            - do_env_step
+      - do_val_epoch

@@ -515,24 +515,32 @@ class Runner:
 
         self.exp.log(logging.INFO, f"Saved checkpoint to: {str(dst)}")
 
-    def load_ckpt(self, path: str | Path):
+    def load_ckpt(
+        self,
+        path: str | Path,
+        only: list[str] | None = None,
+    ):
         path = Path(path)
 
         with open(path, "rb") as f:
             state = torch.load(f, map_location="cpu")
 
-        if "wm" in state and self.wm is not None:
+        def should_load(key: str):
+            return (key in state) and (only is None or key in only)
+
+        if should_load("wm") and self.wm is not None:
             self.wm.load_state_dict(state["wm"])
 
-        self.actor.load_state_dict(state["actor"])
+        if should_load("actor"):
+            self.actor.load_state_dict(state["actor"])
 
-        if "wm_trainer" in state and self.wm_trainer is not None:
+        if should_load("wm_trainer") and self.wm_trainer is not None:
             self.wm_trainer.load(state["wm_trainer"])
 
-        if "rl_trainer" in state:
+        if should_load("rl_trainer"):
             self.rl_trainer.load(state["rl_trainer"])
 
-        if "repro" in state:
+        if should_load("repro"):
             repro.state.load(state["repro"])
 
         self.exp.log(logging.INFO, f"Loaded checkpoint from: {str(path)}")
