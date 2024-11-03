@@ -277,3 +277,8 @@ thesis:
                 accumulate: true
             - do_env_step
       - do_val_epoch
+
+  data_aug_2:
+    $extends: [baseline]
+    data.loaders.dreamer_wm:
+      augment: drq
