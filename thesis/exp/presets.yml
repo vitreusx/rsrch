@@ -282,3 +282,9 @@ thesis:
     $extends: [baseline]
     data.loaders.dreamer_wm:
       augment: drq
+
+  sanity_check_rand:
+    $extends: [sanity_check]
+    env:
+      type: atari
+      atari.randomize: true
