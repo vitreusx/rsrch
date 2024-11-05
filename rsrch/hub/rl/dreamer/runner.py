@@ -8,7 +8,7 @@ import tempfile
 import threading
 from collections import defaultdict, deque
 from dataclasses import asdict, dataclass
-from functools import wraps
+from functools import partial, wraps
 from itertools import islice
 from pathlib import Path
 from queue import Queue
@@ -319,13 +319,22 @@ class Runner:
             iters=None,
         )
 
+    def _loader_ctor(self, cls: Callable[P, R]):
+        """Create a constructor for loader classes. The difficulty, essentially, is that we fetch some of the kwargs from the config file - these need to be cast to proper types, whereas other args are passed `manually`, and these ought not to be either overriden, or cast to indicated types (some of them are there only for convenience.)"""
+
+        def func(from_cfg: dict, **kwargs: P.kwargs) -> R:
+            from_cfg = {k: v for k, v in from_cfg.items() if k not in kwargs}
+            return typesafe(partial(cls, **kwargs))(**from_cfg)
+
+        return func
+
     def _setup_wm_loader(self):
         cfg = self.cfg.data.loaders
         if self.cfg.wm.loader == "dreamer_wm":
-            self.wm_loader = typesafe(data.DreamerWMLoader)(
+            self.wm_loader = self._loader_ctor(data.DreamerWMLoader)(
+                cfg.dreamer_wm,
                 buf=self.buf,
                 sampler=self.train_ep_ids,
-                **cfg.dreamer_wm,
             )
             self.wm_iter = iter(self.wm_loader)
 
@@ -335,13 +344,13 @@ class Runner:
     def _setup_rl_loader(self):
         cfg = self.cfg.data.loaders
         if self.cfg.rl.loader == "dreamer_rl":
-            self.rl_loader = typesafe(data.DreamerRLLoader)(
+            self.rl_loader = self._loader_ctor(data.DreamerRLLoader)(
+                cfg.dreamer_rl,
                 real_slices=self.wm_loader,
                 wm=self.wm,
                 actor=self.actor,
                 device=self.device,
                 compute_dtype=self.compute_dtype,
-                **cfg.dreamer_rl,
             )
             self.rl_iter = iter(self.rl_loader)
 
@@ -360,10 +369,10 @@ class Runner:
             else:
                 sampler = rl.data.PSampler()
 
-            self.rl_loader = typesafe(data.SlicesRLLoader)(
+            self.rl_loader = self._loader_ctor(data.SlicesRLLoader)(
+                cfg.slices_rl,
                 buf=self.buf,
                 sampler=sampler,
-                **cfg.slices_rl,
             )
             self.rl_iter = iter(self.rl_loader)
 
@@ -378,10 +387,10 @@ class Runner:
             temp_buf = rl.data.Buffer()
             temp_buf = self.sdk.wrap_buffer(temp_buf)
 
-            self.rl_loader = typesafe(data.OnPolicyRLLoader)(
+            self.rl_loader = self._loader_ctor(data.OnPolicyRLLoader)(
+                cfg.on_policy,
                 do_env_step=self.do_env_step,
                 temp_buf=temp_buf,
-                **cfg.on_policy,
             )
             self.rl_iter = iter(self.rl_loader)
 
@@ -424,10 +433,11 @@ class Runner:
 
     def _setup_wm_val_loader(self):
         if self.cfg.wm.loader == "dreamer_wm":
-            self.wm_val_step_loader = typesafe(data.DreamerWMLoader)(
+            self.wm_val_step_loader = self._loader_ctor(data.DreamerWMLoader)(
+                self.cfg.data.loaders.dreamer_wm,
                 buf=self.buf,
                 sampler=self.val_ep_ids,
-                **{**self.cfg.data.loaders.dreamer_wm, "augment": None},
+                augment=None,
             )
             self.wm_val_iter = iter(self.wm_val_step_loader)
 
@@ -444,13 +454,13 @@ class Runner:
 
     def _setup_rl_val_loader(self):
         if self.cfg.rl.loader == "dreamer_rl":
-            self.rl_val_loader = data.DreamerRLLoader(
+            self.rl_val_loader = self._loader_ctor(data.DreamerRLLoader)(
+                self.cfg.data.loaders.dreamer_rl,
                 real_slices=self.wm_val_step_loader,
                 wm=self.wm,
                 actor=self.actor,
                 device=self.device,
                 compute_dtype=self.compute_dtype,
-                **self.cfg.data.loaders.dreamer_rl,
             )
             self.rl_val_iter = iter(self.rl_val_loader)
 

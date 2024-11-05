@@ -1,6 +1,6 @@
 from contextlib import contextmanager
 from functools import cached_property
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
 import torch
 from torch import Tensor
@@ -11,8 +11,7 @@ from rsrch.rl import gym
 from ..common.utils import autocast
 
 
-@runtime_checkable
-class Actor(Protocol):
+class Actor:
     obs_space: Any
     act_space: Any
 

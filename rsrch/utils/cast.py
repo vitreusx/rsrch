@@ -140,21 +140,18 @@ def safe_bind(
         type_map[name] = arg_type
 
     arg = sig.bind(*args, **kwargs)
-    arg.apply_defaults()
-    value_map = {}
-    for name, value in arg.arguments.items():
-        value_map[name] = cast(value, type_map[name])
-
     args, kwargs = [], {}
-    for name, param in sig.parameters.items():
+    for name, value in arg.arguments.items():
+        value = cast(value, type_map[name])
+        param = sig.parameters[name]
         if param.kind in (param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD):
-            args.append(value_map[name])
+            args.append(value)
         elif param.kind == param.VAR_POSITIONAL:
-            args.extend(value_map[name])
+            args.extend(value)
         elif param.kind == param.KEYWORD_ONLY:
-            kwargs[name] = value_map[name]
+            kwargs[name] = value
         elif param.kind == param.VAR_KEYWORD:
-            kwargs.update(value_map[name])
+            kwargs.update(value)
 
     @wraps(func)
     def wrapped():

@@ -1,6 +1,6 @@
 from contextlib import contextmanager
 from functools import cached_property
-from typing import Any, Callable, Protocol, runtime_checkable
+from typing import Any, Callable
 
 import torch
 from torch import Tensor, nn
@@ -11,8 +11,7 @@ from rsrch.rl import gym
 from ..common.utils import autocast
 
 
-@runtime_checkable
-class WorldModel(Protocol):
+class WorldModel(nn.Module):
     obs_space: Any
     act_space: Any
     state_space: Any
