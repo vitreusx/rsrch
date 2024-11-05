@@ -6,7 +6,7 @@ from pathlib import Path
 from .utils import *
 
 
-def data_aug(test_name, suffix=""):
+def data_aug_smaller(test_name, suffix=""):
     all_tests = []
 
     preset_file = Path(__file__).parent / "presets.yml"
@@ -14,7 +14,7 @@ def data_aug(test_name, suffix=""):
         "-P",
         str(preset_file.relative_to(Path.cwd())),
         "-p",
-        "thesis.data_aug.v1",
+        "thesis.data_aug.smaller_shift",
         "grid_launch",
     ]
     common_opts = {}
@@ -37,10 +37,10 @@ def data_aug(test_name, suffix=""):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--name", default="data_aug")
+    p.add_argument("--name", default="data_aug_smaller")
     args = p.parse_args()
 
-    all_tests = data_aug(args.name)
+    all_tests = data_aug_smaller(args.name)
 
     prefix = ["python", "-m", "rsrch.hub.rl.dreamer"]
     for test in all_tests:

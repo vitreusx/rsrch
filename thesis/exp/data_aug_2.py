@@ -14,7 +14,7 @@ def data_aug_2(test_name, suffix=""):
         "-P",
         str(preset_file.relative_to(Path.cwd())),
         "-p",
-        "thesis.data_aug_2",
+        "thesis.data_aug.v2",
         "grid_launch",
     ]
     common_opts = {}
