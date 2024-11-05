@@ -166,7 +166,7 @@ def safe_bind(
     return wrapped
 
 
-def with_argcast(func: Callable[P, R]) -> Callable[P, R]:
+def typesafe(func: Callable[P, R]) -> Callable[P, R]:
     """Create a variant of a function, in which passed arguments are automatically converted to proper types, as indicated with parameter annotations."""
 
     @wraps(func)

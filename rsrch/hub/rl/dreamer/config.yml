@@ -65,7 +65,8 @@ data:
       subseq_len: [50, 50]
       prioritize_ends: true
       ongoing: false
-      augment: none
+      augment:
+        type: none
     dreamer_rl:
       batch_size: ${dreamer_wm.batch_size * dreamer_wm.slice_len}
       slice_len: 16

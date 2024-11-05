@@ -80,6 +80,16 @@ class BatchWM:
         )
 
 
+@dataclass
+class Augment:
+    @dataclass
+    class DrQ:
+        max_shift: int = 4
+
+    type: Literal["none", "drq"]
+    drq: DrQ | None = None
+
+
 class DreamerWMLoader(data.IterableDataset):
     def __init__(
         self,
@@ -91,7 +101,7 @@ class DreamerWMLoader(data.IterableDataset):
         subseq_len: int | tuple[int, int] | None = None,
         prioritize_ends: bool = False,
         pin_memory: bool = False,
-        augment: Literal["none", "drq"] = "none",
+        augment: Augment | None = None,
     ):
         super().__init__()
         self.buf = buf
@@ -102,7 +112,10 @@ class DreamerWMLoader(data.IterableDataset):
         self.subseq_len = subseq_len
         self.prioritize_ends = prioritize_ends
         self.pin_memory = pin_memory
+
         self.augment = augment
+        if self.augment is None:
+            self.augment = Augment(type="none")
 
         if isinstance(subseq_len, int):
             self.minlen, self.maxlen = subseq_len, subseq_len
@@ -232,9 +245,15 @@ class DreamerWMLoader(data.IterableDataset):
         )
 
     def _augment(self, obs: Tensor):
-        if self.augment == "drq":
+        if self.augment.type == "drq":
+            cfg = self.augment.drq
             batch_size = obs.shape[0]
-            shifts = torch.randint(-4, 5, size=(batch_size, 2), dtype=obs.dtype)
+            shifts = torch.randint(
+                low=-cfg.max_shift,
+                high=cfg.max_shift + 1,
+                size=(batch_size, 2),
+                dtype=obs.dtype,
+            )
             obs = translate(obs, shifts, mode="nearest")
         return obs
 

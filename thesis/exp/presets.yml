@@ -251,7 +251,10 @@ thesis:
     $extends: [adaptive_ratio.wm_v1]
     _rl_ratio: 4.0
     data.loaders.dreamer_wm:
-      augment: drq
+      augment:
+        type: drq
+        drq:
+          max_shift: 4
 
   warm_start_actor:
     $extends: [base]
@@ -281,10 +284,21 @@ thesis:
   data_aug_2:
     $extends: [baseline]
     data.loaders.dreamer_wm:
-      augment: drq
+      augment:
+        type: drq
+        drq:
+          max_shift: 4
 
   sanity_check_rand:
     $extends: [sanity_check]
     env:
       type: atari
       atari.randomize: true
+
+  data_aug_smaller:
+    $extends: [baseline]
+    data.loaders.dreamer_wm:
+      augment:
+        type: drq
+        drq:
+          max_shift: 2

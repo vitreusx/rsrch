@@ -27,7 +27,7 @@ from rsrch.exp.board.tensorboard import Tensorboard
 from rsrch.exp.profile import Profiler
 from rsrch.rl.utils import polyak
 from rsrch.utils import cron, repro, sched
-from rsrch.utils.cast import safe_bind, with_argcast
+from rsrch.utils.cast import safe_bind, typesafe
 from rsrch.utils.early_stop import EarlyStopping
 
 from . import adaptive, agent, config, data
@@ -213,7 +213,7 @@ class Runner:
 
         return agent_
 
-    @with_argcast
+    @typesafe
     def _get_until_params(self, spec: config.Until):
         if isinstance(spec, int):
             max_value = spec
@@ -222,12 +222,12 @@ class Runner:
             max_value, of = spec.n, spec.of
         return max_value, of
 
-    @with_argcast
+    @typesafe
     def _make_until(self, spec: config.Until):
         max_value, of = self._get_until_params(spec)
         return cron.Until(lambda of=of: getattr(self, of), max_value)
 
-    @with_argcast
+    @typesafe
     def _make_every(self, spec: config.Every | None):
         if isinstance(spec, int):
             spec = {"n": spec}
@@ -248,7 +248,7 @@ class Runner:
 
         return cron.Every(**args)
 
-    @with_argcast
+    @typesafe
     def _make_sched(self, spec: config.Sched):
         if isinstance(spec, float):
             return sched.Constant(spec)
@@ -322,7 +322,7 @@ class Runner:
     def _setup_wm_loader(self):
         cfg = self.cfg.data.loaders
         if self.cfg.wm.loader == "dreamer_wm":
-            self.wm_loader = data.DreamerWMLoader(
+            self.wm_loader = typesafe(data.DreamerWMLoader)(
                 buf=self.buf,
                 sampler=self.train_ep_ids,
                 **cfg.dreamer_wm,
@@ -335,7 +335,7 @@ class Runner:
     def _setup_rl_loader(self):
         cfg = self.cfg.data.loaders
         if self.cfg.rl.loader == "dreamer_rl":
-            self.rl_loader = data.DreamerRLLoader(
+            self.rl_loader = typesafe(data.DreamerRLLoader)(
                 real_slices=self.wm_loader,
                 wm=self.wm,
                 actor=self.actor,
@@ -360,7 +360,7 @@ class Runner:
             else:
                 sampler = rl.data.PSampler()
 
-            self.rl_loader = data.SlicesRLLoader(
+            self.rl_loader = typesafe(data.SlicesRLLoader)(
                 buf=self.buf,
                 sampler=sampler,
                 **cfg.slices_rl,
@@ -378,7 +378,7 @@ class Runner:
             temp_buf = rl.data.Buffer()
             temp_buf = self.sdk.wrap_buffer(temp_buf)
 
-            self.rl_loader = data.OnPolicyRLLoader(
+            self.rl_loader = typesafe(data.OnPolicyRLLoader)(
                 do_env_step=self.do_env_step,
                 temp_buf=temp_buf,
                 **cfg.on_policy,
@@ -424,10 +424,10 @@ class Runner:
 
     def _setup_wm_val_loader(self):
         if self.cfg.wm.loader == "dreamer_wm":
-            self.wm_val_step_loader = data.DreamerWMLoader(
+            self.wm_val_step_loader = typesafe(data.DreamerWMLoader)(
                 buf=self.buf,
                 sampler=self.val_ep_ids,
-                **self.cfg.data.loaders.dreamer_wm,
+                **{**self.cfg.data.loaders.dreamer_wm, "augment": None},
             )
             self.wm_val_iter = iter(self.wm_val_step_loader)
 
@@ -884,7 +884,7 @@ class Runner:
         max_val_batches: int | None,
         rl_opt_freq: float,
     ):
-        should_stop = with_argcast(EarlyStopping)(**stop_criteria)
+        should_stop = typesafe(EarlyStopping)(**stop_criteria)
         max_steps = should_stop.max_steps
 
         should_val = cron.Every(lambda: self.wm_opt_step, val_every)
@@ -990,7 +990,7 @@ class Runner:
             raise ValueError(self.cfg.wm.type)
 
         if pretrain is not None:
-            with_argcast(self.pretrain_wm)(**pretrain)
+            typesafe(self.pretrain_wm)(**pretrain)
 
     def reset_rl(
         self,
@@ -1020,7 +1020,7 @@ class Runner:
             raise ValueError(self.cfg.rl.type)
 
         if pretrain is not None:
-            with_argcast(self.pretrain_rl)(**pretrain)
+            typesafe(self.pretrain_rl)(**pretrain)
 
     def adaptive_setup(
         self,
@@ -1035,7 +1035,7 @@ class Runner:
             "v4": adaptive.V4,
         }[type]
         kw = kwargs.get(type, {})
-        self.wm_ratio_search = with_argcast(cls)(**kw)
+        self.wm_ratio_search = typesafe(cls)(**kw)
 
         self.should_opt_wm = cron.Every(
             lambda: self.env_step,
