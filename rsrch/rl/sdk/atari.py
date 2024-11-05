@@ -312,10 +312,10 @@ class SDK:
     def _setup_randomize(self):
         self.act_perm = np.random.permutation(self.act_space.n)
         while True:
-            flip = np.random.rand(3) < 0.5
+            flip = np.random.rand(2) < 0.5
             if not np.any(flip):
                 continue
-            self.flip_v, self.flip_h, self.flip_w = flip
+            self.flip_h, self.flip_w = flip
             break
         self.randomize = True
 
@@ -405,8 +405,6 @@ class SDK:
 
     def _randomize_obs(self, obs: np.ndarray):
         # obs: [..., C, H, W]
-        if self.flip_v:
-            obs = np.uint8(255) - obs
         if self.flip_w:
             obs = np.flip(obs, -1)
         if self.flip_h:
