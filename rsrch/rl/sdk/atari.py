@@ -166,7 +166,7 @@ class ApplyFunc(gym.EnvWrapper):
     def step(self, act):
         act = self.act_f(act)
         step, final = super().step(act)
-        step["obs"] = self.obs_f(step["act"])
+        step["obs"] = self.obs_f(step["obs"])
         return step, final
 
 
