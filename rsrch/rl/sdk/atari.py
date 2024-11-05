@@ -310,10 +310,13 @@ class SDK:
             self.obs_space = spaces.torch.Image(obs.shape)
 
     def _setup_randomize(self):
-        self.obs_perm = np.random.permutation(self.obs_space.num_channels)
         self.act_perm = np.random.permutation(self.act_space.n)
-        self.flip_h = np.random.rand() < 0.5
-        self.flip_w = np.random.rand() < 0.5
+        while True:
+            flip = np.random.rand(3) < 0.5
+            if not np.any(flip):
+                continue
+            self.flip_v, self.flip_h, self.flip_w = flip
+            break
         self.randomize = True
 
     def make_envs(
@@ -402,7 +405,8 @@ class SDK:
 
     def _randomize_obs(self, obs: np.ndarray):
         # obs: [..., C, H, W]
-        obs = np.take(obs, self.obs_perm, axis=-3)
+        if self.flip_v:
+            obs = np.uint8(255) - obs
         if self.flip_w:
             obs = np.flip(obs, -1)
         if self.flip_h:
