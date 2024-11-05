@@ -20,13 +20,15 @@ def data_aug_smaller(test_name, suffix=""):
     common_opts = {}
 
     envs = A100k_MONO
+    ratios = [2, 4]
     seeds = [*range(5)]
 
-    for env, seed in product(envs, seeds):
+    for env, ratio, seed in product(envs, ratios, seeds):
         opts = {
             "env": {"type": "atari", "atari.env_id": env},
+            "_ratio": ratio,
             "repro.seed": seed,
-            "run.dir": f"runs/{test_name}/{env}-seed={seed}" + suffix,
+            "run.dir": f"runs/{test_name}/{env}-ratio={ratio}-seed={seed}" + suffix,
             **common_opts,
         }
         args = [*common_args, "-o", format_opts(opts)]
