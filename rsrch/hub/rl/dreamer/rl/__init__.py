@@ -1,6 +1,6 @@
 from contextlib import contextmanager
 from functools import cached_property
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 import torch
 from torch import Tensor
@@ -11,12 +11,12 @@ from rsrch.rl import gym
 from ..common.utils import autocast
 
 
-class Actor:
+@runtime_checkable
+class Actor(Protocol):
     obs_space: Any
     act_space: Any
 
-    def __call__(self, state: Tensor) -> D.Distribution:
-        ...
+    def __call__(self, state: Tensor) -> D.Distribution: ...
 
 
 class Agent(gym.vector.agents.Markov):

@@ -1,6 +1,6 @@
 from contextlib import contextmanager
 from functools import cached_property
-from typing import Any, Callable
+from typing import Any, Callable, Protocol, runtime_checkable
 
 import torch
 from torch import Tensor, nn
@@ -11,7 +11,8 @@ from rsrch.rl import gym
 from ..common.utils import autocast
 
 
-class WorldModel(nn.Module):
+@runtime_checkable
+class WorldModel(Protocol):
     obs_space: Any
     act_space: Any
     state_space: Any
@@ -22,30 +23,26 @@ class WorldModel(nn.Module):
     def reset(
         self,
         obs: Tensor,
-    ) -> D.Distribution:
-        ...
+    ) -> D.Distribution: ...
 
     def obs_step(
         self,
         state: Tensor,
         act: Tensor,
         next_obs: Tensor,
-    ) -> D.Distribution:
-        ...
+    ) -> D.Distribution: ...
 
     def img_step(
         self,
         state: Tensor,
         act: Tensor,
-    ) -> D.Distribution:
-        ...
+    ) -> D.Distribution: ...
 
     def observe(
         self,
         input: tuple[Tensor, Tensor],
         h_0: list[Tensor | None],
-    ) -> tuple[Any, Tensor]:
-        ...
+    ) -> tuple[Any, Tensor]: ...
 
 
 class Agent(gym.VecAgentWrapper):

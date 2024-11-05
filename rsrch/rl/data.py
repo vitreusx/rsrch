@@ -64,7 +64,7 @@ class Buffer(MutableMapping):
             return seq_id
 
 
-class Wrapper(MutableMapping):
+class Wrapper(Buffer, MutableMapping):
     def __init__(self, buf: Buffer):
         self.buf = buf
         self._unwrapped = getattr(self.buf, "_unwrapped", self.buf)
