@@ -53,7 +53,7 @@ class Config:
         class Loaders:
             dreamer_wm: dict
             dreamer_rl: dict
-            slices_rl: dict
+            real_rl: dict
             on_policy: dict
 
         capacity: int
@@ -87,7 +87,7 @@ class Config:
     @dataclass
     class RL:
         type: Literal["a2c", "ppo", "sac"]
-        loader: Literal["slices_rl", "dreamer_rl", "on_policy"] | None
+        loader: Literal["real_rl", "dreamer_rl", "on_policy"] | None
         a2c: a2c.Config | None
         ppo: ppo.Config | None
         sac: sac.Config | None

@@ -258,66 +258,7 @@ class DreamerWMLoader(data.IterableDataset):
         return obs
 
 
-class SliceWMLoader(data.IterableDataset):
-    def __init__(
-        self,
-        buf: rl.data.Buffer,
-        sampler: data.Sampler,
-        batch_size: int,
-        slice_len: int,
-        pin_memory: bool = True,
-    ):
-        super().__init__()
-        self.buf = buf
-        self.sampler = sampler
-        self.batch_size = batch_size
-        self.slice_len = slice_len
-        self.pin_memory = pin_memory
-
-    def empty(self):
-        return next(self.sampler, None) is None
-
-    def __iter__(self):
-        pos_iter = iter(self.sampler)
-        while True:
-            batch, index = [], []
-            for _ in range(self.batch_size):
-                ep_id, offset = next(pos_iter)
-                index.append((ep_id, offset))
-                seq = self.buf[ep_id]
-                batch.append(seq[offset : offset + self.slice_len])
-
-            batch = self.collate_fn(batch)
-            h_0 = [None for _ in range(self.batch_size)]
-            yield BatchWM(batch, index, h_0, end_pos=None)
-
-    def collate_fn(self, batch: list[Sequence[dict]]):
-        batch = [[*seq] for seq in batch]
-        obs, act, reward, term = [], [], [], []
-        for t in range(self.slice_len):
-            for idx in range(self.batch_size):
-                obs.append(batch[idx][t]["obs"])
-                term.append(batch[idx][t].get("term", False))
-                # act[0] and reward[0] are undefined, since we do not keep h_0
-                act.append(batch[idx][max(t, 1)]["act"])
-                reward.append(batch[idx][t].get("reward", 0.0))
-
-        obs = torch.stack(obs)
-        obs = obs.reshape(self.slice_len, self.batch_size, *obs.shape[1:])
-        act = torch.stack(act)
-        act = act.reshape(self.slice_len, self.batch_size, *act.shape[1:])
-        reward = torch.tensor(np.array(reward, dtype=np.float32))
-        reward = reward.reshape(self.slice_len, self.batch_size)
-        term = torch.tensor(np.array(term))
-        term = term.reshape(self.slice_len, self.batch_size)
-
-        slices = Slices(obs, act, reward, term)
-        if self.pin_memory:
-            slices = slices.pin_memory()
-        return slices
-
-
-class SlicesRLLoader(data.IterableDataset):
+class RealRLLoader(data.IterableDataset):
     def __init__(
         self,
         buf: rl.data.Buffer,
@@ -408,25 +349,35 @@ class DreamerRLLoader(data.IterableDataset):
         self,
         real_slices: DreamerWMLoader,
         wm: WorldModel,
-        actor: Actor,
         batch_size: int,
         slice_len: int,
         keep_first_reward: bool = True,
+        return_tensors: bool = True,
         device: torch.device | None = None,
         compute_dtype: torch.dtype | None = None,
     ):
         super().__init__()
         self.real_slices = real_slices
         self.wm = wm
-        self.actor = actor
+        self.actor: Actor
         self.batch_size = batch_size
         self.slice_len = slice_len
         self.keep_first_reward = keep_first_reward
         self.device = device
         self.compute_dtype = compute_dtype
+        self.return_tensors = return_tensors
+
+        self.obs_space = self.wm.state_space
+        self.act_space = self.wm.act_space
+        if self.return_tensors:
+            if isinstance(self.obs_space, spaces.torch.Tensorlike):
+                self.obs_space = self.obs_space.as_tensor
 
         self.to_recycle = None
         """A pair of (h_0, term) to recycle on next iteration. Such a pair may come from a world model opt step."""
+
+    def set_actor(self, actor: Actor):
+        self.actor = actor
 
     def empty(self):
         return self.real_slices.empty()
@@ -436,7 +387,10 @@ class DreamerRLLoader(data.IterableDataset):
             with autocast(self.device, self.compute_dtype):
                 states, actions = [h_0], []
                 for _ in range(self.slice_len - 1):
-                    policy = self.actor(states[-1].detach())
+                    obs = states[-1].detach()
+                    if self.return_tensors:
+                        obs = obs.as_tensor()
+                    policy = self.actor(obs)
                     enc_act = policy.rsample()
                     actions.append(enc_act)
                     next_state = self.wm.img_step(states[-1], enc_act).rsample()
@@ -453,6 +407,9 @@ class DreamerRLLoader(data.IterableDataset):
                 term_dist = over_seq(self.wm.term_dec)(states)
                 term_ = term_dist.mean.contiguous()
                 term_[0] = term.float()
+
+        if self.return_tensors:
+            states = states.as_tensor()
 
         return Slices(states, actions, reward, term_)
 

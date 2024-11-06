@@ -235,7 +235,7 @@ class Flatten(nn.Module):
 class DreamerBoxEncoder(nn.Sequential):
     def __init__(
         self,
-        space: spaces.torch.Box | spaces.torch.Tensorlike,
+        space: spaces.torch.Tensor,
         **mlp,
     ):
         in_features = math.prod(space.shape)
@@ -247,9 +247,7 @@ class DreamerBoxEncoder(nn.Sequential):
 
         self.apply(tf_init)
 
-    def forward(self, input: Tensor | Tensorlike):
-        if not isinstance(input, Tensor):
-            input = input.as_tensor()
+    def forward(self, input: Tensor):
         return super().forward(input)
 
 

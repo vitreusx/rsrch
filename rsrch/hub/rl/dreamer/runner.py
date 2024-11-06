@@ -97,6 +97,10 @@ class Runner:
 
         self.sdk = rl.sdk.make(self.cfg.env)
 
+        if self.cfg.wm.type == "dreamer":
+            if isinstance(self.sdk.act_space, spaces.torch.Discrete):
+                self.sdk = rl.sdk.wrappers.OneHotActions(self.sdk)
+
         self.exp = Experiment(
             project="dreamer",
             prefix=self.sdk.id,
@@ -113,10 +117,16 @@ class Runner:
 
         self.exp.set_as_default(self.cfg.def_step)
 
-        self._setup_wm()
-        self._setup_rl()
+        self._setup_buf()
 
+        self._setup_wm_loader()
+        self._setup_wm_val_loader()
+        self._setup_wm()
         self.wm_trainer = None
+
+        self._setup_rl_loader()
+        self._setup_rl_val_loader()
+        self._setup_rl()
         self.rl_trainer = None
 
         if self.cfg.profile.enabled:
@@ -129,10 +139,6 @@ class Runner:
             for name in cfg.functions:
                 f = self._prof.profiled(getattr(self, name))
                 setattr(self, name, f)
-
-        self.buf = rl.data.Buffer()
-        self.buf = self.sdk.wrap_buffer(self.buf)
-        self.buf_mtx = RLock()
 
         self.envs = self.sdk.make_envs(
             self.cfg.train.num_envs,
@@ -155,13 +161,117 @@ class Runner:
         self.agent_step = 0
         self.exp.register_step("agent_step", lambda: self.agent_step)
 
+    def _setup_buf(self):
+        self.buf = rl.data.Buffer()
+        self.buf = self.sdk.wrap_buffer(self.buf)
+        self.buf_mtx = RLock()
+
+        self.train_ids, self.val_ids = set(), deque()
+        self.train_ep_ids = rl.data.Sampler()
+        self.val_ep_ids = rl.data.Sampler()
+
+        class SplitHook(rl.data.Hook):
+            def on_create(hook, seq_id: int):
+                total = len(self.train_ids) + len(self.val_ids)
+                is_val = len(self.val_ids) <= self.cfg.data.val_frac * total
+                if is_val:
+                    self.val_ep_ids.add(seq_id)
+                    self.val_ids.appendleft(seq_id)
+                else:
+                    self.train_ep_ids.add(seq_id)
+                    self.train_ids.add(seq_id)
+
+            def on_delete(hook, seq_id: int):
+                if seq_id in self.train_ids:
+                    del self.train_ep_ids[seq_id]
+                    self.train_ids.remove(seq_id)
+                else:
+                    del self.val_ep_ids[seq_id]
+                    self.val_ids.remove(seq_id)
+
+        self.buf = rl.data.Observable(self.buf)
+        self.buf.attach(SplitHook(), replay=True)
+
+        self.buf = rl.data.SizeLimited(self.buf, cap=self.cfg.data.capacity)
+
+    def _loader_ctor(self, cls: Callable[P, R]):
+        """Create a constructor for loader classes. The difficulty, essentially, is that we fetch some of the kwargs from the config file - these need to be cast to proper types, whereas other args are passed `manually`, and these ought not to be either overriden, or cast to indicated types (some of them are there only for convenience.)"""
+
+        def func(from_cfg: dict, **kwargs: P.kwargs) -> R:
+            from_cfg = {k: v for k, v in from_cfg.items() if k not in kwargs}
+            return typesafe(partial(cls, **kwargs))(**from_cfg)
+
+        return func
+
+    def _setup_wm_loader(self):
+        cfg = self.cfg.data.loaders
+        if self.cfg.wm.loader == "dreamer_wm":
+            self.wm_loader = self._loader_ctor(data.DreamerWMLoader)(
+                cfg.dreamer_wm,
+                buf=self.buf,
+                sampler=self.train_ep_ids,
+            )
+            self.wm_iter = iter(self.wm_loader)
+
+            if self.cfg.repro.determinism != "full":
+                self.wm_iter = data.make_async(self.wm_iter)
+
+    def _setup_rl_loader(self):
+        cfg = self.cfg.data.loaders
+        if self.cfg.rl.loader == "dreamer_rl":
+            self.rl_loader = self._loader_ctor(data.DreamerRLLoader)(
+                cfg.dreamer_rl,
+                real_slices=self.wm_loader,
+                wm=self.wm,
+                device=self.device,
+                compute_dtype=self.compute_dtype,
+            )
+            self.rl_iter = iter(self.rl_loader)
+
+        elif self.cfg.rl.loader == "real_rl":
+            sig = inspect.signature(data.RealRLLoader)
+            args = sig.bind(
+                buf=self.buf,
+                sampler=self.train_ep_ids,
+                **cfg.real_rl,
+            )
+            args.apply_defaults()
+
+            sampler_type = args.arguments["sampler_type"]
+            if sampler_type == "ep_ids":
+                sampler = self.train_ep_ids
+            else:
+                sampler = rl.data.PSampler()
+
+            self.rl_loader = self._loader_ctor(data.RealRLLoader)(
+                cfg.real_rl,
+                buf=self.buf,
+                sampler=sampler,
+            )
+            self.rl_iter = iter(self.rl_loader)
+
+            if sampler_type == "slice_pos":
+                hook = rl.data.SliceView(self.rl_loader.slice_len, sampler)
+                self.buf.attach(hook)
+
+            if self.cfg.repro.determinism != "full":
+                self.rl_iter = data.make_async(self.rl_iter)
+
+        elif self.cfg.rl.loader == "on_policy":
+            temp_buf = rl.data.Buffer()
+            temp_buf = self.sdk.wrap_buffer(temp_buf)
+
+            self.rl_loader = self._loader_ctor(data.OnPolicyRLLoader)(
+                cfg.on_policy,
+                do_env_step=self.do_env_step,
+                temp_buf=temp_buf,
+            )
+            self.rl_iter = iter(self.rl_loader)
+
     def _setup_wm(self):
         wm_type = self.cfg.wm.type
         if wm_type == "dreamer":
             wm_cfg = self.cfg.wm.dreamer
-
-            if isinstance(self.sdk.act_space, spaces.torch.Discrete):
-                self.sdk = rl.sdk.wrappers.OneHotActions(self.sdk)
 
             obs_space, act_space = self.sdk.obs_space, self.sdk.act_space
             self.wm = dreamer.WorldModel(wm_cfg, obs_space, act_space)
@@ -172,12 +282,8 @@ class Runner:
             self.wm = self.wm.to(self.device)
 
     def _setup_rl(self):
-        if self.cfg.rl.loader == "dreamer_rl":
-            self.rl_obs_space = self.wm.state_space
-            self.rl_act_space = self.wm.act_space
-        else:
-            self.rl_obs_space = self.sdk.obs_space
-            self.rl_act_space = self.sdk.act_space
+        self.rl_obs_space = self.rl_loader.obs_space
+        self.rl_act_space = self.rl_loader.act_space
 
         rl_type = self.cfg.rl.type
         if rl_type == "a2c":
@@ -193,6 +299,10 @@ class Runner:
             raise ValueError(rl_type)
 
         self.actor = self.actor.to(self.device)
+
+        if self.cfg.rl.loader == "dreamer_rl":
+            self.rl_loader.set_actor(self.actor)
+            self.rl_val_loader.set_actor(self.actor)
 
     def _make_agent(self, mode: Literal["train", "val"]):
         agent_ = rl_.Agent(
@@ -261,44 +371,6 @@ class Runner:
 
     @exec_once
     def setup_train(self):
-        cfg = self.cfg.data
-
-        # self.val_ids is a deque in order to allow for sampling the newest val
-        # episodes when doing a val epoch and limiting the number of batches to
-        # be used
-        self.train_ids, self.val_ids = set(), deque()
-        self.train_ep_ids = rl.data.Sampler()
-        self.val_ep_ids = rl.data.Sampler()
-
-        class SplitHook(rl.data.Hook):
-            def on_create(hook, seq_id: int):
-                total = len(self.train_ids) + len(self.val_ids)
-                is_val = len(self.val_ids) <= self.cfg.data.val_frac * total
-                if is_val:
-                    self.val_ep_ids.add(seq_id)
-                    self.val_ids.appendleft(seq_id)
-                else:
-                    self.train_ep_ids.add(seq_id)
-                    self.train_ids.add(seq_id)
-
-            def on_delete(hook, seq_id: int):
-                if seq_id in self.train_ids:
-                    del self.train_ep_ids[seq_id]
-                    self.train_ids.remove(seq_id)
-                else:
-                    del self.val_ep_ids[seq_id]
-                    self.val_ids.remove(seq_id)
-
-        self.buf = rl.data.Observable(self.buf)
-        self.buf.attach(SplitHook(), replay=True)
-
-        self._setup_wm_loader()
-        self._setup_wm_val_loader()
-        self._setup_rl_loader()
-        self._setup_rl_val_loader()
-
-        self.buf = rl.data.SizeLimited(self.buf, cap=cfg.capacity)
-
         self._setup_wm_trainer()
         self._setup_rl_trainer()
 
@@ -318,81 +390,6 @@ class Runner:
             period=self.cfg.run.log_every,
             iters=None,
         )
-
-    def _loader_ctor(self, cls: Callable[P, R]):
-        """Create a constructor for loader classes. The difficulty, essentially, is that we fetch some of the kwargs from the config file - these need to be cast to proper types, whereas other args are passed `manually`, and these ought not to be either overriden, or cast to indicated types (some of them are there only for convenience.)"""
-
-        def func(from_cfg: dict, **kwargs: P.kwargs) -> R:
-            from_cfg = {k: v for k, v in from_cfg.items() if k not in kwargs}
-            return typesafe(partial(cls, **kwargs))(**from_cfg)
-
-        return func
-
-    def _setup_wm_loader(self):
-        cfg = self.cfg.data.loaders
-        if self.cfg.wm.loader == "dreamer_wm":
-            self.wm_loader = self._loader_ctor(data.DreamerWMLoader)(
-                cfg.dreamer_wm,
-                buf=self.buf,
-                sampler=self.train_ep_ids,
-            )
-            self.wm_iter = iter(self.wm_loader)
-
-            if self.cfg.repro.determinism != "full":
-                self.wm_iter = data.make_async(self.wm_iter)
-
-    def _setup_rl_loader(self):
-        cfg = self.cfg.data.loaders
-        if self.cfg.rl.loader == "dreamer_rl":
-            self.rl_loader = self._loader_ctor(data.DreamerRLLoader)(
-                cfg.dreamer_rl,
-                real_slices=self.wm_loader,
-                wm=self.wm,
-                actor=self.actor,
-                device=self.device,
-                compute_dtype=self.compute_dtype,
-            )
-            self.rl_iter = iter(self.rl_loader)
-
-        elif self.cfg.rl.loader == "slices_rl":
-            sig = inspect.signature(data.SlicesRLLoader)
-            args = sig.bind(
-                buf=self.buf,
-                sampler=self.train_ep_ids,
-                **cfg.slices_rl,
-            )
-            args.apply_defaults()
-
-            sampler_type = args.arguments["sampler_type"]
-            if sampler_type == "ep_ids":
-                sampler = self.train_ep_ids
-            else:
-                sampler = rl.data.PSampler()
-
-            self.rl_loader = self._loader_ctor(data.SlicesRLLoader)(
-                cfg.slices_rl,
-                buf=self.buf,
-                sampler=sampler,
-            )
-            self.rl_iter = iter(self.rl_loader)
-
-            if sampler_type == "slice_pos":
-                hook = rl.data.SliceView(self.rl_loader.slice_len, sampler)
-                self.buf.attach(hook)
-
-            if self.cfg.repro.determinism != "full":
-                self.rl_iter = data.make_async(self.rl_iter)
-
-        elif self.cfg.rl.loader == "on_policy":
-            temp_buf = rl.data.Buffer()
-            temp_buf = self.sdk.wrap_buffer(temp_buf)
-
-            self.rl_loader = self._loader_ctor(data.OnPolicyRLLoader)(
-                cfg.on_policy,
-                do_env_step=self.do_env_step,
-                temp_buf=temp_buf,
-            )
-            self.rl_iter = iter(self.rl_loader)
 
     def _setup_wm_trainer(self):
         wm_type = self.cfg.wm.type
@@ -458,7 +455,6 @@ class Runner:
                 self.cfg.data.loaders.dreamer_rl,
                 real_slices=self.wm_val_step_loader,
                 wm=self.wm,
-                actor=self.actor,
                 device=self.device,
                 compute_dtype=self.compute_dtype,
             )

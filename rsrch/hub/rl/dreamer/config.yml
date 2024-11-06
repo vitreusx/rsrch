@@ -70,7 +70,7 @@ data:
     dreamer_rl:
       batch_size: ${dreamer_wm.batch_size * dreamer_wm.slice_len}
       slice_len: 16
-    slices_rl: {}
+    real_rl: {}
     on_policy: {}
 
 train:

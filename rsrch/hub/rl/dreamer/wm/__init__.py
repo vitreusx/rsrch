@@ -49,12 +49,14 @@ class Agent(gym.VecAgentWrapper):
         self,
         agent: gym.VecAgent,
         wm: WorldModel,
+        pass_tensors: bool = True,
         compute_dtype: torch.dtype | None = None,
     ):
         super().__init__(agent)
         self.wm = wm
         self.obs_space = self.wm.obs_space
         self.act_space = self.wm.act_space
+        self.pass_tensors = pass_tensors
         self.compute_dtype = compute_dtype
         self._state = None
 
@@ -76,7 +78,7 @@ class Agent(gym.VecAgentWrapper):
         with self.compute_ctx():
             dist = self.wm.reset(obs)
             state = dist.sample()
-        super().reset(idxes, state)
+        super().reset(idxes, self._cast_state(state))
         if self._state is None:
             self._state = state.clone()
         else:
@@ -91,5 +93,10 @@ class Agent(gym.VecAgentWrapper):
             dist = self.wm.obs_step(self._state[idxes], act, next_obs)
             state = dist.sample()
         state = state.type_as(self._state)
-        super().step(idxes, act, state)
+        super().step(idxes, act, self._cast_state(state))
         self._state[idxes] = state
+
+    def _cast_state(self, state):
+        if self.pass_tensors and not isinstance(state, Tensor):
+            state = state.as_tensor()
+        return state

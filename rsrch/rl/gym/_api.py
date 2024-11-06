@@ -12,8 +12,7 @@ class Agent(ABC):
         pass
 
     @abstractmethod
-    def policy(self):
-        ...
+    def policy(self): ...
 
     def step(self, act, next_obs):
         pass
@@ -44,8 +43,7 @@ class VecAgent(ABC):
         pass
 
     @abstractmethod
-    def policy(self, idxes: np.ndarray):
-        ...
+    def policy(self, idxes: np.ndarray): ...
 
     def step(self, idxes: np.ndarray, act_seq, next_obs_seq):
         pass
@@ -73,12 +71,10 @@ class Env(ABC):
     act_space: Any
 
     @abstractmethod
-    def reset(self) -> dict:
-        ...
+    def reset(self) -> dict: ...
 
     @abstractmethod
-    def step(self, act) -> tuple[dict, bool]:
-        ...
+    def step(self, act) -> tuple[dict, bool]: ...
 
     def rollout(self, agent: Agent):
         obs = None
@@ -118,8 +114,7 @@ class VecEnv(ABC):
     act_space: Any
 
     @abstractmethod
-    def rollout(self, agent: VecAgent) -> Iterable[tuple[int, tuple[dict, bool]]]:
-        ...
+    def rollout(self, agent: VecAgent) -> Iterable[tuple[int, tuple[dict, bool]]]: ...
 
 
 class VecEnvWrapper(VecEnv):
