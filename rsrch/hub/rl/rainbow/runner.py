@@ -24,7 +24,12 @@ from . import config, nets
 from .distq import ValueDist
 
 
-class QAgent(gym.agents.Markov):
+def to_camel_case(ident: str):
+    words = ident.split("_")
+    return "".join(word.capitalize() for word in words)
+
+
+class QAgent(gym.vector.agents.Markov):
     def __init__(self, q: nets.Q, obs_space, act_space, val: bool = False):
         super().__init__(obs_space, act_space)
         self.q = q
@@ -32,7 +37,7 @@ class QAgent(gym.agents.Markov):
         self.val = val
 
     @torch.inference_mode()
-    def _policy(self, obs: Tensor):
+    def get_policy(self, obs: Tensor):
         obs = obs.to(self.device)
         q = self.q(obs, val_mode=self.val)
         if isinstance(q, ValueDist):
@@ -161,7 +166,7 @@ class Runner:
             return qf
 
         self.qf, self.qf_t = make_qf(), make_qf()
-        self.qf_opt = self.cfg.opt.optimizer(self.qf.parameters())
+        self.qf_opt = self._make_optim(self.qf.parameters(), self.cfg.opt.optimizer)
 
         self.buf = rl.data.Buffer()
         self.buf = self.sdk.wrap_buffer(self.buf)
@@ -171,6 +176,12 @@ class Runner:
 
         if self.cfg.resume is not None:
             self.load(self.cfg.resume)
+
+    def _make_optim(self, parameters: list[nn.Parameter], cfg: dict):
+        cfg = {**cfg}
+        cls = getattr(torch.optim, to_camel_case(cfg["type"]))
+        del cfg["type"]
+        return cls(parameters, **cfg)
 
     def _prepare_train(self):
         self.buf = rl.data.Observable(self.buf)

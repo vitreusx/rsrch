@@ -411,6 +411,7 @@ class DreamerRLLoader(data.IterableDataset):
         actor: Actor,
         batch_size: int,
         slice_len: int,
+        keep_first_reward: bool = True,
         device: torch.device | None = None,
         compute_dtype: torch.dtype | None = None,
     ):
@@ -420,6 +421,7 @@ class DreamerRLLoader(data.IterableDataset):
         self.actor = actor
         self.batch_size = batch_size
         self.slice_len = slice_len
+        self.keep_first_reward = keep_first_reward
         self.device = device
         self.compute_dtype = compute_dtype
 
@@ -445,6 +447,8 @@ class DreamerRLLoader(data.IterableDataset):
 
                 reward_dist = over_seq(self.wm.reward_dec)(states)
                 reward = reward_dist.mode
+                if not self.keep_first_reward:
+                    reward = reward[1:]
 
                 term_dist = over_seq(self.wm.term_dec)(states)
                 term_ = term_dist.mean.contiguous()

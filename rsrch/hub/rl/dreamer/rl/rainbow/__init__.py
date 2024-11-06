@@ -137,7 +137,7 @@ class Agent(gym.vector.agents.Markov):
             with autocast(self.device, self.compute_dtype):
                 yield
 
-    def policy_from_last(self, last_obs: Tensor):
+    def get_policy(self, last_obs: Tensor):
         with self.compute_ctx():
             last_obs = last_obs.to(self.device)
             with noisy.on_forward(self._noisy_mode):

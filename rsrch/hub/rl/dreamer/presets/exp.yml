@@ -186,13 +186,15 @@ exp:
         eps: 1e-4
   dreamer_ppo:
     $extends: [dreamer.atari]
+    data.loaders.dreamer_rl:
+      keep_first_reward: false
     rl:
       loader: dreamer_rl
       type: ppo
       ppo:
         encoder:
-          type: box
-          box: ${_.mlp}
+          type: dreamer_box
+          dreamer_box: ${_.mlp}
         actor_dist:
           type: auto
         adv_norm: true
@@ -225,10 +227,12 @@ exp:
           tasks:
             - do_val_epoch: ~
               every: 1e6
-            - do_opt_step: ~
+            - do_wm_opt_step: ~
               every:
                 n: 64
                 accumulate: true
+            - do_rl_opt_step: ~
+              every: { n: 4, of: wm_opt_step }
             - do_env_step
   pretrain_wm:
     $extends: [dreamer.atari, atari.base]

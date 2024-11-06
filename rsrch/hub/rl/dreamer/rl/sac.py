@@ -45,8 +45,10 @@ class Config:
 
 
 def layer_init(layer, bias_const=0.0):
-    nn.init.kaiming_normal_(layer.weight)
-    torch.nn.init.constant_(layer.bias, bias_const)
+    if isinstance(layer, (nn.Linear, nn.Conv2d)):
+        nn.init.kaiming_normal_(layer.weight)
+        if layer.bias is not None:
+            torch.nn.init.constant_(layer.bias, bias_const)
     return layer
 
 
@@ -54,7 +56,7 @@ class ContQf(nn.Module):
     def __init__(
         self,
         cfg: Config.Qf,
-        obs_space: spaces.torch.Box | spaces.torch.Tensorlike,
+        obs_space: spaces.torch.Box,
         act_space: spaces.torch.Box,
     ):
         super().__init__()
@@ -70,9 +72,7 @@ class ContQf(nn.Module):
 
         self.proj = layer_init(nn.Linear(z_features, 1))
 
-    def forward(self, obs: Tensor | Tensorlike, act: Tensor) -> Tensor:
-        if not isinstance(obs, Tensor):
-            obs = obs.as_tensor()
+    def forward(self, obs: Tensor, act: Tensor) -> Tensor:
         input = torch.cat((obs.flatten(1), act.flatten(1)), 1)
         q_value = self.proj(self.encoder(input))
         return q_value.ravel()
@@ -82,8 +82,8 @@ class DiscQf(nn.Module):
     def __init__(
         self,
         cfg: Config.Qf,
-        obs_space: spaces.torch.Tensor | spaces.torch.Tensorlike,
-        act_space: spaces.torch.Discrete | spaces.torch.OneHot,
+        obs_space: spaces.torch.Tensor,
+        act_space: spaces.torch.Discrete,
     ):
         super().__init__()
         self.act_space = act_space
@@ -98,21 +98,12 @@ class DiscQf(nn.Module):
     def forward(self, obs: Tensor, act: Tensor | None = None) -> Tensor:
         q_values = self.proj(self.encoder(obs))
         if act is not None:
-            if act.dtype.is_floating_point:
-                # One-hot encoded actions
-                q_values = (q_values * act).sum(-1)
-            else:
-                # Discrete actions
-                q_values = q_values.gather(1, act.unsqueeze(-1)).squeeze(-1)
+            q_values = q_values.gather(1, act.unsqueeze(-1)).squeeze(-1)
         return q_values
 
 
-def Qf(
-    cfg: Config.Qf,
-    obs_space: spaces.torch.Tensor,
-    act_space: spaces.torch.Tensor,
-):
-    if isinstance(act_space, (spaces.torch.Discrete, spaces.torch.OneHot)):
+def Qf(cfg: Config.Qf, obs_space, act_space):
+    if isinstance(act_space, spaces.torch.Discrete):
         return DiscQf(cfg, obs_space, act_space)
     else:
         return ContQf(cfg, obs_space, act_space)

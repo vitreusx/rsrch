@@ -146,7 +146,7 @@ def main():
             super().__init__(sdk.obs_space, sdk.act_space)
             self.prefill = False
 
-        def policy_from_last(self, obs: Tensor):
+        def get_policy(self, obs: Tensor):
             if self.prefill:
                 n = obs.shape[0]
                 return self.act_space.sample(obs.shape[:1])
@@ -174,7 +174,7 @@ def main():
         def __init__(self):
             super().__init__(sdk.obs_space, sdk.act_space)
 
-        def policy_from_last(self, obs: Tensor):
+        def get_policy(self, obs: Tensor):
             actor.eval()
             with torch.inference_mode():
                 obs = obs.to(device)

@@ -115,7 +115,7 @@ def main():
 
     class ACAgent(gym.vector.agents.Markov):
         @torch.inference_mode()
-        def policy_from_last(self, obs):
+        def get_policy(self, obs):
             with autocast():
                 act_rv = ac(obs.to(device), values=False)
                 return act_rv.sample().cpu()

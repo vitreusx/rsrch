@@ -76,6 +76,3 @@ sample_pong:
   resume: "runs/rainbow/ALE-Pong-v5__2024-04-17_06-20-00/ckpts/env_step=6224128-val_ret=16.97.pth"
   mode: sample
   total: { n: 1e6, of: agent_step }
-
-default:
-  $extends: [alien]

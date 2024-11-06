@@ -9,10 +9,16 @@ from torch.nn.utils.parametrizations import _SpectralNorm, spectral_norm
 import rsrch.distributions as D
 from rsrch import spaces
 from rsrch.nn import noisy
+from rsrch.nn.utils import safe_mode
 
-from ..utils import infer_ctx, layer_init
 from . import config, distq
 from .distq import ValueDist
+
+
+def layer_init(layer, bias_const=0.0):
+    nn.init.kaiming_normal_(layer.weight)
+    torch.nn.init.constant_(layer.bias, bias_const)
+    return layer
 
 
 class NatureEncoder(nn.Sequential):
@@ -203,7 +209,7 @@ class Q(nn.Module):
         super().__init__()
 
         self.enc = Encoder(cfg, obs_space)
-        with infer_ctx(self.enc):
+        with safe_mode(self.enc):
             dummy = obs_space.sample()[None].cpu()
             num_features = self.enc(dummy)[0].shape[0]
 

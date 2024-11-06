@@ -80,10 +80,10 @@ class Markov(VecAgent, ABC):
             self._last_obs[idxes] = obs_seq
 
     def policy(self, idxes: np.ndarray):
-        return self.policy_from_last(self._last_obs[idxes])
+        return self.get_policy(self._last_obs[idxes])
 
     @abstractmethod
-    def policy_from_last(self, last_obs):
+    def get_policy(self, last_obs):
         raise NotImplementedError()
 
     def step(self, idxes: np.ndarray, act_seq, next_obs_seq):

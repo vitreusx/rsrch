@@ -5,7 +5,6 @@ from typing import Any, Literal
 from rsrch import rl
 from rsrch.utils.config import *
 
-from ..utils import Optim
 from . import distq
 
 Every = dict
@@ -67,7 +66,7 @@ class Val:
 class Opt:
     sched: Every
     batch_size: int
-    optimizer: Optim
+    optimizer: dict
     grad_clip: float | None
     dtype: str
 

@@ -15,7 +15,8 @@ class Actor:
     obs_space: Any
     act_space: Any
 
-    def __call__(self, state: Tensor) -> D.Distribution: ...
+    def __call__(self, state: Tensor) -> D.Distribution:
+        ...
 
 
 class Agent(gym.vector.agents.Markov):
@@ -43,7 +44,7 @@ class Agent(gym.vector.agents.Markov):
             with autocast(self.device, self.compute_dtype):
                 yield
 
-    def policy_from_last(self, last_obs: Tensor):
+    def get_policy(self, last_obs: Tensor):
         with self.compute_ctx():
             last_obs = last_obs.to(self.device)
             policy: D.Distribution = self.actor(last_obs)

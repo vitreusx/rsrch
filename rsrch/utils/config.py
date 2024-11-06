@@ -374,7 +374,7 @@ def cli(
 
     preset_files = []
     if presets_yml is not None:
-        preset_files = [args.presets_yml]
+        preset_files = [presets_yml]
     elif presets_dir is not None:
         preset_files = [*Path(presets_dir).iterdir()]
 
