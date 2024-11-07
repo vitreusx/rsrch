@@ -1,5 +1,6 @@
 import math
 from numbers import Number
+from typing import Callable
 
 import numpy as np
 
@@ -13,14 +14,15 @@ class Constant:
 
 
 class Linear:
-    def __init__(self, init, final, over):
-        self.init = init
-        self.final = final
-        self.over = over
+    def __init__(self, t0, v0, t1, v1):
+        self.t0 = t0
+        self.v0 = v0
+        self.t1 = t1
+        self.v1 = v1
 
     def __call__(self, t):
-        t = np.minimum(t / self.over, 1.0)
-        return self.init * (1.0 - t) + self.final * t
+        t = np.clip((t - self.t0) / (self.t1 - self.t0), 0.0, 1.0)
+        return self.v0 * (1.0 - t) + self.v1 * t
 
 
 class Exp:

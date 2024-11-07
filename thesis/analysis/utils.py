@@ -32,7 +32,7 @@ class TBScalars:
 
 def exp_mov_avg(arr: np.ndarray, alpha: float):
     b, a = [1.0 - alpha], [1.0, -alpha]
-    zi = lfiltic(b, a, arr[:1], [0])
+    zi = lfiltic(b, a, arr[:1], np.zeros((1,), dtype=arr.dtype))
     return lfilter(b, a, arr, zi=zi)[0]
 
 

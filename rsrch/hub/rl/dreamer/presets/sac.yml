@@ -10,7 +10,8 @@ sac:
           adaptive: true
           value: 1.0
           target: auto
-          auto_coefs: [0.89, 5e-2]
+          disc_scale: 0.75
+          cont_scale: 5e-2
           opt:
             type: adam
             lr: ${qf.opt.lr}

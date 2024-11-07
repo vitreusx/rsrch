@@ -15,6 +15,7 @@ from rsrch.nn.utils import safe_mode
 from rsrch.rl.utils import polyak
 
 from ..common import nets
+from ..common.config import MakeSched
 from ..common.trainer import ScaledOptimizer, TrainerBase
 from ..common.types import Slices
 from ..common.utils import to_camel_case
@@ -142,6 +143,7 @@ class Trainer(TrainerBase):
         cfg: Config,
         actor: Actor,
         compute_dtype: torch.dtype | None = None,
+        make_sched: MakeSched | None = None,
     ):
         super().__init__(compute_dtype)
         self.cfg = cfg
@@ -160,7 +162,7 @@ class Trainer(TrainerBase):
         self.opt_iter = 0
 
         self.qf_polyak = polyak.Polyak(self.qf, self.qf_t, **cfg.qf.polyak)
-        self.alpha = alpha.Alpha(cfg.alpha, act_space, self.device)
+        self.alpha = alpha.Alpha(cfg.alpha, act_space, self.device, make_sched)
 
         self._discrete = isinstance(self.qf, DiscQf)
 

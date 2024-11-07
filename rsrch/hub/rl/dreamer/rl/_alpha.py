@@ -1,6 +1,7 @@
 import math
 from dataclasses import dataclass, field
-from typing import Literal
+from functools import cached_property
+from typing import Callable, Literal
 
 import torch
 from torch import Tensor, nn
@@ -8,13 +9,8 @@ from torch import Tensor, nn
 import rsrch.distributions as D
 from rsrch import spaces
 
+from ..common.config import MakeSched, Sched
 from ..common.utils import to_camel_case
-
-
-@dataclass
-class AutoCoefs:
-    disc: float = 0.89
-    cont: float = 5e-2
 
 
 @dataclass
@@ -23,27 +19,9 @@ class Config:
     value: float = 1.0
     min_value: float = 1e-8
     target: float | Literal["auto"] = "auto"
-    auto_coefs: AutoCoefs = field(default_factory=AutoCoefs)
-    opt: dict | None = field(default_factory=lambda: None)
-
-
-def auto_target(act_space: spaces.torch.Tensor, coefs: AutoCoefs) -> float:
-    if isinstance(act_space, (spaces.torch.Discrete, spaces.torch.OneHot)):
-        # Target: `disc_coef` of maximum entropy for discrete space type.
-        # Another interpretation is as an analogue of an eps-greedy policy
-        logits = torch.zeros([act_space.n])
-        max_ent = D.Categorical(logits=logits).entropy()
-        return (coefs.disc * max_ent).item()
-
-    elif isinstance(act_space, spaces.torch.Box):
-        # Target: normal distribution with scale ratio of `cont_coef` of the extent
-        # of the action space.
-        scale = coefs.cont * (act_space.high - act_space.low)
-        dist = D.Normal(0, scale, len(act_space.shape))
-        return dist.entropy().item()
-
-    else:
-        raise ValueError(type(act_space))
+    disc_scale: Sched = 0.75
+    cont_scale: Sched = 5e-2
+    opt: dict | None = None
 
 
 class Alpha(nn.Module):
@@ -54,23 +32,56 @@ class Alpha(nn.Module):
         cfg: Config,
         act_space: spaces.torch.Tensor,
         device: torch.device | None = None,
+        make_sched: MakeSched | None = None,
     ):
         super().__init__()
         self.cfg = cfg
+        self.act_space = act_space
         self.adaptive = cfg.adaptive
+        self.make_sched = make_sched
 
         if self.adaptive:
             log_value = math.log(self.cfg.value)
             self.log_value = nn.Parameter(torch.tensor([log_value], device=device))
             self.min_log_value = math.log(self.cfg.min_value)
-            self.opt = self._make_opt([self.log_value], cfg.opt)
             self.value = math.exp(self.log_value.item())
-            if cfg.target == "auto":
-                self.target = auto_target(act_space, cfg.auto_coefs)
-            else:
-                self.target = cfg.target
+            self.opt = self._make_opt([self.log_value], cfg.opt)
+            self._discrete = isinstance(
+                act_space,
+                (spaces.torch.Discrete, spaces.torch.OneHot),
+            )
         else:
             self.value = cfg.value
+
+    @property
+    def target(self):
+        if self._discrete:
+            # Discrete scale ~ normalized minimum probability for each action
+            eps = self.disc_scale_fn()
+            n = self.act_space.n
+            probs = (eps / n) * torch.ones((n,))
+            probs[0] += 1.0 - eps
+            dist = D.Categorical(probs=probs)
+        else:
+            # Discrete scale ~ standard deviation normalized by the size of the action space
+            extent = self.act_space.high - self.act_space.low
+            scale = self.cont_scale_fn() * extent
+            dist = D.Normal(0, scale, len(extent.shape))
+        return dist.entropy().item()
+
+    @cached_property
+    def disc_scale_fn(self):
+        if self.make_sched is None:
+            return self.cfg.disc_scale
+        else:
+            return self.make_sched(self.cfg.disc_scale)
+
+    @cached_property
+    def cont_scale_fn(self):
+        if self.make_sched is None:
+            return self.cfg.cont_scale
+        else:
+            return self.make_sched(self.cfg.cont_scale)
 
     def save(self):
         if self.adaptive:

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Callable
 
 
 @dataclass
@@ -27,4 +28,5 @@ class _Sched:
     of: str
 
 
-Sched = float | str | _Sched
+Sched = _Sched | float | str
+MakeSched = Callable[[Sched], Callable[[], float]]

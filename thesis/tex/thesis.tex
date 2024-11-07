@@ -237,44 +237,49 @@ Beyond that, for testing purposes, we also add an online train-validation split 
   \label{fig:baseline_score}
 \end{figure}
 
-Our next goal is to take a closer look at the behavior of the agent throughout  training, to see if we can discover the causes of the performance collapse. To investigate model overfitting, we analyze the model validation loss curves. We will start with the relationship between final model validation loss and final validation score (\autoref{fig:baseline_model_val}). We can see that, perhaps somewhat surprisingly, there is no clear correlation between lower model validation loss, and higher final scores - in fact, the opposite seems to hold for \env{MsPacman}. If we take a look at a similar figure, except for the training loss (\autoref{fig:baseline_model_train}), the correlation is more apparent. This would seem to indicate that (1) computing model loss on the validation set is not a reliable metric for measuring ``true'' out-of-distribution loss, in this instance; (2) the model, even at such ratios, is \emph{underfitting}.
+% Our next goal is to take a closer look at the behavior of the agent throughout  training, to see if we can discover the causes of the performance collapse. To investigate model overfitting, we analyze the model validation loss curves. We will start with the relationship between final model validation loss and final validation score (\autoref{fig:baseline_model_val}). We can see that, perhaps somewhat surprisingly, there is no clear correlation between lower model validation loss, and higher final scores - in fact, the opposite seems to hold for \env{MsPacman}. If we take a look at a similar figure, except for the training loss (\autoref{fig:baseline_model_train}), the correlation is more apparent. This would seem to indicate that (1) computing model loss on the validation set is not a reliable metric for measuring ``true'' out-of-distribution loss, in this instance; (2) the model, even at such ratios, is \emph{underfitting}.
 
-\begin{figure}
-  \centering
-  \includegraphics[width=0.8\linewidth,height=0.8\paperheight,keepaspectratio]{assets/baseline_model_val.pdf}
-  \caption{Relationship between final validation score and final model validation loss. Each point represents a single training run. The x-axis represents the agent performance. The y-axis represents the value of the model validation loss at the end of the training.}
-  \label{fig:baseline_model_val}
-\end{figure}
+% \begin{figure}
+%   \centering
+%   \includegraphics[width=0.8\linewidth,height=0.8\paperheight,keepaspectratio]{assets/baseline_model_val.pdf}
+%   \caption{Relationship between final validation score and final model validation loss. Each point represents a single training run. The x-axis represents the agent performance. The y-axis represents the value of the model validation loss at the end of the training.}
+%   \label{fig:baseline_model_val}
+% \end{figure}
 
-\begin{figure}
-  \centering
-  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/baseline_model_train.pdf}
-  \caption{Relationship between final validation score and final model train loss. Each point represents a single training run. The x-axis represents the agent performance. The y-axis represents the value of the model train loss at the end of the training.}
-  \label{fig:baseline_model_train}
-\end{figure}
-
-[Return to this later; I'm not precisely sure what to make of it.]
+% \begin{figure}
+%   \centering
+%   \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/baseline_model_train.pdf}
+%   \caption{Relationship between final validation score and final model train loss. Each point represents a single training run. The x-axis represents the agent performance. The y-axis represents the value of the model train loss at the end of the training.}
+%   \label{fig:baseline_model_train}
+% \end{figure}
 
 \subsection{Decoupling model and RL optimization}
 
-As noted previously, the optimal training schedules for the model and the RL module need not coincide - we may, for example, find that the model is overfitting, yet the RL head remains underoptimized.
+As noted previously, the optimal training schedules for the model and the RL module need not coincide - we may, for example, find that the model is overfitting, yet the RL head remains underoptimized. The next experiment aims to investigate the empirical effects of decoupling model and RL update frequencies.
 
 \paragraph{Setup} We adjust the code, so that the model is optimized once every $K_{\rm WM}$ environment steps, and the RL module is optimized once every $K_{\rm RL}$ environment steps. A grid search is performed for \env{Assault} environment [Extend to all three, if there's enough compute time], with ratios $K_{\rm WM}, K_{\rm RL} \in \{2, 4, 8\}$, corresponding to the observed regime, where the performance starts decreasing.
 
-\paragraph{Results} \autoref{fig:split_ratios_perf} shows the agent performance depending on the configuration of the ratios.
+\paragraph{Results} \autoref{fig:split_ratios_perf} shows the agent performance depending on the configuration of the ratios. Both the model and the RL ratios play a significant role in determining the final score, though no pattern can be determined - for example, increasing RL update ratio does not necessarily improve the performance.
 
 \begin{figure}
   \centering
   \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/split_ratios_perf.pdf}
-  \caption{Final validation score for each model/RL update ratio configuration. The x-axis represents each run, marked by a tag in the form of '$K_{\rm WM}/K_{\rm RL}$'. The points represent the scores for each seed, with the corresponding violin plot to the right.}
+  \caption{Final validation score for each model/RL update ratio configuration. The x-axis represents each run, marked by a tag in the form of '$K_{\rm WM}/K_{\rm RL}$'. The points represent the scores for each seed, with the corresponding box plot to the right.}
   \label{fig:split_ratios_perf}
 \end{figure}
 
-\subsection{Pre-training the world model and RL agent}
-
-\subsection{Periodic resets}
-
 \subsection{Auto-tuning update frequencies}
+
+So far, the experiments suggest that achieving optimal or near-optimal performance may require, at the very least, a hyperparameter sweep over \emph{both} model and RL update frequencies. Given the increase in the number of training runs this would require, we will now investigate methods to auto-select at least some of these parameters. In order to achieve this, we will start with an examination of the various metrics thoughout the run, and see whether they are correlated with the final score. The idea is that if we are able to control them throughout the optimization process, we may be able to guide them in such a way so as to achieve higher final performance.
+
+Let us start with the model validation loss. To be precise, we compute mean loss value over the batches of data drawn from the validation episodes. We will start with the aggregate results - the relationship between the final validation loss and the final agent performance. As we can see in \autoref{fig:model_val_loss}, it would appear, somewhat surprisingly, that the value is not meaningfully correlated with the final score achieved by the agent. A closer inspection of the training and validation loss curves (\autoref{fig:model_loss_curves}) reveals, that
+
+\begin{figure}
+  \centering
+  \includegraphics[width=0.8\linewidth,height=0.8\paperheight,keepaspectratio]{assets/model_val_loss.pdf}
+  \caption{Relationship between final validation score and final model validation loss. Each point represents a single training run. The x-axis represents the agent performance. The y-axis represents the value of the model validation loss at the end of the training.}
+  \label{fig:model_val_loss}
+\end{figure}
 
 \section{Architectural changes}
 
