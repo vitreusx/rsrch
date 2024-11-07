@@ -286,3 +286,59 @@ exp:
                 n: 64
                 accumulate: true
             - do_env_step
+
+  dreamer_sac:
+    $extends: [dreamer.atari, atari.base]
+    data.loaders.dreamer_rl:
+      keep_first_reward: false
+    rl:
+      loader: dreamer_rl
+      type: sac
+      sac:
+        num_qf: 2
+        gamma: 0.999
+        alpha:
+          adaptive: false
+          value: 1e-2
+        clip_grad: 1e2
+        actor:
+          opt:
+            type: adam_w
+            lr: 4e-5
+            weight_decay: "${1e-6/lr}"
+            eps: 1e-5
+          encoder:
+            type: dreamer_box
+            dreamer_box: ${_.mlp}
+          dist:
+            type: auto
+            box:
+              min_std: 0.1
+              init: tf
+            one_hot:
+              init: tf
+        qf:
+          opt:
+            type: adam_w
+            lr: 1e-4
+            weight_decay: "${1e-6/lr}"
+            eps: 1e-5
+          polyak:
+            every: 100
+            tau: sync
+          encoder:
+            type: dreamer_box
+            dreamer_box: ${_.mlp}
+    stages:
+      - prefill:
+          until: 50e3
+      - train_loop:
+          until: 5e6
+          tasks:
+            - do_val_epoch: ~
+              every: 1e6
+            - do_opt_step: ~
+              every:
+                n: 64
+                accumulate: true
+            - do_env_step

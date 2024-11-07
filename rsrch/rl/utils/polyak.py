@@ -1,3 +1,5 @@
+from typing import Literal
+
 import torch
 import torch.nn as nn
 
@@ -24,11 +26,13 @@ class Polyak:
         self,
         source: nn.Module,
         target: nn.Module,
-        tau: float = 0.0,
+        tau: float | Literal["sync"] = 0.0,
         every: int = 1,
     ):
         self.source = source
         self.target = target
+        if tau == "sync":
+            tau = 0.0
         self.tau = tau
         self._step, self._last, self.every = 0, 0, every
 

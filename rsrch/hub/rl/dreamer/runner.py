@@ -282,8 +282,8 @@ class Runner:
             self.wm = self.wm.to(self.device)
 
     def _setup_rl(self):
-        self.rl_obs_space = self.rl_loader.obs_space
-        self.rl_act_space = self.rl_loader.act_space
+        self.rl_obs_space = getattr(self.rl_loader, "obs_space", self.sdk.obs_space)
+        self.rl_act_space = getattr(self.rl_loader, "act_space", self.sdk.act_space)
 
         rl_type = self.cfg.rl.type
         if rl_type == "a2c":

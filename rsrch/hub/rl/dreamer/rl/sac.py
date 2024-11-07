@@ -9,10 +9,10 @@ from torch import Tensor, nn
 
 import rsrch.distributions as D
 from rsrch import spaces
+from rsrch.hub.rl.dreamer.common import plasticity
 from rsrch.nn import dh
-from rsrch.nn.utils import frozen, safe_mode
+from rsrch.nn.utils import safe_mode
 from rsrch.rl.utils import polyak
-from rsrch.types import Tensorlike
 
 from ..common import nets
 from ..common.trainer import ScaledOptimizer, TrainerBase
@@ -26,6 +26,7 @@ class Config:
     @dataclass
     class Actor:
         encoder: dict
+        dist: dict
         opt: dict
 
     @dataclass
@@ -83,7 +84,7 @@ class DiscQf(nn.Module):
         self,
         cfg: Config.Qf,
         obs_space: spaces.torch.Tensor,
-        act_space: spaces.torch.Discrete,
+        act_space: spaces.torch.Discrete | spaces.torch.OneHot,
     ):
         super().__init__()
         self.act_space = act_space
@@ -98,12 +99,15 @@ class DiscQf(nn.Module):
     def forward(self, obs: Tensor, act: Tensor | None = None) -> Tensor:
         q_values = self.proj(self.encoder(obs))
         if act is not None:
-            q_values = q_values.gather(1, act.unsqueeze(-1)).squeeze(-1)
+            if act.dtype.is_floating_point:
+                q_values = (q_values * act).sum(-1)
+            else:
+                q_values = q_values.gather(1, act.unsqueeze(-1)).squeeze(-1)
         return q_values
 
 
 def Qf(cfg: Config.Qf, obs_space, act_space):
-    if isinstance(act_space, spaces.torch.Discrete):
+    if isinstance(act_space, (spaces.torch.Discrete, spaces.torch.OneHot)):
         return DiscQf(cfg, obs_space, act_space)
     else:
         return ContQf(cfg, obs_space, act_space)
@@ -124,6 +128,7 @@ class Actor(nn.Sequential):
         head = dh.make(
             layer_ctor=partial(nn.Linear, z_features),
             space=act_space,
+            **cfg.dist,
         )
 
         super().__init__(encoder, head)
@@ -143,7 +148,6 @@ class Trainer(TrainerBase):
         self.actor = actor
 
         act_space = actor.act_space
-        self._discrete = type(act_space) == spaces.torch.Discrete
 
         self.qf, self.qf_t = nn.ModuleList(), nn.ModuleList()
         for _ in range(cfg.num_qf):
@@ -157,6 +161,11 @@ class Trainer(TrainerBase):
 
         self.qf_polyak = polyak.Polyak(self.qf, self.qf_t, **cfg.qf.polyak)
         self.alpha = alpha.Alpha(cfg.alpha, act_space, self.device)
+
+        self._discrete = isinstance(self.qf, DiscQf)
+
+        self._actor_ref = plasticity.save_ref_state(self.actor)
+        self._qf_ref = plasticity.save_ref_state(self.qf[0])
 
     def _make_qf(self):
         qf = Qf(self.cfg.qf, self.actor.obs_space, self.actor.act_space)
@@ -172,6 +181,8 @@ class Trainer(TrainerBase):
         return opt
 
     def opt_step(self, batch: Slices):
+        batch = batch.detach()
+
         with torch.no_grad():
             with self.autocast():
                 next_obs = batch.obs[-1]
@@ -199,16 +210,6 @@ class Trainer(TrainerBase):
         obs = batch.obs[0]
 
         with self.autocast():
-            q_losses = []
-            for qf in self.qf:
-                qf_pred = qf(obs, batch.act[0])
-                q_losses.append(F.mse_loss(qf_pred, target))
-            q_loss = torch.stack(q_losses).sum()
-
-        self.qf_opt.step(q_loss, self.cfg.clip_grad)
-        self.qf_polyak.step()
-
-        with self.autocast():
             policy = self.actor(obs)
 
         if self._discrete:
@@ -233,13 +234,23 @@ class Trainer(TrainerBase):
 
         self.actor_opt.step(actor_loss, self.cfg.clip_grad)
 
-        self.opt_iter += 1
-
         with torch.no_grad():
             entropy = self.actor(batch.obs[0]).entropy()
 
         if self.alpha.adaptive:
             self.alpha.opt_step(entropy)
+
+        with self.autocast():
+            q_losses = []
+            for qf in self.qf:
+                qf_pred = qf(obs, batch.act[0])
+                q_losses.append(F.mse_loss(qf_pred, target))
+            q_loss = torch.stack(q_losses).sum()
+
+        self.qf_opt.step(q_loss, self.cfg.clip_grad)
+        self.qf_polyak.step()
+
+        self.opt_iter += 1
 
         with torch.no_grad():
             mets = {
@@ -252,14 +263,27 @@ class Trainer(TrainerBase):
 
         return mets
 
-    @torch.no_grad()
-    def reset(self, make_actor: Callable[[], Actor]):
-        new_actor = make_actor()
-        polyak.sync(new_actor, self.actor)
+    def check_plasticity(self, batch: Slices):
+        obs = batch.obs.flatten(0, 1)
 
-        for idx in range(self.cfg.num_qf):
-            new_qf = self._make_qf()
-            polyak.sync(new_qf, self.qf[idx])
-            polyak.sync(new_qf, self.qf_t[idx])
+        _, actor_res = plasticity.full_test(
+            module=self.actor,
+            ref_state=self._actor_ref,
+            input=(obs,),
+        )
+        actor_mets = plasticity.full_metrics(actor_res)
 
-        # self._save_ref_state()
+        _, qf_res = plasticity.full_test(
+            module=self.qf[0],
+            ref_state=self._qf_ref,
+            input=(obs,),
+        )
+        qf_mets = plasticity.full_metrics(qf_res)
+
+        metrics = {
+            **{f"qf/{k}": v for k, v in actor_mets.items()},
+            **{f"critic/{k}": v for k, v in qf_mets.items()},
+        }
+        results = {"actor": actor_res, "qf": qf_res}
+
+        return metrics, results
