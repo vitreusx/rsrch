@@ -365,5 +365,5 @@ thesis:
           lr: ${qf.opt.lr}
           eps: 1e-4
         disc_scale:
-          value: linear(0, 400e3, 0.75, 1e-2)
+          value: linear((0, 0.75), (400e3, 1e-2))
           of: env_step
