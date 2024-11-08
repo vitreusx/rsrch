@@ -66,7 +66,7 @@ ATARI_100k = [
 ]
 
 
-def _to_rgba(desc: str, alpha: float = 0.2):
+def to_rgba(desc: str, alpha: float = 0.2):
     r, g, b = eval(desc.removeprefix("rgb"))
     return f"rgba{(r, g, b, alpha)}"
 
@@ -85,7 +85,7 @@ def err_line(x: np.ndarray, y: np.ndarray, std: np.ndarray, color: str, **kwargs
             x=[*x, *x[::-1]],
             y=[*y_upper, *y_lower[::-1]],
             fill="tozerox",
-            fillcolor=_to_rgba(color),
+            fillcolor=to_rgba(color),
             line=dict(color="rgba(255, 255, 255, 0)"),
             showlegend=False,
             hoverinfo="skip",

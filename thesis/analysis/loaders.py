@@ -130,3 +130,25 @@ def dreamerv2_loader():
 
     df = pd.DataFrame.from_records(records)
     return df
+
+
+def adaptive_ratio_v1_0_loader():
+    results_dir = Path("../results/adaptive_ratio_v1_0")
+    scalars = TBScalars(".cache/adaptive_ratio_v1_0")
+
+    res_df = []
+    for test in tqdm([*results_dir.iterdir()]):
+        params = test.name.split("-")
+        test_r = {}
+        test_r["env"] = params[0]
+        types = {"seed": int}
+        for (name, typ), value in zip(types.items(), params[1:]):
+            test_r[name] = typ(value.removeprefix(f"{name}="))
+        df = scalars.read(test)
+        scores = df[df["tag"] == "val/mean_ep_ret"]["value"]
+        test_r["score"] = scores.iloc[-1]
+        res_df.append({"path": test, **test_r})
+    res_df = pd.DataFrame.from_records(res_df)
+    res_df
+
+    return res_df, scalars
