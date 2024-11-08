@@ -361,7 +361,7 @@ class Runner:
     @typesafe
     def _make_sched(self, spec: config.Sched):
         if isinstance(spec, float):
-            return sched.Constant(spec)
+            return lambda: spec
         else:
             if isinstance(spec, str):
                 sched_fn, unit = spec, self.cfg.def_step

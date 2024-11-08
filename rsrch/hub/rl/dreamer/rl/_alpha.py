@@ -72,14 +72,14 @@ class Alpha(nn.Module):
     @cached_property
     def disc_scale_fn(self):
         if self.make_sched is None:
-            return self.cfg.disc_scale
+            return lambda: self.cfg.disc_scale
         else:
             return self.make_sched(self.cfg.disc_scale)
 
     @cached_property
     def cont_scale_fn(self):
         if self.make_sched is None:
-            return self.cfg.cont_scale
+            return lambda: self.cfg.cont_scale
         else:
             return self.make_sched(self.cfg.cont_scale)
 
