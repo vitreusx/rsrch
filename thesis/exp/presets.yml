@@ -186,7 +186,7 @@ thesis:
 
     wm_v1:
       $extends: [v1]
-      _rl_ratio: 2.0
+      _rl_ratio: 4.0
       _adaptive_setup.rl_to_wm_ratio: 0.0
 
     wm_v2:

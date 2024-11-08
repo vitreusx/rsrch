@@ -19,7 +19,7 @@ def split_ratios(test_name, suffix=""):
     ]
     common_opts = {}
 
-    envs = A100k_MONO[:1]
+    envs = A100k_MONO[:2]
     ratios = [8, 4, 2]
     seeds = [*range(5)]
 

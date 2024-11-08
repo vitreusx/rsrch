@@ -17,7 +17,7 @@ def adaptive_wm_ratio_v1_0(test_name, suffix=""):
         "thesis.adaptive_ratio.wm_v1",
         "grid_launch",
     ]
-    common_opts = {"_v1_variant": "0"}
+    common_opts = {}
 
     envs = A100k_MONO
     seeds = [*range(5)]
