@@ -8,7 +8,7 @@ import numpy as np
 from ..utils import *
 
 
-def sac_ent_sched(test_name: str, suffix=""):
+def sac_fixed_ent(test_name: str, suffix=""):
     all_tests = []
 
     common_args = [
@@ -18,13 +18,7 @@ def sac_ent_sched(test_name: str, suffix=""):
         "thesis.sac.adaptive_ent",
         "grid_launch",
     ]
-
-    common_opts = {
-        "_ent_sched": {
-            "value": "linear((0, 0.75), (400e3, 1e-2))",
-            "of": "env_step",
-        }
-    }
+    common_opts = {"_ent_sched": 0.1}
 
     envs = A100k_MONO
     seeds = [*range(5)]
@@ -45,10 +39,10 @@ def sac_ent_sched(test_name: str, suffix=""):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--name", default="sac/ent_sched")
+    p.add_argument("--name", default="sac/fixed_ent")
     args = p.parse_args()
 
-    all_tests = sac_ent_sched(args.name)
+    all_tests = sac_fixed_ent(args.name)
 
     prefix = ["python", "-m", "rsrch.hub.rl.dreamer"]
     for test in all_tests:

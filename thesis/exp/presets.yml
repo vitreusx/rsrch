@@ -356,8 +356,9 @@ thesis:
         adaptive: false
         value: ${_alpha}
 
-    ent_sched:
+    adaptive_ent:
       $extends: [baseline, sac.base]
+      _ent_sched: ~
       rl.sac.alpha:
         adaptive: true
         value: 1.0
@@ -365,6 +366,4 @@ thesis:
           type: adam
           lr: 2.5e-3
           eps: 1e-5
-        disc_scale:
-          value: linear((0, 0.75), (400e3, 1e-2))
-          of: env_step
+        disc_scale: ${_ent_sched}
