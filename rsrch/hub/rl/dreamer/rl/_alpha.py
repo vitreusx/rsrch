@@ -18,9 +18,8 @@ class Config:
     adaptive: bool = False
     value: float = 1.0
     min_value: float = 1e-8
-    target: float | Literal["auto"] = "auto"
-    disc_scale: Sched = 0.75
-    cont_scale: Sched = 5e-2
+    target: Sched | None = None
+    mode: Literal["abs", "rel", "eps"] = "rel"
     opt: dict | None = None
 
 
@@ -55,33 +54,39 @@ class Alpha(nn.Module):
 
     @property
     def target(self):
+        value = self.target_fn()
+        if self.cfg.mode == "abs":
+            return value
+        elif self.cfg.mode == "rel":
+            return self.value * self.max_ent
+        elif self.cfg.mode == "eps":
+            if self._discrete:
+                # Discrete scale ~ normalized minimum probability for each action
+                n = self.act_space.n
+                probs = (value / n) * torch.ones((n,))
+                probs[0] += 1.0 - value
+                dist = D.Categorical(probs=probs)
+            else:
+                # Discrete scale ~ standard deviation normalized by the size of the action space
+                extent = self.act_space.high - self.act_space.low
+                dist = D.Normal(0, value * extent, len(extent.shape))
+            return dist.entropy().item()
+
+    @cached_property
+    def target_fn(self):
+        if self.make_sched is None:
+            return lambda: self.cfg.target
+        else:
+            return self.make_sched(self.cfg.target)
+
+    @cached_property
+    def max_ent(self):
         if self._discrete:
-            # Discrete scale ~ normalized minimum probability for each action
-            eps = self.disc_scale_fn()
             n = self.act_space.n
-            probs = (eps / n) * torch.ones((n,))
-            probs[0] += 1.0 - eps
-            dist = D.Categorical(probs=probs)
+            dist = D.Categorical(logits=torch.zeros(n))
         else:
-            # Discrete scale ~ standard deviation normalized by the size of the action space
-            extent = self.act_space.high - self.act_space.low
-            scale = self.cont_scale_fn() * extent
-            dist = D.Normal(0, scale, len(extent.shape))
+            dist = D.Uniform(self.act_space.low, self.act_space.high)
         return dist.entropy().item()
-
-    @cached_property
-    def disc_scale_fn(self):
-        if self.make_sched is None:
-            return lambda: self.cfg.disc_scale
-        else:
-            return self.make_sched(self.cfg.disc_scale)
-
-    @cached_property
-    def cont_scale_fn(self):
-        if self.make_sched is None:
-            return lambda: self.cfg.cont_scale
-        else:
-            return self.make_sched(self.cfg.cont_scale)
 
     def save(self):
         if self.adaptive:

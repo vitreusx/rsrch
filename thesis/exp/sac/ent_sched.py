@@ -15,16 +15,11 @@ def sac_ent_sched(test_name: str, suffix=""):
         "-P",
         "thesis/exp/presets.yml",
         "-p",
-        "thesis.sac.adaptive_ent",
+        "thesis.sac.ent_sched",
         "grid_launch",
     ]
 
-    common_opts = {
-        "_ent_sched": {
-            "value": "linear((0, 0.75), (400e3, 1e-2))",
-            "of": "env_step",
-        }
-    }
+    common_opts = {}
 
     envs = A100k_MONO
     seeds = [*range(5)]

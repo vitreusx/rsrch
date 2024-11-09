@@ -316,9 +316,7 @@ thesis:
           gamma: 0.999
           alpha:
             adaptive: false
-            value: 1e-2
-            disc_scale: 0.75
-            cont_scale: 5e-2
+            value: 1.0
           clip_grad: 1e2
           actor:
             opt:
@@ -358,12 +356,33 @@ thesis:
 
     adaptive_ent:
       $extends: [baseline, sac.base]
-      _ent_sched: ~
+      _target: ~
+      _mode: ~
       rl.sac.alpha:
         adaptive: true
         value: 1.0
+        target: ${_target}
+        mode: ${_mode}
         opt:
           type: adam
           lr: 2.5e-3
           eps: 1e-5
-        disc_scale: ${_ent_sched}
+
+    ent_sched:
+      $extends: [adaptive_ent]
+      _target:
+        value: linear((0, 0.75), (400e3, 1e-2))
+        of: env_step
+      _mode: eps
+
+    fixed_ent:
+      $extends: [adaptive_ent]
+      _target: 0.1
+      _mode: eps
+
+    ent_sched_exp:
+      $extends: [adaptive_ent]
+      _target:
+        value: exp((20e3, 0.99), (400e3, 2.5e-2), 25e3)
+        of: env_step
+      _mode: rel

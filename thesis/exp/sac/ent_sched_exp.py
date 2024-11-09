@@ -8,16 +8,17 @@ import numpy as np
 from ..utils import *
 
 
-def sac_fixed_ent(test_name: str, suffix=""):
+def sac_ent_sched_exp(test_name: str, suffix=""):
     all_tests = []
 
     common_args = [
         "-P",
         "thesis/exp/presets.yml",
         "-p",
-        "thesis.sac.fixed_ent",
+        "thesis.sac.ent_sched_exp",
         "grid_launch",
     ]
+
     common_opts = {}
 
     envs = A100k_MONO
@@ -39,10 +40,10 @@ def sac_fixed_ent(test_name: str, suffix=""):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--name", default="sac/fixed_ent")
+    p.add_argument("--name", default="sac/ent_sched_exp")
     args = p.parse_args()
 
-    all_tests = sac_fixed_ent(args.name)
+    all_tests = sac_ent_sched_exp(args.name)
 
     prefix = ["python", "-m", "rsrch.hub.rl.dreamer"]
     for test in all_tests:
