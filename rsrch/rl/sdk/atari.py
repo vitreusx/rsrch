@@ -152,7 +152,7 @@ class ToChannelFirst(gymnasium.ObservationWrapper):
         return np.transpose(x, (2, 0, 1))
 
 
-class ApplyFunc(gym.EnvWrapper):
+class TransformEnv(gym.EnvWrapper):
     def __init__(self, env: gym.Env, obs_f, act_f):
         super().__init__(env)
         self.obs_f = obs_f
@@ -164,8 +164,7 @@ class ApplyFunc(gym.EnvWrapper):
         return step
 
     def step(self, act):
-        act = self.act_f(act)
-        step, final = super().step(act)
+        step, final = super().step(self.act_f(act))
         step["obs"] = self.obs_f(step["obs"])
         return step, final
 
@@ -459,7 +458,7 @@ class SDK:
         env = gym.envs.GymEnv(env, seed=seed, render=render)
 
         if self.randomize:
-            env = ApplyFunc(
+            env = TransformEnv(
                 env,
                 obs_f=self._randomize_obs,
                 act_f=self._randomize_act,

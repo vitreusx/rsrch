@@ -273,7 +273,7 @@ As noted previously, the optimal training schedules for the model and the RL mod
 
 So far, the experiments suggest that achieving optimal or near-optimal performance may require, at the very least, a hyperparameter sweep over \emph{both} model and RL update frequencies. Given the increase in the number of training runs this would require, we will now investigate methods to auto-select at least some of these parameters. In order to achieve this, we will start with an examination of the various metrics thoughout the run, and see whether they are correlated with the final score. The idea is that if we are able to control them throughout the optimization process, we may be able to guide them in such a way so as to achieve higher final performance.
 
-Let us start with the model validation loss. To be precise, we compute mean loss value over the batches of data drawn from the validation episodes. We will start with the aggregate results - the relationship between the final validation loss and the final agent performance, for the equal-ratio experiment described in \autoref{sec:baseline}. As we can see in \autoref{fig:model_val_loss}, it would appear, somewhat surprisingly, that the value, for individual trials, is not meaningfully correlated with the final score achieved by the agent. A closer inspection of the training and validation loss curves (\autoref{fig:model_val_curves}) reveals, that the agents do not, in general, exhibit classical overfitting behavior, in the sense that the validation loss curves plateau at worst, and in general the loss value keeps decreasing. The ratio values, for which the final loss value is the smallest, do not correspond to the ones which achieve the highest performance.
+Let us start with the model validation loss. To be precise, we compute mean loss value over the batches of data drawn from the validation episodes. We will start with the aggregate results - the relationship between the final validation loss and the final agent performance, for the equal-ratio experiment described in \autoref{sec:baseline}. As we can see in \autoref{fig:model_val_loss}, it would appear, somewhat surprisingly, that the value, for individual trials, is not meaningfully correlated with the final score achieved by the agent. A closer inspection of the validation loss curves (\autoref{fig:model_val_curves}) reveals, that the agents do not, in general, exhibit classical overfitting behavior, in the sense that the validation loss curves plateau at worst, and in general the loss value keeps decreasing. The learning process nevertheless degrades, as the final values of the validation loss keep increasing as the ratio of the optimization and environment steps increases. The ratio values, for which the final loss value is the smallest, do not correspond to the ones which achieve the highest performance.
 
 \begin{figure}[t]
   \centering
@@ -289,7 +289,7 @@ Let us start with the model validation loss. To be precise, we compute mean loss
   \label{fig:model_val_curves}
 \end{figure}
 
-For comparison, let us take a look at the \emph{training} loss curves. An aggregate comparison (\autoref{fig:model_train_loss}) reveals a degree of correlation between  the agent performance scores and the training loss values. The loss curves (\autoref{fig:model_train_curves}) are of altogether different nature, compared to the validation loss curves. We can see a clear monotonic relationship between the final loss value achieved and the update frequency, though, as before, the better values do not lead to improvements in terms of the quality of the agents. Perhaps more interestingly, at very high update frequencies (i.e. small data-to-update ratios), the optimization process seems to stall out completely. For the value of $K = 1$, for example, in all three environments tested, near-``optimal'' value is reached after the first $100 \times 10^3$ environment steps, whereafter it either improves marginally, or even increases. [Well, what to make of \emph{that}?]
+To further examine the behavior of the agent throughout the optimization process, let us take a look at the \emph{training} loss curves. An aggregate comparison (\autoref{fig:model_train_loss}) reveals a degree of correlation between  the agent performance scores and the training loss values. The loss curves (\autoref{fig:model_train_curves}) are of altogether different nature, compared to the validation loss curves. We can see a clear monotonic relationship between the final loss value achieved and the update frequency, though, as before, the better values do not lead to improvements in terms of the quality of the agents. Perhaps more interestingly, at very high update frequencies (i.e. small data-to-update ratios), the optimization process seems to stall out completely. For the value of $K = 1$, for example, in all three environments tested, near-``optimal'' value is reached after the first $100 \times 10^3$ environment steps, whereafter it either improves marginally, or even increases. [Well, what to make of \emph{that}?]
 
 \begin{figure}[t]
   \centering
@@ -323,7 +323,7 @@ The results can be found in \autoref{fig:adaptive_v1_0}, along with the baseline
   \label{fig:adaptive_v1_0}
 \end{figure}
 
-Given that the idea behind this approach is to minimize model overfitting by monitoring validation loss, our next step is to look at the validation loss. The final loss values, relative to the baseline values (\autoref{fig:adaptive_v1_0_loss}), do not seem to imply that the method has a consistent positive effect on the model validation loss.
+Given that the idea behind this approach is to minimize model overfitting by monitoring validation loss, our next step is to look at the validation loss. The results (\autoref{fig:adaptive_v1_0_loss}) do not seem to imply that the method has a consistent positive effect on the model validation loss. In fact, if we compare validation loss curves and the current ratio values (\autoref{fig:adaptive_v1_0_curves}), the relationship is not precisely what we would expect. As noted previously, the idea behind the method is to increase update ratio as long as the validation loss decreases, and vice versa. In short time scales, specifically the $2 \times 10^3$ environment steps between each ratio update, this does occur, but across longer time spans, the coupling breaks. For example, for \env{MsPacman} and the RNG seed of $1$, the validation loss decreases up until the timestep of $200 \times 10^3$, yet the ratio keeps increasing. After the jump, presumably due to the influence of a new validation episode in the buffer, the loss value starts decreasing, and the ratio decreases.
 
 \begin{figure}[t]
   \centering
@@ -332,11 +332,20 @@ Given that the idea behind this approach is to minimize model overfitting by mon
   \label{fig:adaptive_v1_0_loss}
 \end{figure}
 
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/adaptive_v1_0.curves.pdf}
+  \caption{}
+  \label{fig:adaptive_v1_0_curves}
+\end{figure}
+
 \section{Architectural changes}
 
-\subsection{Choice of the RL algorithm choice}
-
 \subsection{Data augmentation}
+
+
+
+\subsection{Choice of the RL algorithm choice}
 
 \section{Combining the improvements}
 

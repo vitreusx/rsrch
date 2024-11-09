@@ -160,11 +160,13 @@ class Envpool(VecEnv):
                 policy_ids = np.array(policy_ids)
                 actions = agent.policy(policy_ids)
                 for env_id, action in zip(policy_ids, actions):
-                    if self.act_f is not None:
-                        action = self.act_f(action)
                     self._actions[env_id] = action
 
-            self.pool.send({"action": self._actions[env_ids], "env_id": env_ids})
+            actions = self._actions[env_ids].copy()
+            if self.act_f is not None:
+                for idx in range(len(env_ids)):
+                    actions[idx] = self.act_f(actions[idx])
+            self.pool.send({"action": actions, "env_id": env_ids})
 
 
 class GymEnv(Env):
