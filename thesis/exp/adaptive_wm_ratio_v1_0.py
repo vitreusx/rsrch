@@ -21,7 +21,7 @@ def adaptive_wm_ratio_v1_0(test_name, suffix=""):
 
     envs = A100k_MONO
     seeds = [*range(5)]
-    rl_ratios = [4, 8]
+    rl_ratios = [2, 4, 8]
 
     for env, rl_ratio, seed in product(envs, rl_ratios, seeds):
         opts = {
