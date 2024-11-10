@@ -58,7 +58,7 @@ class Alpha(nn.Module):
         if self.cfg.mode == "abs":
             return value
         elif self.cfg.mode == "rel":
-            return self.value * self.max_ent
+            return value * self.max_ent
         elif self.cfg.mode == "eps":
             if self._discrete:
                 # Discrete scale ~ normalized minimum probability for each action

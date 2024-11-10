@@ -5,6 +5,7 @@
 \usepackage{amssymb}
 \usepackage{caption}
 \usepackage{svg}
+\usepackage{setspace}
 \usepackage[preprint]{styles/jmlr2e}
 
 \newcommand{\algorithmautorefname}{Algorithm}
@@ -198,7 +199,7 @@ We are interested in evaluating performance on the Atari-100k benchmark. However
 
 First, let us filter out the environments which do not satisfy first two criteria. In the absence of standardized metrics which would inform our choice quantitatively, we resort to visual inspection of the performance curves for each environment in the first $6 \times 10^6$ steps. The relevant data can be found in \autoref{fig:atari_100k_comp}. Based on it, we select following games for further evaluation: \env{Amidar}, \env{Assault}, \env{Asterix}, \env{CrazyClimber}, \env{JamesBond}, \env{MsPacman} and \env{Pong}.
 
-\begin{figure}[t]
+\begin{figure}
   \centering
   \includegraphics[width=\linewidth,height=0.6\paperheight,keepaspectratio]{assets/env_selection.pdf}
   \caption{Performance curves for Atari-100k, with default settings. The values have been provided by the authors of the DreamerV2 paper. The x-axis represents the number of environment steps passed. The y-axis represents the validation score. Blue curves indicate environments, which we have selected for further evaluation.}
@@ -211,7 +212,7 @@ We use the same environment settings (frame skip values, time limit etc.) as the
 
 The original implementation of DreamerV2 is written in Tensorflow - we have ported the relevant source code (mainly the implementation of the world model and the actor critic) to Pytorch, resulting in slight changes in overall performance. It remains, however, comparable: \autoref{fig:torch_v_ref} depicts the validation score curves for both the original implementation, and the Pytorch version.
 
-\begin{figure}[t]
+\begin{figure}
   \centering
   \includegraphics[width=\linewidth,height=\paperheight,keepaspectratio]{assets/torch_v_ref.pdf}
   \caption{Comparison of the validation scores for Tensorflow and Pytorch versions. \emph{Note:} The scores for the reference (Tensorflow) version have been supplied by the authors, and were not verified independently.}
@@ -231,28 +232,12 @@ Beyond that, for testing purposes, we also add an online train-validation split 
 
 \paragraph{Results} Let us first analyze final test performance, depending on the data-to-update ratio $E$, for each environment (\autoref{fig:baseline_score}). The mean final score is maximized for a given region of the values of $E$, beyond which it decreases, presumably either due to under- or overoptimization. For each task, the optimal value is different: $2-4$ for \env{CrazyClimber}, $\approx 8$ for \env{Assault} and a wide range for \env{MsPacman}.
 
-\begin{figure}[t]
+\begin{figure}
   \centering
   \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/baseline_score.pdf}
   \caption{Final test episode returns for each of the 3 tested environments, relative to the data-to-update ratio $E$. The line indicates the mean across the RNG seeds, and the shaded area indicates the standard deviation. \emph{Note}: The x-axis is logarithmic.}
   \label{fig:baseline_score}
 \end{figure}
-
-% Our next goal is to take a closer look at the behavior of the agent throughout  training, to see if we can discover the causes of the performance collapse. To investigate model overfitting, we analyze the model validation loss curves. We will start with the relationship between final model validation loss and final validation score (\autoref{fig:baseline_model_val}). We can see that, perhaps somewhat surprisingly, there is no clear correlation between lower model validation loss, and higher final scores - in fact, the opposite seems to hold for \env{MsPacman}. If we take a look at a similar figure, except for the training loss (\autoref{fig:baseline_model_train}), the correlation is more apparent. This would seem to indicate that (1) computing model loss on the validation set is not a reliable metric for measuring ``true'' out-of-distribution loss, in this instance; (2) the model, even at such ratios, is \emph{underfitting}.
-
-% \begin{figure}
-%   \centering
-%   \includegraphics[width=0.8\linewidth,height=0.8\paperheight,keepaspectratio]{assets/baseline_model_val.pdf}
-%   \caption{Relationship between final validation score and final model validation loss. Each point represents a single training run. The x-axis represents the agent performance. The y-axis represents the value of the model validation loss at the end of the training.}
-%   \label{fig:baseline_model_val}
-% \end{figure}
-
-% \begin{figure}
-%   \centering
-%   \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/baseline_model_train.pdf}
-%   \caption{Relationship between final validation score and final model train loss. Each point represents a single training run. The x-axis represents the agent performance. The y-axis represents the value of the model train loss at the end of the training.}
-%   \label{fig:baseline_model_train}
-% \end{figure}
 
 \subsection{Decoupling model and RL optimization}
 
@@ -260,29 +245,29 @@ As noted previously, the optimal training schedules for the model and the RL mod
 
 \paragraph{Setup} We adjust the code, so that the model is optimized once every $K_{\rm WM}$ environment steps, and the RL module is optimized once every $K_{\rm RL}$ environment steps. A grid search is performed for \env{Assault} environment [Extend to all three, if there's enough compute time], with ratios $K_{\rm WM}, K_{\rm RL} \in \{2, 4, 8\}$, corresponding to the observed regime, where the performance starts decreasing.
 
-\paragraph{Results} \autoref{fig:split_ratios_perf} shows the agent performance depending on the configuration of the ratios. Both the model and the RL ratios play a significant role in determining the final score, though no pattern can be determined - for example, increasing RL update ratio does not necessarily improve the performance.
+\paragraph{Results} \autoref{fig:split_ratios_perf} shows the agent performance depending on the configuration of the ratios. Both the model and the RL ratios play a significant role in determining the final score, though no clear pattern can be determined - for example, increasing RL update ratio does not necessarily improve the performance.
 
-\begin{figure}[t]
+\begin{figure}
   \centering
   \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/split_ratios_perf.pdf}
   \caption{Final validation score for each model/RL update ratio configuration. The x-axis represents each run, marked by a tag in the form of '$K_{\rm WM}/K_{\rm RL}$'. The points represent the scores for each seed, with the corresponding box plot to the right.}
   \label{fig:split_ratios_perf}
 \end{figure}
 
-\subsection{Auto-tuning update frequencies}
+\subsection{Investigating the learning dynamics of the agents}
 
 So far, the experiments suggest that achieving optimal or near-optimal performance may require, at the very least, a hyperparameter sweep over \emph{both} model and RL update frequencies. Given the increase in the number of training runs this would require, we will now investigate methods to auto-select at least some of these parameters. In order to achieve this, we will start with an examination of the various metrics thoughout the run, and see whether they are correlated with the final score. The idea is that if we are able to control them throughout the optimization process, we may be able to guide them in such a way so as to achieve higher final performance.
 
-Let us start with the model validation loss. To be precise, we compute mean loss value over the batches of data drawn from the validation episodes. We will start with the aggregate results - the relationship between the final validation loss and the final agent performance, for the equal-ratio experiment described in \autoref{sec:baseline}. As we can see in \autoref{fig:model_val_loss}, it would appear, somewhat surprisingly, that the value, for individual trials, is not meaningfully correlated with the final score achieved by the agent. A closer inspection of the validation loss curves (\autoref{fig:model_val_curves}) reveals, that the agents do not, in general, exhibit classical overfitting behavior, in the sense that the validation loss curves plateau at worst, and in general the loss value keeps decreasing. The learning process nevertheless degrades, as the final values of the validation loss keep increasing as the ratio of the optimization and environment steps increases. The ratio values, for which the final loss value is the smallest, do not correspond to the ones which achieve the highest performance.
+Since model learning is a supervised learning task, arguably the most imporant metric to monitor is validation loss. To be precise, we compute mean loss value over the batches of data drawn from the validation episodes. We will start with the aggregate results - the relationship between the final validation loss and the final agent performance, for the equal-ratio experiment described in \autoref{sec:baseline}. As we can see in \autoref{fig:model_val_loss}, it would appear, somewhat surprisingly, that the value, for individual trials, is not meaningfully correlated with the final score achieved by the agent. A closer inspection of the validation loss curves (\autoref{fig:model_val_curves}) reveals, that the agents do not, in general, exhibit classical overfitting behavior, in the sense that the validation loss curves plateau at worst, and in general the loss value keeps decreasing. The learning process nevertheless degrades, as the final values of the validation loss keep increasing as the ratio of the optimization and environment steps increases. The ratio values, for which the final loss value is the smallest, do not correspond to the ones which achieve the highest performance.
 
-\begin{figure}[t]
+\begin{figure}
   \centering
   \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/model_val_loss.pdf}
   \caption{Relationship between final validation score and final model validation loss. Each point represents a single training run. The x-axis represents the agent performance. The y-axis represents the value of the model validation loss at the end of the training.}
   \label{fig:model_val_loss}
 \end{figure}
 
-\begin{figure}[t]
+\begin{figure}
   \centering
   \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/model_val_curves.pdf}
   \caption{Averaged model validation loss curves for each configuration of the environment and the update ratio used. Rows represent different environments, and the columns the different update ratios used. The x-axis corresponds to the number of environment steps taken, and the y-axes represent loss values. The ranges of the y-axes are different for each environment.}
@@ -291,19 +276,31 @@ Let us start with the model validation loss. To be precise, we compute mean loss
 
 To further examine the behavior of the agent throughout the optimization process, let us take a look at the \emph{training} loss curves. An aggregate comparison (\autoref{fig:model_train_loss}) reveals a degree of correlation between  the agent performance scores and the training loss values. The loss curves (\autoref{fig:model_train_curves}) are of altogether different nature, compared to the validation loss curves. We can see a clear monotonic relationship between the final loss value achieved and the update frequency, though, as before, the better values do not lead to improvements in terms of the quality of the agents. Perhaps more interestingly, at very high update frequencies (i.e. small data-to-update ratios), the optimization process seems to stall out completely. For the value of $K = 1$, for example, in all three environments tested, near-``optimal'' value is reached after the first $100 \times 10^3$ environment steps, whereafter it either improves marginally, or even increases. [Well, what to make of \emph{that}?]
 
-\begin{figure}[t]
+\begin{figure}
   \centering
   \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/model_train_loss.pdf}
   \caption{Relationship between final validation score and final model training loss. Each point represents a single training run. The x-axis represents the agent performance. The y-axis represents the value of the model training loss at the end of the training.}
   \label{fig:model_train_loss}
 \end{figure}
 
-\begin{figure}[t]
+\begin{figure}
   \centering
   \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/model_train_curves.pdf}
   \caption{Averaged model training loss curves for each configuration of the environment and the update ratio used. Rows represent different environments, and the columns the different update ratios used. The x-axis corresponds to the number of environment steps taken, and the y-axes represent loss values. The ranges of the y-axes are different for each environment, and are {\bf logarithmic} due to the wide range of values.}
   \label{fig:model_train_curves}
 \end{figure}
+
+Analysis of the behavior of the RL component is less straightforward, as there is no analogue of under- or overfitting of supervised models in the case of reinforcement learning. There are, however, a couple of phenomena, which can cause performance collapse, such as:
+
+\begin{enumerate}
+  \item Value overestimation: Since most RL algorithms compute value estimates via bootstrapping, it is possible for bad initial value estimates to be amplified by the optimization process.
+  \item Model exploitation: In the context of model-based RL, and specifically the methods based on Dreamer architecture, since all the data given to the RL module is imagined by the model, inaccuracies thereof can cause the agent to learn wrong policies which perform well in the model-induced MDP.
+  \item Policy collapse: for actor-critic methods, without any regularization, the policy will tend to rapidly concentrate on the actions with the highest advantage estimates, which in turn would hurt exploration and prevent the agent from learning more optimal behaviors.
+\end{enumerate}
+
+To investigate these, we will first take a look at the value curves. [?]
+
+\subsection{Auto-tuning update frequencies}
 
 It would therefore appear that these metrics cannot be directly used for the purposes of guiding the optimization process. There exist, however, works doing precisely that, which demands a further inquiry.
 
@@ -316,7 +313,7 @@ We will specifically do a closer examination of (Dynamic update ratios paper). T
 
 The results can be found in \autoref{fig:adaptive_v1_0}, along with the baseline results for the sake of comparsion. It would appear that the strategy is, in general, effective, though not universal - for example, the scores on \env{Assault} do not quite reach the performance peak.
 
-\begin{figure}[t]
+\begin{figure}
   \centering
   \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/adaptive_v1_0.pdf}
   \caption{}
@@ -325,25 +322,54 @@ The results can be found in \autoref{fig:adaptive_v1_0}, along with the baseline
 
 Given that the idea behind this approach is to minimize model overfitting by monitoring validation loss, our next step is to look at the validation loss. The results (\autoref{fig:adaptive_v1_0_loss}) do not seem to imply that the method has a consistent positive effect on the model validation loss. In fact, if we compare validation loss curves and the current ratio values (\autoref{fig:adaptive_v1_0_curves}), the relationship is not precisely what we would expect. As noted previously, the idea behind the method is to increase update ratio as long as the validation loss decreases, and vice versa. In short time scales, specifically the $2 \times 10^3$ environment steps between each ratio update, this does occur, but across longer time spans, the coupling breaks. For example, for \env{MsPacman} and the RNG seed of $1$, the validation loss decreases up until the timestep of $200 \times 10^3$, yet the ratio keeps increasing. After the jump, presumably due to the influence of a new validation episode in the buffer, the loss value starts decreasing, and the ratio decreases.
 
-\begin{figure}[t]
+\begin{figure}
   \centering
   \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/adaptive_v1_0.val_loss.pdf}
   \caption{}
   \label{fig:adaptive_v1_0_loss}
 \end{figure}
 
-\begin{figure}[t]
+\begin{figure}
   \centering
   \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/adaptive_v1_0.curves.pdf}
   \caption{}
   \label{fig:adaptive_v1_0_curves}
 \end{figure}
 
+\subsubsection{Decoupled adaptive ratio system}
+
+It appears, then, that the theoretical underpinnings behind the effectiveness of this approach are not quite as clear as one would hope. Despite this, we believe one can nevertheless improve upon this method in a principled fashion. Drawing on the results concerning the decoupling of the optimization rates for the model and the RL modules, we propose a similar decoupling in the adaptive regime. In particular, we will make only the model update ratio adaptive, and keep the RL update ratio fixed at a pre-defined value. The results (\autoref{fig:adaptive_wm_v1_0}) indicate, that the decoupling has a positive impact on the agent performance.
+
+\begin{figure}
+  \centering
+  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/adaptive_wm_v1_0.pdf}
+  \caption{}
+  \label{fig:adaptive_wm_v1_0}
+\end{figure}
+
 \section{Architectural changes}
 
 \subsection{Data augmentation}
 
+Incorporating data augmentation into an RL framework can be done in non-trivial ways. DrQ, for example, combines transforming the input, averaging the Q functions across multiple augmented samples, and averaging the Q targets. In the context of model-based RL, one could develop similar schemes for both the world model and the RL modules, e.g. by averaging posterior state distributions over multiple image augmentations. This, however, would require changing the implementation of these modules, whereas our goal is to make the framework as modular as possible. Therefore, we opt to only augment the input, and forego the averaging of various quantities in question.
 
+We follow the original paper in choosing random shifts as the image transformation to apply. The augmentations will be applied to both images in the batch for the model optimization, and the batch used to generate the initial states for the imagined rollouts. As far as the training recipe is concerned, we will start with a fixed-ratio setup in order to compare the data-augmented recipe with a non-data-augmented baseline.
+
+\paragraph{Results} The comparison of the test episode returns for the two variants (\autoref{fig:data_aug}) shows, that, with the base settings, the addition of data augmentation \emph{degrades} performance, excepting perhaps \env{MsPacman}. As the main idea behind data augmentation is the reduction of model overfitting, we will next investigate the training and the validation loss curves for the model. The analysis of the final validation loss for each variant (\autoref{fig:data_aug_val_loss}) reveals, that not only is it significantly higher compared to the baseline variant, but it also does not improve as the update frequency increases (equivalently, $K$ decreases).
+
+\begin{figure}
+  \centering
+  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/data_aug.pdf}
+  \caption{}
+  \label{fig:data_aug}
+\end{figure}
+
+\begin{figure}
+  \centering
+  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/data_aug.val_loss.pdf}
+  \caption{}
+  \label{fig:data_aug_val_loss}
+\end{figure}
 
 \subsection{Choice of the RL algorithm choice}
 
