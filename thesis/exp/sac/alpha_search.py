@@ -32,13 +32,12 @@ def sac_alpha_search(
         alphas = alphas.tolist()
 
         for (env, seed), alpha in zip(envs_seeds, alphas):
-            suffix2 = f"-round={round}" + suffix if round > 1 else suffix
             opts = {
                 "env": {"type": "atari", "atari.env_id": env},
                 "repro.seed": seed,
                 "_ratio": 4,
                 "_alpha": alpha,
-                "run.dir": f"runs/{test_name}/{env}-seed={seed}" + suffix2,
+                "run.dir": f"runs/{test_name}/{env}-seed={seed}-round={round}" + suffix,
                 **common_opts,
             }
             args = [*common_args, "-o", format_opts(opts)]
