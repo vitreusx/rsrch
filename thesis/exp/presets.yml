@@ -307,7 +307,6 @@ thesis:
   sac:
     base:
       data.loaders.dreamer_rl:
-        slice_len: 2
         keep_first_reward: false
       rl:
         loader: dreamer_rl
@@ -315,6 +314,7 @@ thesis:
         sac:
           num_qf: 2
           gamma: 0.999
+          gae_lambda: 0.95
           alpha:
             adaptive: false
             value: 1.0
