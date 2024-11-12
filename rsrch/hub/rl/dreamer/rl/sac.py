@@ -218,12 +218,23 @@ class Trainer(TrainerBase):
                 gamma = cont * self.cfg.gamma
                 target = gen_adv_est(batch.reward, vt, gamma, self.cfg.gae_lambda)[1]
 
+        with self.autocast():
+            q_losses = []
+            for qf in self.qf:
+                qf_pred = over_seq(qf)(batch.obs[:-1], batch.act)
+                q_loss = (weight[:-1] * (qf_pred - target).square()).mean()
+                q_losses.append(q_loss)
+            q_loss = 0.5 * torch.stack(q_losses).sum()
+
+        self.qf_opt.step(q_loss, self.cfg.clip_grad)
+        self.qf_polyak.step()
+
         if self._discrete:
             with self.autocast():
                 policy: D.Categorical
                 actor_losses = self.alpha.value * policy.log_probs - min_q
                 actor_losses = (policy.probs * actor_losses).sum(-1)
-                actor_loss = actor_losses.mean()
+                actor_loss = (weight * actor_losses).mean()
         else:
             with self.autocast():
                 act = policy.rsample()
@@ -242,17 +253,6 @@ class Trainer(TrainerBase):
 
         if self.alpha.adaptive:
             self.alpha.opt_step(entropy)
-
-        with self.autocast():
-            q_losses = []
-            for qf in self.qf:
-                qf_pred = over_seq(qf)(batch.obs[:-1], batch.act)
-                q_loss = (weight[:-1] * (qf_pred - target).square()).mean()
-                q_losses.append(q_loss)
-            q_loss = 0.5 * torch.stack(q_losses).sum()
-
-        self.qf_opt.step(q_loss, self.cfg.clip_grad)
-        self.qf_polyak.step()
 
         self.opt_iter += 1
 
