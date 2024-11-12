@@ -399,7 +399,7 @@ We follow CleanRL's implementations of SAC and PPO for Atari, with a couple of i
   \item A2C uses generalized advantage estimation to compute the targets for the value functions, whereas CleanRL's SAC implementation uses a one-step bootstrap. To ensure fair comparison, we implement a ``soft'' version of the generalized advantage estimation in SAC. [See Appendix for more details?]
 \end{enumerate}
 
-To start off, let us test a configuration of SAC analogous to the default one for A2C - namely, with the same entropy coefficient, actor/critic optimizers, sequence length and batch size etc. The two major differences are: the use of the soft variants for the value and $Q$ functions, and the use of two $Q$ functions and taking the minimum of them.
+To start off, let us test a configuration of SAC analogous to the default one for A2C - namely, with the same entropy coefficient, actor/critic optimizers, sequence length and batch size etc. The major differences are the use of the soft variants for the value and $Q$ functions, and the use of two $Q$ functions and taking the minimum of them.
 
 
 

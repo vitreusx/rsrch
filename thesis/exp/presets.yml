@@ -388,3 +388,7 @@ thesis:
         value: exp((20e3, 0.99), (400e3, 2.5e-2), 25e3)
         of: env_step
       _mode: rel
+
+    no_min_q:
+      $extends: [ent_sched_exp]
+      rl.sac.num_qf: 1
