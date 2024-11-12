@@ -29,6 +29,18 @@ class OneHot(Distribution, Tensorlike):
         value = value.type_as(self.index_dist._param)
         return value
 
+    @property
+    def logits(self):
+        return self.index_dist.logits
+
+    @property
+    def log_probs(self):
+        return self.index_dist.log_probs
+
+    @property
+    def probs(self):
+        return self.index_dist.probs
+
     def sample(self, sample_shape=()):
         indices = self.index_dist.sample(sample_shape)
         value = F.one_hot(indices, self.index_dist.num_events)

@@ -166,7 +166,7 @@ class Trainer(TrainerBase):
         self.qf_polyak = polyak.Polyak(self.qf, self.qf_t, **cfg.qf.polyak)
         self.alpha = alpha.Alpha(cfg.alpha, act_space, self.device, make_sched)
 
-        self._discrete = isinstance(self.qf, DiscQf)
+        self._discrete = isinstance(self.qf[0], DiscQf)
 
         self._actor_ref = plasticity.save_ref_state(self.actor)
         self._qf_ref = plasticity.save_ref_state(self.qf[0])
@@ -204,7 +204,7 @@ class Trainer(TrainerBase):
                     for idx in range(1, self.cfg.num_qf):
                         min_q_idx = over_seq(self.qf_t[idx])(batch.obs)
                         min_q = torch.min(min_q, min_q_idx)
-                    policy: D.Categorical
+                    policy: D.Categorical | D.OneHot
                     q_values = min_q - self.alpha.value * policy_sg.log_probs
                     vt = (policy_sg.probs * q_values).sum(-1)
                 else:
