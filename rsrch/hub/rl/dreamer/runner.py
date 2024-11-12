@@ -407,6 +407,7 @@ class Runner:
                 cfg=rl_cfg,
                 actor=self.actor,
                 compute_dtype=self.compute_dtype,
+                make_sched=self._make_sched,
             )
 
         elif rl_type == "sac":

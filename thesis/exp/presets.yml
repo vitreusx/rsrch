@@ -392,3 +392,18 @@ thesis:
     no_min_q:
       $extends: [ent_sched_exp]
       rl.sac.num_qf: 1
+
+  ent_sched:
+    $extends: [baseline]
+    _ratio: 4
+    rl.a2c.alpha:
+      adaptive: true
+      value: 1.0
+      target:
+        value: exp((20e3, 0.99), (400e3, 2.5e-2), 25e3)
+        of: env_step
+      mode: rel
+      opt:
+        type: adam
+        lr: 2.5e-3
+        eps: 1e-5

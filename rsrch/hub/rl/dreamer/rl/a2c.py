@@ -18,6 +18,7 @@ from rsrch.rl.utils import polyak
 from rsrch.utils import sched
 
 from ..common import nets, plasticity
+from ..common.config import MakeSched, Sched
 from ..common.trainer import ScaledOptimizer, TrainerBase
 from ..common.types import Slices
 from ..common.utils import autocast, find_class, null_ctx
@@ -125,6 +126,7 @@ class Trainer(TrainerBase):
         cfg: Config,
         actor: Actor,
         compute_dtype: torch.dtype | None,
+        make_sched: MakeSched | None = None,
     ):
         super().__init__(compute_dtype)
         self.cfg = cfg
@@ -155,7 +157,7 @@ class Trainer(TrainerBase):
         self.rew_norm = nets.StreamNorm(**cfg.rew_norm)
 
         device = next(actor.parameters()).device
-        self.alpha = alpha.Alpha(cfg.alpha, actor.act_space, device)
+        self.alpha = alpha.Alpha(cfg.alpha, actor.act_space, device, make_sched)
 
         self._actor_ref = plasticity.save_ref_state(self.actor)
         self._critic_ref = plasticity.save_ref_state(self.critic)
