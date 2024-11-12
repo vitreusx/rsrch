@@ -317,7 +317,7 @@ thesis:
           gae_lambda: 0.95
           alpha:
             adaptive: false
-            value: 1.0
+            value: 1e-3
           clip_grad: 1e2
           actor:
             opt:
