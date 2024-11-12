@@ -102,7 +102,7 @@ class Runner:
                 self.sdk = rl.sdk.wrappers.OneHotActions(self.sdk)
 
         self.exp = Experiment(
-            project="dreamer",
+            project="dreamerx",
             prefix=self.sdk.id,
             run_dir=self.cfg.run.dir,
             config=asdict(self.cfg),

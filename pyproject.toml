@@ -4,6 +4,7 @@ version = "0.1.0"
 description = ""
 authors = ["vitreusx <jakub_bednarz@protonmail.com>"]
 readme = "README.md"
+packages = [{ include = "rsrch" }, { include = "dreamerx" }]
 
 [tool.poetry.dependencies]
 python = "^3.10"

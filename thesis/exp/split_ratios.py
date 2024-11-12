@@ -1,9 +1,9 @@
-from itertools import product
-from pathlib import Path
-from .utils import *
-
 import argparse
 import shlex
+from itertools import product
+from pathlib import Path
+
+from .utils import *
 
 
 def split_ratios(test_name, suffix=""):
@@ -46,7 +46,7 @@ def main():
 
     all_tests = split_ratios(args.name)
 
-    prefix = ["python", "-m", "rsrch.hub.rl.dreamer"]
+    prefix = ["python", "-m", "dreamerx"]
     for test in all_tests:
         print(shlex.join([*prefix, *test]))
 

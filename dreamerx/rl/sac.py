@@ -8,8 +8,8 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 
 import rsrch.distributions as D
+from dreamerx.common import plasticity
 from rsrch import spaces
-from rsrch.hub.rl.dreamer.common import plasticity
 from rsrch.nn import dh
 from rsrch.nn.utils import frozen, over_seq, safe_mode
 from rsrch.rl.utils import polyak

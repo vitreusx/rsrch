@@ -45,7 +45,7 @@ def main():
 
     all_tests = adaptive_wm_ratio_v3(args.name)
 
-    prefix = ["python", "-m", "rsrch.hub.rl.dreamer"]
+    prefix = ["python", "-m", "dreamerx"]
     for test in all_tests:
         print(shlex.join([*prefix, *test]))
 

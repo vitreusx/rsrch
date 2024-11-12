@@ -57,7 +57,7 @@ def main():
 
     all_tests = sac_alpha_search(args.name, gen, args.mult)
 
-    prefix = ["python", "-m", "rsrch.hub.rl.dreamer"]
+    prefix = ["python", "-m", "dreamerx"]
     for test in all_tests:
         print(shlex.join([*prefix, *test]))
 

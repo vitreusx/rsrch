@@ -1,9 +1,9 @@
-from itertools import product
-from pathlib import Path
-from .utils import *
-
 import argparse
 import shlex
+from itertools import product
+from pathlib import Path
+
+from .utils import *
 
 
 def sanity_check(test_name, suffix=""):
@@ -42,7 +42,7 @@ def main():
 
     all_tests = sanity_check(args.name)
 
-    prefix = ["python", "-m", "rsrch.hub.rl.dreamer"]
+    prefix = ["python", "-m", "dreamerx"]
     for test in all_tests:
         print(shlex.join([*prefix, *test]))
 
