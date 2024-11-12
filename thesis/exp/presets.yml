@@ -306,6 +306,7 @@ thesis:
 
   sac:
     base:
+      $extends: [baseline]
       data.loaders.dreamer_rl:
         keep_first_reward: false
       rl:
@@ -349,14 +350,14 @@ thesis:
               dreamer_box: ${_.mlp}
 
     alpha_search:
-      $extends: [baseline, sac.base]
+      $extends: [base]
       _alpha: 1e-3
       rl.sac.alpha:
         adaptive: false
         value: ${_alpha}
 
     adaptive_ent:
-      $extends: [baseline, sac.base]
+      $extends: [base]
       _target: ~
       _mode: ~
       rl.sac.alpha:
