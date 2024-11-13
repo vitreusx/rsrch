@@ -452,13 +452,21 @@ class Runner:
             )
 
     def _setup_rl_val_loader(self):
+        cfg = self.cfg.data.loaders
         if self.cfg.rl.loader == "dreamer_rl":
             self.rl_val_loader = self._loader_ctor(data.DreamerRLLoader)(
-                self.cfg.data.loaders.dreamer_rl,
+                cfg.dreamer_rl,
                 real_slices=self.wm_val_step_loader,
                 wm=self.wm,
                 device=self.device,
                 compute_dtype=self.compute_dtype,
+            )
+            self.rl_val_iter = iter(self.rl_val_loader)
+        elif self.cfg.rl.loader == "real_rl":
+            self.rl_val_loader = self._loader_ctor(data.RealRLLoader)(
+                cfg.real_rl,
+                buf=self.buf,
+                sampler=self.val_ep_ids,
             )
             self.rl_val_iter = iter(self.rl_val_loader)
 

@@ -1,7 +1,9 @@
 no_model:
-  wm.type: ~
-  wm.loader: ~
-  rl.loader: slices_rl
+  wm:
+    type: ~
+    loader: ~
+  rl:
+    loader: real_rl
 
 grid_launch:
   run.interactive: false

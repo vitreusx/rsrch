@@ -6,12 +6,10 @@ sac:
       sac:
         num_qf: 2
         gamma: 0.99
+        gae_lambda: 0.95
         alpha:
           adaptive: true
           value: 1.0
-          target: auto
-          disc_scale: 0.75
-          cont_scale: 5e-2
           opt:
             type: adam
             lr: ${qf.opt.lr}
@@ -34,10 +32,13 @@ sac:
         env_id: HalfCheetah-v4
     data:
       capacity: 1e6
-      loaders.slices_rl:
+      loaders.real_rl:
         batch_size: 256
         slice_len: 2
     rl.sac:
+      alpha:
+        target: ${-1/math.log(2)}
+        mode: rel
       actor:
         encoder:
           type: box
@@ -45,6 +46,8 @@ sac:
             hidden: 256
             layers: 2
             act: relu
+        dist:
+          type: auto
         opt.lr: 3e-4
       qf:
         polyak:
@@ -76,13 +79,18 @@ sac:
         term_on_life_loss: true
     data:
       capacity: 1e6
-      loaders.slices_rl:
+      loaders.real_rl:
         batch_size: 64
         slice_len: 2
     rl.sac:
+      alpha:
+        target: 0.89
+        mode: rel
       actor:
         encoder:
           type: sac_image
+        dist:
+          type: auto
         opt:
           lr: 3e-4
           eps: 1e-4
