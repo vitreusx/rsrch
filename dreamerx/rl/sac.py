@@ -20,7 +20,7 @@ from ..common.trainer import ScaledOptimizer, TrainerBase
 from ..common.types import Slices
 from ..common.utils import to_camel_case
 from . import _alpha as alpha
-from ._utils import gen_adv_est
+from ._utils import gae_only_ret
 
 
 @dataclass
@@ -44,8 +44,7 @@ class Config:
     gae_lambda: float
     alpha: alpha.Config
     clip_grad: float | None
-    rew_fn: Literal["id", "clip", "tanh"] = "id"
-    rew_clip: tuple[float, float] | None = None
+    rew_fn: Literal["id", "sign", "tanh"] = "id"
 
 
 def layer_init(layer, bias_const=0.0):
@@ -186,6 +185,7 @@ class Trainer(TrainerBase):
 
     def opt_step(self, batch: Slices):
         batch = batch.detach()
+        obs, next_obs = batch.obs[:-1], batch.obs[1:]
 
         with torch.no_grad():
             cont = 1.0 - batch.term.float()
@@ -197,7 +197,7 @@ class Trainer(TrainerBase):
 
         with torch.no_grad():
             with self.autocast():
-                policy_sg = policy.detach()
+                next_policy = policy[1:].detach()
 
                 if self._discrete:
                     min_q = over_seq(self.qf_t[0])(batch.obs)
@@ -205,23 +205,24 @@ class Trainer(TrainerBase):
                         min_q_idx = over_seq(self.qf_t[idx])(batch.obs)
                         min_q = torch.min(min_q, min_q_idx)
                     policy: D.Categorical | D.OneHot
-                    q_values = min_q - self.alpha.value * policy_sg.log_probs
-                    vt = (policy_sg.probs * q_values).sum(-1)
+                    q_values = min_q[1:] - self.alpha.value * next_policy.log_probs
+                    next_v = (next_policy.probs * q_values).sum(-1)
                 else:
-                    next_act = policy_sg.sample()
-                    min_q = over_seq(self.qf_t[0])(batch.obs, next_act)
+                    next_act = next_policy.sample()
+                    min_q = over_seq(self.qf_t[0])(next_obs, next_act)
                     for idx in range(1, self.cfg.num_qf):
-                        min_q_idx = over_seq(self.qf_t[idx])(batch.obs, next_act)
+                        min_q_idx = over_seq(self.qf_t[idx])(next_obs, next_act)
                         min_q = torch.min(min_q, min_q_idx)
-                    vt = min_q - self.alpha.value * policy_sg.log_prob(next_act)
+                    next_v = min_q - self.alpha.value * next_policy.log_prob(next_act)
 
                 gamma = cont * self.cfg.gamma
-                target = gen_adv_est(batch.reward, vt, gamma, self.cfg.gae_lambda)[1]
+                reward = self._transform_reward(batch.reward)
+                target = gae_only_ret(reward, next_v, gamma[1:], self.cfg.gae_lambda)
 
         with self.autocast():
             q_losses = []
             for qf in self.qf:
-                qf_pred = over_seq(qf)(batch.obs[:-1], batch.act)
+                qf_pred = over_seq(qf)(obs, batch.act)
                 q_loss = (weight[:-1] * (qf_pred - target).square()).mean()
                 q_losses.append(q_loss)
             q_loss = 0.5 * torch.stack(q_losses).sum()
@@ -234,22 +235,22 @@ class Trainer(TrainerBase):
                 policy: D.Categorical
                 actor_losses = self.alpha.value * policy.log_probs - min_q
                 actor_losses = (policy.probs * actor_losses).sum(-1)
-                actor_loss = (weight * actor_losses).mean()
+                actor_loss = (weight * actor_losses)[:-1].mean()
         else:
             with self.autocast():
-                act = policy.rsample()
+                act = policy[:-1].rsample()
                 with frozen(self.qf):
-                    min_q = over_seq(self.qf[0])(batch.obs, act)
+                    min_q = over_seq(self.qf[0])(obs, act)
                     for idx in range(1, self.cfg.num_qf):
-                        min_q_idx = over_seq(self.qf[idx])(batch.obs, act)
+                        min_q_idx = over_seq(self.qf[idx])(obs, act)
                         min_q = torch.min(min_q, min_q_idx)
                 actor_losses = self.alpha.value * policy.log_prob(act) - min_q
-                actor_loss = (weight * actor_losses).mean()
+                actor_loss = (weight[:-1] * actor_losses).mean()
 
         self.actor_opt.step(actor_loss, self.cfg.clip_grad)
 
         with torch.no_grad():
-            entropy = over_seq(self.actor)(batch.obs).entropy()
+            entropy = policy.entropy()
 
         if self.alpha.adaptive:
             self.alpha.opt_step(entropy)
@@ -266,6 +267,14 @@ class Trainer(TrainerBase):
             }
 
         return mets
+
+    def _transform_reward(self, reward: Tensor):
+        if self.cfg.rew_fn == "tanh":
+            return torch.tanh(reward)
+        elif self.cfg.rew_fn == "sign":
+            return torch.sign(reward)
+        elif self.cfg.rew_fn == "id":
+            return reward
 
     def check_plasticity(self, batch: Slices):
         obs = batch.obs.flatten(0, 1)

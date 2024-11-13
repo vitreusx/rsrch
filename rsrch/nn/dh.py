@@ -11,6 +11,13 @@ from rsrch import spaces
 from .utils import tf_init_
 
 
+def cleanrl_init_(layer: nn.Module, bias_const: float = 0.0):
+    if isinstance(layer, (nn.Linear, nn.Conv2d, nn.ConvTranspose2d)):
+        nn.init.kaiming_normal_(layer.weight)
+        if layer.bias is not None:
+            nn.init.constant_(layer.bias, bias_const)
+
+
 def get_out_features(space: spaces.torch.Tensor):
     if isinstance(space, spaces.torch.Image):
         return space.num_channels
@@ -89,7 +96,7 @@ class TruncNormal(nn.Module):
         std_type: Literal["exp", "softplus", "sigmoid2"] = "sigmoid2",
         init_std: float = 0.0,
         min_std: float = 0.1,
-        init: Literal["torch", "tf"] = "torch",
+        init: Literal["torch", "tf", "cleanrl"] = "torch",
     ):
         super().__init__()
         self.space = space
@@ -108,6 +115,8 @@ class TruncNormal(nn.Module):
 
         if init == "tf":
             self.apply(tf_init_)
+        elif init == "cleanrl":
+            self.apply(cleanrl_init_)
 
     def forward(self, input: Tensor):
         mean: Tensor = self.mean_fc(input)
@@ -173,13 +182,16 @@ class Categorical(nn.Module):
         self,
         layer_ctor: Callable[[int], nn.Module],
         space: spaces.torch.Discrete,
+        init: Literal["torch", "tf", "cleanrl"] = "torch",
     ):
         super().__init__()
         self.space = space
         self.vocab_size = int(space.n)
         self.layer = layer_ctor(self.vocab_size)
-        if getattr(self.layer, "bias") is not None:
-            torch.nn.init.zeros_(self.layer.bias)
+        if init == "tf":
+            tf_init_(self.layer)
+        elif init == "cleanrl":
+            cleanrl_init_(self.layer)
         self._event_dims = len(space.shape)
 
     def forward(self, input: Tensor):
