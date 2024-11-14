@@ -51,7 +51,7 @@ sac:
         dist:
           type: trunc_normal
           trunc_normal:
-            init: cleanrl
+            init: cleanrl_sac
         opt.lr: 3e-4
       qf:
         polyak:
@@ -96,7 +96,7 @@ sac:
         dist:
           type: cat
           cat:
-            init: cleanrl
+            init: cleanrl_sac
         opt:
           lr: 3e-4
           eps: 1e-4
@@ -115,10 +115,6 @@ sac:
       - train_loop:
           until: { n: 5e6, of: agent_step }
           tasks:
-            - do_val_epoch: ~
-              every: 100e3
-            - do_rl_val_step: ~
-              every: { n: 16, of: rl_opt_step }
             - do_rl_opt_step: ~
               every: { n: 4, of: agent_step }
             - do_env_step

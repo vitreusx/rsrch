@@ -1,6 +1,7 @@
 from collections import namedtuple
 from dataclasses import dataclass
 from functools import partial
+from typing import Literal, NamedTuple
 
 import numpy as np
 import torch
@@ -16,6 +17,7 @@ from ..common.trainer import ScaledOptimizer, TrainerBase
 from ..common.types import Slices
 from ..common.utils import find_class
 from . import _alpha as alpha
+from ._utils import gen_adv_est
 
 
 @dataclass
@@ -34,22 +36,7 @@ class Config:
     alpha: alpha.Config
     vf_coef: float
     share_encoder: bool
-
-
-def gen_adv_est(
-    reward: Tensor,
-    value: Tensor,
-    gamma: float,
-    gae_lambda: float,
-):
-    delta = (reward + gamma * value[1:]) - value[:-1]
-    adv = [delta[-1]]
-    for t in reversed(range(1, len(reward))):
-        adv.append(delta[t - 1] + gamma * gae_lambda * adv[-1])
-    adv.reverse()
-    adv = torch.stack(adv)
-    ret = value[:-1] + adv
-    return adv, ret
+    rew_fn: Literal["id", "sign", "tanh"]
 
 
 class Actor(nn.Module):
@@ -112,7 +99,14 @@ class Critic(nn.Module):
         return self.head(self.encoder(state))
 
 
-TrainerOutput = namedtuple("TrainerOutput", ("loss", "metrics"))
+class Data(NamedTuple):
+    obs: Tensor
+    act: Tensor
+    logp: Tensor
+    adv: Tensor
+    ret: Tensor
+    val: Tensor
+    weight: Tensor
 
 
 class Trainer(TrainerBase):
@@ -155,54 +149,25 @@ class Trainer(TrainerBase):
         with torch.no_grad():
             with self.autocast():
                 if isinstance(batch, Slices):
-                    obs = batch.obs[:-1]
-                    act = batch.act
-                    policy, val = over_seq(self._forward_ac)(batch.obs)
-                    logp = policy[:-1].log_prob(batch.act)
-                    cont = 1.0 - batch.term.float()
-                    val, reward = val * cont, batch.reward * cont[:-1]
-                    adv, ret = gen_adv_est(
-                        reward, val, self.cfg.gamma, self.cfg.gae_lambda
-                    )
-                    val = val[:-1]
-
-                    tmp_ = (x.flatten(0, 1) for x in (obs, act, logp, adv, ret, val))
-                    obs, act, logp, adv, ret, val = tmp_
-
+                    data = self._process_data_equal_size(batch)
                 else:
-                    obs, act, logp, adv, ret, val = [], [], [], [], [], []
-                    for seq in batch:
-                        obs.append(seq.obs[:-1])
-                        act.append(seq.act)
-                        policy, value = self._forward_ac(seq.obs)
-                        logp_ = policy[:-1].log_prob(seq.act)
-                        logp.append(logp_)
-                        cont = 1.0 - seq.term.float()
-                        reward = seq.reward.sign()
-                        value, reward = value * cont, reward * cont[:-1]
-                        val.append(value[:-1])
-                        adv_, ret_ = gen_adv_est(
-                            reward, value, self.cfg.gamma, self.cfg.gae_lambda
-                        )
-                        adv.append(adv_)
-                        ret.append(ret_)
-
-                    tmp_ = (torch.cat(x) for x in (obs, act, logp, adv, ret, val))
-                    obs, act, logp, adv, ret, val = tmp_
+                    data = self._process_data_var_size(batch)
 
         for _ in range(self.cfg.update_epochs):
-            perm = torch.randperm(len(val))
+            perm = torch.randperm(len(data.val))
             for idxes in perm.split(self.cfg.update_batch):
                 if len(idxes) < 0.5 * self.cfg.update_batch:
                     continue
 
+                weight = data.weight[idxes]
+
                 with self.autocast():
-                    new_policy, new_value = self._forward_ac(obs[idxes])
-                    new_logp = new_policy.log_prob(act[idxes])
-                    log_ratio = new_logp - logp[idxes]
+                    new_policy, new_value = self._forward_ac(data.obs[idxes])
+                    new_logp = new_policy.log_prob(data.act[idxes])
+                    log_ratio = new_logp - data.logp[idxes]
                     ratio = log_ratio.exp()
 
-                    adv_ = adv[idxes]
+                    adv_ = data.adv[idxes]
                     if self.cfg.adv_norm:
                         true_adv = adv_.clone()
                         adv_ = (adv_ - adv_.mean()) / (adv_.std() + 1e-8)
@@ -213,20 +178,23 @@ class Trainer(TrainerBase):
                     t2 = -adv_ * ratio.clamp(
                         1 - self.cfg.clip_coef, 1 + self.cfg.clip_coef
                     )
-                    policy_loss = torch.max(t1, t2).mean()
+                    policy_loss = (weight * torch.max(t1, t2)).mean()
 
                     if self.cfg.clip_vloss:
-                        clipped_v = val[idxes] + (new_value - val[idxes]).clamp(
-                            -self.cfg.clip_coef, self.cfg.clip_coef
-                        )
-                        v_loss1 = (new_value - ret[idxes]).square()
-                        v_loss2 = (clipped_v - ret[idxes]).square()
-                        v_loss = 0.5 * torch.max(v_loss1, v_loss2).mean()
+                        clipped_v = data.val[idxes] + (
+                            new_value - data.val[idxes]
+                        ).clamp(-self.cfg.clip_coef, self.cfg.clip_coef)
+                        v_loss1 = (new_value - data.ret[idxes]).square()
+                        v_loss2 = (clipped_v - data.ret[idxes]).square()
+                        v_loss = 0.5 * (weight * torch.max(v_loss1, v_loss2)).mean()
                     else:
-                        v_loss = 0.5 * (new_value - ret[idxes]).square().mean()
+                        v_loss = (
+                            0.5
+                            * (weight * (new_value - data.ret[idxes]).square()).mean()
+                        )
 
                     new_ent = new_policy.entropy()
-                    ent_loss = self.alpha.value * -new_ent.mean()
+                    ent_loss = self.alpha.value * (weight * -new_ent).mean()
 
                     loss = policy_loss + ent_loss + self.cfg.vf_coef * v_loss
 
@@ -241,7 +209,80 @@ class Trainer(TrainerBase):
                 "policy_loss": policy_loss,
                 "entropy": new_ent.mean(),
                 "v_loss": v_loss,
-                "value": val.mean(),
+                "value": data.val.mean(),
             }
 
         return mets
+
+    def _process_data_equal_size(self, batch: Slices):
+        obs = batch.obs[:-1]
+        act = batch.act
+        reward = self._transform_reward(batch.reward)
+
+        cont = 1.0 - batch.term.float()
+        weight = torch.cat([torch.ones_like(cont[:1]), cont[:-1]])
+        weight = torch.cumprod(weight, 0)[:-1]
+
+        policy, val = over_seq(self._forward_ac)(batch.obs)
+        logp = policy[:-1].log_prob(batch.act)
+
+        gamma = self.cfg.gamma * cont
+        adv, ret = gen_adv_est(reward, val, gamma, self.cfg.gae_lambda)
+        val = val[:-1]
+
+        obs = obs.flatten(0, 1)
+        act = act.flatten(0, 1)
+        logp = logp.flatten(0, 1)
+        adv = adv.flatten(0, 1)
+        ret = ret.flatten(0, 1)
+        val = val.flatten(0, 1)
+        weight = weight.flatten(0, 1)
+
+        return Data(obs, act, logp, adv, ret, val, weight)
+
+    def _process_data_var_size(self, batch: list[Slices]):
+        batch_size = len(batch)
+        lengths = torch.tensor([len(seq.obs) for seq in batch])
+        end = torch.cumsum(lengths, 0)
+        start = end - lengths
+
+        obs = torch.cat([seq.obs[:-1] for seq in batch])
+        all_obs = torch.cat([seq.obs for seq in batch])
+        act = torch.cat([seq.act for seq in batch])
+
+        policy, value = self._forward_ac(all_obs)
+
+        policy = torch.cat(
+            [policy[start[idx] : end[idx] - 1] for idx in range(batch_size)]
+        )
+        logp = policy.log_prob(act)
+
+        advs, rets, vals, weights = [[] for _ in range(4)]
+        for idx, seq in enumerate(batch):
+            cont = 1.0 - seq.term.float()
+            seq_wt = torch.cat([torch.ones_like(cont[:1]), cont])
+            seq_wt = torch.cumprod(seq_wt, 0)
+
+            gamma = self.cfg.gamma * cont
+            seq_val = value[start[idx] : end[idx]]
+            reward = self._transform_reward(seq.reward)
+            adv, ret = gen_adv_est(reward, seq_val, gamma, self.cfg.gae_lambda)
+            advs.append(adv)
+            rets.append(ret)
+            vals.append(seq_val[:-1])
+            weights.append(seq_wt[:-1])
+
+        adv = torch.cat(advs)
+        ret = torch.cat(rets)
+        val = torch.cat(vals)
+        weight = torch.cat(weights)
+
+        return Data(obs, act, logp, adv, ret, val, weight)
+
+    def _transform_reward(self, reward: Tensor):
+        if self.cfg.rew_fn == "sign":
+            return torch.sign(reward)
+        elif self.cfg.rew_fn == "tanh":
+            return torch.tanh(reward)
+        elif self.cfg.rew_fn == "id":
+            return reward

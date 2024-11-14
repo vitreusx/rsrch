@@ -11,9 +11,16 @@ from rsrch import spaces
 from .utils import tf_init_
 
 
-def cleanrl_init_(layer: nn.Module, bias_const: float = 0.0):
+def cleanrl_sac_init_(layer: nn.Module, bias_const: float = 0.0):
     if isinstance(layer, (nn.Linear, nn.Conv2d, nn.ConvTranspose2d)):
         nn.init.kaiming_normal_(layer.weight)
+        if layer.bias is not None:
+            nn.init.constant_(layer.bias, bias_const)
+
+
+def cleanrl_ppo_init_(layer, std=math.sqrt(2), bias_const=0.0):
+    if isinstance(layer, (nn.Linear, nn.Conv2d, nn.ConvTranspose2d)):
+        nn.init.orthogonal_(layer.weight, std)
         if layer.bias is not None:
             nn.init.constant_(layer.bias, bias_const)
 
@@ -96,7 +103,7 @@ class TruncNormal(nn.Module):
         std_type: Literal["exp", "softplus", "sigmoid2"] = "sigmoid2",
         init_std: float = 0.0,
         min_std: float = 0.1,
-        init: Literal["torch", "tf", "cleanrl"] = "torch",
+        init: Literal["torch", "tf"] = "torch",
     ):
         super().__init__()
         self.space = space
@@ -115,8 +122,8 @@ class TruncNormal(nn.Module):
 
         if init == "tf":
             self.apply(tf_init_)
-        elif init == "cleanrl":
-            self.apply(cleanrl_init_)
+        elif init != "torch":
+            raise ValueError(init)
 
     def forward(self, input: Tensor):
         mean: Tensor = self.mean_fc(input)
@@ -182,17 +189,20 @@ class Categorical(nn.Module):
         self,
         layer_ctor: Callable[[int], nn.Module],
         space: spaces.torch.Discrete,
-        init: Literal["torch", "tf", "cleanrl"] = "torch",
+        init: Literal["torch", "tf", "cleanrl_sac", "cleanrl_ppo"] = "torch",
     ):
         super().__init__()
         self.space = space
         self.vocab_size = int(space.n)
         self.layer = layer_ctor(self.vocab_size)
+        self._event_dims = len(space.shape)
+
         if init == "tf":
             tf_init_(self.layer)
-        elif init == "cleanrl":
-            cleanrl_init_(self.layer)
-        self._event_dims = len(space.shape)
+        elif init == "cleanrl_sac":
+            cleanrl_sac_init_(self.layer)
+        elif init == "cleanrl_ppo":
+            cleanrl_ppo_init_(self.layer, std=1e-2)
 
     def forward(self, input: Tensor):
         logits: Tensor = self.layer(input)
