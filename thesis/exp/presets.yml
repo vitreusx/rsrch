@@ -273,6 +273,14 @@ thesis:
           drq:
             max_shift: 2
 
+    sweep:
+      $extends: [baseline]
+      _drq_config: {}
+      data.loaders.dreamer_wm:
+        augment:
+          type: drq
+          drq: ${_drq_config}
+
   warm_start_actor:
     $extends: [base]
     _ckpt_path: ~

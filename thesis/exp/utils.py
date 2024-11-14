@@ -32,3 +32,6 @@ format_opts = OneLineYaml.dumps
 
 # A subset of 3 games, which are (1) sufficiently monotonic to properly evaluate the speedup to be achieved, (2) are most predictive of the performance on Atari-100k subset of games.
 A100k_MONO = ["Assault", "CrazyClimber", "MsPacman"]
+
+
+PRESET_PATH = "thesis/exp/presets.yml"

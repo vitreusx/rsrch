@@ -4,10 +4,12 @@ from dataclasses import dataclass
 from queue import Queue
 from typing import Any, Callable, Iterator, Literal, Sequence
 
+import kornia.augmentation as aug
 import numpy as np
 import torch
+import torch.nn.functional as F
 from kornia.geometry.transform import translate
-from torch import Tensor
+from torch import Tensor, nn
 from torch.utils import data
 from torch.utils.data import DataLoader
 
@@ -80,11 +82,45 @@ class BatchWM:
         )
 
 
+class Intensity(nn.Module):
+    def __init__(self, scale: float):
+        super().__init__()
+        self.scale = scale
+
+    def forward(self, x: Tensor):
+        r = torch.randn((x.size(0), 1, 1, 1), device=x.device)
+        noise = 1.0 + (self.scale * r.clamp(-2.0, 2.0))
+        return x * noise
+
+
+class RandomShift(nn.Module):
+    def __init__(self, shift: float):
+        super().__init__()
+        self.shift = shift
+
+    def forward(self, x: Tensor):
+        h, w = x.shape[-2:]
+        x = F.pad(x, (self.shift, self.shift), mode="replicate")
+        shifts = torch.randint(
+            low=-self.shift,
+            high=self.shift + 1,
+            size=(x.shape[0], 2),
+            dtype=x.dtype,
+        )
+        x = translate(x, shifts, mode="nearest")
+        x = x[..., self.shift : -self.shift, self.shift : -self.shift]
+        return x
+
+
 @dataclass
 class Augment:
     @dataclass
     class DrQ:
+        type: Literal["shift", "cutout", "hflip", "vflip", "rotate", "intensity"]
         max_shift: int = 4
+        apply_prob: float = 1.0
+        rotate_deg: float = 5.0
+        intensity_scale: float = 5e-2
 
     type: Literal["none", "drq"]
     drq: DrQ | None = None
@@ -113,9 +149,24 @@ class DreamerWMLoader(data.IterableDataset):
         self.prioritize_ends = prioritize_ends
         self.pin_memory = pin_memory
 
-        self.augment = augment
-        if self.augment is None:
-            self.augment = Augment(type="none")
+        if augment is None or augment.type == "none":
+            self.augment = nn.Identity()
+        elif augment.type == "drq":
+            cfg = augment.drq
+            if cfg.type == "shift":
+                self.augment = RandomShift(cfg.max_shift)
+            elif cfg.type == "cutout":
+                self.augment = aug.RandomErasing(p=cfg.apply_prob)
+            elif cfg.type == "hflip":
+                self.augment = aug.RandomHorizontalFlip(p=cfg.apply_prob)
+            elif cfg.type == "vflip":
+                self.augment = aug.RandomVerticalFlip(p=cfg.apply_prob)
+            elif cfg.type == "rotate":
+                self.augment = aug.RandomRotation(
+                    degrees=cfg.rotate_deg, p=cfg.apply_prob
+                )
+            elif cfg.type == "intensity":
+                self.augment = Intensity(cfg.intensity_scale)
 
         if isinstance(subseq_len, int):
             self.minlen, self.maxlen = subseq_len, subseq_len
@@ -226,7 +277,7 @@ class DreamerWMLoader(data.IterableDataset):
                     act.append(undef_act)
 
         obs = torch.stack(obs)
-        obs = self._augment(obs)
+        obs = self.augment(obs)
         obs = obs.reshape(seq_len, batch_size, *obs.shape[1:])
         act = torch.stack(act)
         act = act.reshape(seq_len, batch_size, *act.shape[1:])
@@ -243,19 +294,6 @@ class DreamerWMLoader(data.IterableDataset):
             seq=seq,
             **{k: [item[k] for item in batch] for k in ("index", "h_0", "end_pos")},
         )
-
-    def _augment(self, obs: Tensor):
-        if self.augment.type == "drq":
-            cfg = self.augment.drq
-            batch_size = obs.shape[0]
-            shifts = torch.randint(
-                low=-cfg.max_shift,
-                high=cfg.max_shift + 1,
-                size=(batch_size, 2),
-                dtype=obs.dtype,
-            )
-            obs = translate(obs, shifts, mode="nearest")
-        return obs
 
 
 class RealRLLoader(data.IterableDataset):

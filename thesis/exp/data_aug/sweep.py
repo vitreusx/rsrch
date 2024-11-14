@@ -3,32 +3,39 @@ import shlex
 from itertools import product
 from pathlib import Path
 
-from .utils import *
+from ..utils import *
 
 
-def adaptive_wm_ratio_v1_0(test_name, suffix=""):
+def data_aug_sweep(test_name, suffix=""):
     all_tests = []
 
-    preset_file = Path(__file__).parent / "presets.yml"
     common_args = [
         "-P",
         PRESET_PATH,
         "-p",
-        "thesis.adaptive_ratio.wm_v1",
+        "thesis.data_aug.sweep",
         "grid_launch",
     ]
     common_opts = {}
 
     envs = A100k_MONO
     seeds = [*range(5)]
-    rl_ratios = [2, 4, 8]
+    ratio = 8
+    drq_configs = {
+        "cutout": dict(type="cutout", apply_prob=0.5),
+        "vflip": dict(type="vflip", apply_prob=0.1),
+        "rotate": dict(type="rotate", rotate_deg=5.0),
+        "intensity": dict(type="intensity", intensity_scale=5e-2),
+    }
+    drq_configs = [*drq_configs.items()]
 
-    for env, rl_ratio, seed in product(envs, rl_ratios, seeds):
+    for env, (drq_type, drq_config), seed in product(envs, drq_configs, seeds):
         opts = {
             "env": {"type": "atari", "atari.env_id": env},
+            "_ratio": ratio,
+            "_drq_config": drq_config,
             "repro.seed": seed,
-            "_rl_ratio": rl_ratio,
-            "run.dir": f"runs/{test_name}/{env}-rl_ratio={rl_ratio}-seed={seed}"
+            "run.dir": f"runs/{test_name}/{env}-type={drq_type}-ratio={ratio}-seed={seed}"
             + suffix,
             **common_opts,
         }
@@ -40,10 +47,10 @@ def adaptive_wm_ratio_v1_0(test_name, suffix=""):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--name", default="adaptive_wm_ratio_v1_0")
+    p.add_argument("--name", default="data_aug/sweep")
     args = p.parse_args()
 
-    all_tests = adaptive_wm_ratio_v1_0(args.name)
+    all_tests = data_aug_sweep(args.name)
 
     prefix = ["python", "-m", "dreamerx"]
     for test in all_tests:

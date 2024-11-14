@@ -12,7 +12,7 @@ def adaptive_ratio_v1_0(test_name, suffix=""):
     preset_file = Path(__file__).parent / "presets.yml"
     common_args = [
         "-P",
-        str(preset_file.relative_to(Path.cwd())),
+        PRESET_PATH,
         "-p",
         "thesis.adaptive_ratio.v1",
         "grid_launch",
