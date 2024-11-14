@@ -230,6 +230,8 @@ class Trainer(TrainerBase):
                     loss = policy_loss + ent_loss + v_loss
 
                 self.opt.step(loss, self.cfg.clip_grad)
+                if self.critic_t is not None:
+                    self.update_target.step()
                 if self.alpha.adaptive:
                     self.alpha.opt_step(new_ent)
 
