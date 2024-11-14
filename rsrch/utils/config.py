@@ -265,11 +265,11 @@ def _merge(base, other):
     if other.get("$replace", False):
         return other
 
-    for key, value in other.items():
-        if key.startswith("$"):
-            continue
-        with js_mode():
-            with eval_templates(False):
+    with eval_templates(False):
+        for key, value in other.items():
+            if key.startswith("$"):
+                continue
+            with js_mode():
                 with upsert_mode():
                     exec(f"base.{key}")
                 exec(f"base.{key} = _merge(base.{key}, value)")

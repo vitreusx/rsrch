@@ -5,17 +5,23 @@ ppo:
       type: ppo
       loader: on_policy
       ppo:
-        encoder:
-          type: ppo
+        actor:
+          encoder:
+            type: ppo
+        critic:
+          encoder: ~
+          dist:
+            type: mse
+            mse: { init: cleanrl_ppo }
+          opt: ${actor.opt}
         adv_norm: true
         clip_vloss: true
-        vf_coef: 0.5
+        vf_coef: 0.25
         clip_grad: 0.5
         gamma: 0.99
         gae_lambda: 0.95
         alpha:
           adaptive: false
-        share_encoder: true
         rew_fn: sign
     data.loaders.on_policy:
       min_seq_len: 16
@@ -27,16 +33,17 @@ ppo:
     rl.ppo:
       update_epochs: 10
       update_batch: 64
-      opt:
-        type: adam
-        lr: 3e-4
       clip_coef: 0.2
       alpha:
         value: 0.0
-      actor_dist:
-        type: trunc_normal
-        trunc_normal:
-          init: cleanrl_ppo
+      actor:
+        dist:
+          type: trunc_normal
+          trunc_normal:
+            init: cleanrl_ppo
+        opt:
+          type: adam
+          lr: 3e-4
     train.num_envs: 1
     data.loaders.on_policy:
       steps_per_batch: 2048
@@ -56,14 +63,15 @@ ppo:
     rl.ppo:
       update_epochs: 4
       update_batch: 256
-      actor_dist:
-        type: cat
-        cat:
-          init: cleanrl_ppo
-      opt:
-        type: adam
-        lr: 2.5e-4
-        eps: 1e-5
+      actor:
+        dist:
+          type: cat
+          cat:
+            init: cleanrl_ppo
+        opt:
+          type: adam
+          lr: 2.5e-4
+          eps: 1e-5
       clip_coef: 0.1
       alpha.value: 1e-2
     train.num_envs: 8

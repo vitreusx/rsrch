@@ -22,27 +22,37 @@ from ._utils import gen_adv_est
 
 @dataclass
 class Config:
-    encoder: dict
-    actor_dist: dict
+    @dataclass
+    class Actor:
+        encoder: dict
+        dist: dict
+        opt: dict
+
+    @dataclass
+    class Critic:
+        encoder: dict | None
+        dist: dict
+        opt: dict
+
+    actor: Actor
+    critic: Critic
     update_epochs: int
-    update_batch: int
+    update_batch: int | None
     adv_norm: bool
     clip_coef: float
     clip_vloss: bool
     gamma: float
     gae_lambda: float
-    opt: dict
     clip_grad: float | None
     alpha: alpha.Config
     vf_coef: float
-    share_encoder: bool
     rew_fn: Literal["id", "sign", "tanh"]
 
 
 class Actor(nn.Module):
     def __init__(
         self,
-        cfg: Config,
+        cfg: Config.Actor,
         obs_space: spaces.torch.Tensor,
         act_space: spaces.torch.Tensor,
     ):
@@ -56,7 +66,7 @@ class Actor(nn.Module):
             self.z_features = self.encoder(input).shape[1]
 
         layer_ctor = partial(nn.Linear, self.z_features)
-        self.head = dh.make(layer_ctor, act_space, **cfg.actor_dist)
+        self.head = dh.make(layer_ctor, act_space, **cfg.dist)
 
     def forward(self, state: Tensor) -> D.Distribution:
         return self.head(self.encoder(state))
@@ -66,37 +76,31 @@ class Actor(nn.Module):
         return self.head(features), features
 
 
-def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
-    torch.nn.init.orthogonal_(layer.weight, std)
-    torch.nn.init.constant_(layer.bias, bias_const)
-    return layer
-
-
-class CriticHead(nn.Sequential):
-    def __init__(self, in_features: int):
-        super().__init__(
-            layer_init(nn.Linear(in_features, 1), std=1.0),
-            nn.Flatten(0),
-        )
-
-
 class Critic(nn.Module):
     def __init__(
         self,
-        cfg: Config,
-        obs_space: spaces.torch.Tensor,
+        cfg: Config.Critic,
+        actor: Actor,
     ):
         super().__init__()
 
-        self.encoder = nets.make_encoder(obs_space, **cfg.encoder)
-        with safe_mode(self.encoder):
-            input = obs_space.sample((1,))
-            z_features = self.encoder(input).shape[1]
+        if cfg.encoder is not None:
+            self.encoder = nets.make_encoder(actor.obs_space, **cfg.encoder)
+            with safe_mode(self.encoder):
+                input = actor.obs_space.sample((1,))
+                z_features = self.encoder(input).shape[1]
+        else:
+            self.encoder = None
+            z_features = actor.z_features
 
-        self.head = CriticHead(z_features)
+        layer_ctor = partial(nn.Linear, z_features)
+        value_space = spaces.torch.Tensor(shape=())
+        self.head = dh.make(layer_ctor, value_space, **cfg.dist)
 
     def forward(self, state: Tensor):
-        return self.head(self.encoder(state))
+        if self.encoder is not None:
+            state = self.encoder(state)
+        return self.head(state).mean
 
 
 class Data(NamedTuple):
@@ -120,26 +124,35 @@ class Trainer(TrainerBase):
         self.cfg = cfg
         self.actor = actor
         device = next(actor.parameters()).device
-        if self.cfg.share_encoder:
-            self.critic_head = CriticHead(actor.z_features).to(device)
-            parameters = [*self.actor.parameters(), *self.critic_head.parameters()]
-        else:
-            self.critic = Critic(cfg, actor.obs_space).to(device)
-            parameters = [*self.actor.parameters(), *self.critic.parameters()]
-        self.opt = self._make_opt(parameters)
+
+        self.critic = Critic(cfg.critic, actor).to(device)
+        self.opt = self._make_opt(
+            [
+                {"params": self.actor.parameters(), "cfg": cfg.actor.opt},
+                {"params": self.critic.parameters(), "cfg": cfg.critic.opt},
+            ]
+        )
+
         self.alpha = alpha.Alpha(cfg.alpha, actor.act_space, device)
 
-    def _make_opt(self, parameters):
-        cfg = {**self.cfg.opt}
-        cls = find_class(torch.optim, cfg["type"])
-        del cfg["type"]
-        opt = cls(parameters, **cfg)
+    def _make_opt(self, groups):
+        types = [group["cfg"]["type"] for group in groups]
+        assert all(type == types[0] for type in types)
+        cls = find_class(torch.optim, types[0])
+
+        opt_groups = []
+        for group in groups:
+            cfg = {**group["cfg"]}
+            del cfg["type"]
+            opt_groups.append({"params": group["params"], **cfg})
+
+        opt = cls(opt_groups)
         return ScaledOptimizer(opt)
 
     def _forward_ac(self, obs: Tensor):
-        if self.cfg.share_encoder:
+        if self.critic.encoder is None:
             policy, features = self.actor.forward_features(obs)
-            val = self.critic_head(features)
+            val = self.critic(features)
         else:
             policy = self.actor(obs)
             val = self.critic(obs)
@@ -154,11 +167,17 @@ class Trainer(TrainerBase):
                     data = self._process_data_var_size(batch)
 
         for _ in range(self.cfg.update_epochs):
-            perm = torch.randperm(len(data.val))
-            for idxes in perm.split(self.cfg.update_batch):
-                if len(idxes) < 0.5 * self.cfg.update_batch:
-                    continue
+            if self.cfg.update_batch is None:
+                splits = [slice(len(data.val))]
+            else:
+                perm = torch.randperm(len(data.val))
+                splits = [
+                    split
+                    for split in perm.split(self.cfg.update_batch)
+                    if len(split) == self.cfg.update_batch
+                ]
 
+            for idxes in splits:
                 weight = data.weight[idxes]
 
                 with self.autocast():
@@ -184,19 +203,17 @@ class Trainer(TrainerBase):
                         clipped_v = data.val[idxes] + (
                             new_value - data.val[idxes]
                         ).clamp(-self.cfg.clip_coef, self.cfg.clip_coef)
-                        v_loss1 = (new_value - data.ret[idxes]).square()
-                        v_loss2 = (clipped_v - data.ret[idxes]).square()
-                        v_loss = 0.5 * (weight * torch.max(v_loss1, v_loss2)).mean()
+                        v_losses1 = (new_value - data.ret[idxes]).square()
+                        v_losses2 = (clipped_v - data.ret[idxes]).square()
+                        v_losses = torch.max(v_losses1, v_losses2)
                     else:
-                        v_loss = (
-                            0.5
-                            * (weight * (new_value - data.ret[idxes]).square()).mean()
-                        )
+                        v_losses = (new_value - data.ret[idxes]).square()
+                    v_loss = self.cfg.vf_coef * (weight * v_losses).mean()
 
                     new_ent = new_policy.entropy()
                     ent_loss = self.alpha.value * (weight * -new_ent).mean()
 
-                    loss = policy_loss + ent_loss + self.cfg.vf_coef * v_loss
+                    loss = policy_loss + ent_loss + v_loss
 
                 self.opt.step(loss, self.cfg.clip_grad)
                 if self.alpha.adaptive:

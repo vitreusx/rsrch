@@ -294,7 +294,7 @@ class Runner:
             self.actor = sac.Actor(rl_cfg.actor, self.rl_obs_space, self.rl_act_space)
         elif rl_type == "ppo":
             rl_cfg = self.cfg.rl.ppo
-            self.actor = ppo.Actor(rl_cfg, self.rl_obs_space, self.rl_act_space)
+            self.actor = ppo.Actor(rl_cfg.actor, self.rl_obs_space, self.rl_act_space)
         else:
             raise ValueError(rl_type)
 

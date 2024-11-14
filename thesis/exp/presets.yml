@@ -407,3 +407,28 @@ thesis:
         type: adam
         lr: 2.5e-3
         eps: 1e-5
+
+  ppo:
+    base:
+      $extends: [split_ratios]
+      _wm_ratio: 4
+      _rl_ratio: 8
+      data.loaders.dreamer_rl:
+        keep_first_reward: false
+      rl:
+        type: ppo
+        loader: dreamer_rl
+        ppo:
+          actor: ${a2c.actor}
+          critic: ${a2c.critic}
+          gamma: ${a2c.gamma}
+          gae_lambda: ${a2c.gae_lambda}
+          alpha: ${a2c.alpha}
+          update_epochs: 4
+          update_batch: ~
+          adv_norm: true
+          clip_vloss: true
+          vf_coef: 0.5
+          clip_grad: 0.5
+          rew_fn: id
+          clip_coef: 0.1
