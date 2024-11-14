@@ -200,12 +200,12 @@ class Trainer(TrainerBase):
                 next_policy = policy[1:].detach()
 
                 if self._discrete:
-                    min_q = over_seq(self.qf_t[0])(batch.obs)
+                    min_q = over_seq(self.qf_t[0])(next_obs)
                     for idx in range(1, self.cfg.num_qf):
-                        min_q_idx = over_seq(self.qf_t[idx])(batch.obs)
+                        min_q_idx = over_seq(self.qf_t[idx])(next_obs)
                         min_q = torch.min(min_q, min_q_idx)
                     policy: D.Categorical | D.OneHot
-                    q_values = min_q[1:] - self.alpha.value * next_policy.log_probs
+                    q_values = min_q - self.alpha.value * next_policy.log_probs
                     next_v = (next_policy.probs * q_values).sum(-1)
                 else:
                     next_act = next_policy.sample()
@@ -225,26 +225,34 @@ class Trainer(TrainerBase):
                 qf_pred = over_seq(qf)(obs, batch.act)
                 q_loss = (weight[:-1] * (qf_pred - target).square()).mean()
                 q_losses.append(q_loss)
-            q_loss = 0.5 * torch.stack(q_losses).sum()
+            q_loss = torch.stack(q_losses).sum()
 
         self.qf_opt.step(q_loss, self.cfg.clip_grad)
         self.qf_polyak.step()
 
+        cur_policy = policy[:-1]
         if self._discrete:
+            with torch.no_grad():
+                with self.autocast():
+                    min_q = over_seq(self.qf[0])(obs)
+                    for idx in range(1, self.cfg.num_qf):
+                        min_q_idx = over_seq(self.qf[idx])(obs)
+                        min_q = torch.min(min_q, min_q_idx)
+
             with self.autocast():
                 policy: D.Categorical
-                actor_losses = self.alpha.value * policy.log_probs - min_q
-                actor_losses = (policy.probs * actor_losses).sum(-1)
-                actor_loss = (weight * actor_losses)[:-1].mean()
+                actor_losses = self.alpha.value * cur_policy.log_probs - min_q
+                actor_losses = (cur_policy.probs * actor_losses).sum(-1)
+                actor_loss = (weight[:-1] * actor_losses).mean()
         else:
             with self.autocast():
-                act = policy[:-1].rsample()
+                act = cur_policy.rsample()
                 with frozen(self.qf):
                     min_q = over_seq(self.qf[0])(obs, act)
                     for idx in range(1, self.cfg.num_qf):
                         min_q_idx = over_seq(self.qf[idx])(obs, act)
                         min_q = torch.min(min_q, min_q_idx)
-                actor_losses = self.alpha.value * policy.log_prob(act) - min_q
+                actor_losses = self.alpha.value * cur_policy.log_prob(act) - min_q
                 actor_loss = (weight[:-1] * actor_losses).mean()
 
         self.actor_opt.step(actor_loss, self.cfg.clip_grad)
@@ -259,7 +267,7 @@ class Trainer(TrainerBase):
 
         with torch.no_grad():
             mets = {
-                "q_loss": q_loss,
+                "q_loss": q_loss / self.cfg.num_qf,
                 "mean_q": qf_pred.mean(),
                 "actor_loss": actor_loss,
                 "entropy": entropy.mean(),

@@ -1,6 +1,7 @@
 sac:
   base:
     $extends: [no_model]
+    compute_dtype: float32
     rl:
       type: sac
       sac:
