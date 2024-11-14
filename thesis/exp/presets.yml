@@ -424,6 +424,7 @@ thesis:
           gamma: ${a2c.gamma}
           gae_lambda: ${a2c.gae_lambda}
           alpha: ${a2c.alpha}
+          target_critic: ${a2c.target_critic}
           update_epochs: 4
           update_batch: ~
           adv_norm: true

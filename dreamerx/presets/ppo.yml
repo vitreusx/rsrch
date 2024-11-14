@@ -23,6 +23,7 @@ ppo:
         alpha:
           adaptive: false
         rew_fn: sign
+        target_critic: ~
     data.loaders.on_policy:
       min_seq_len: 16
   mujoco:

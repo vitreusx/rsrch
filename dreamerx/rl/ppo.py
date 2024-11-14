@@ -11,6 +11,7 @@ import rsrch.distributions as D
 from rsrch import spaces
 from rsrch.nn import dh
 from rsrch.nn.utils import over_seq, safe_mode
+from rsrch.rl.utils import polyak
 
 from ..common import nets
 from ..common.trainer import ScaledOptimizer, TrainerBase
@@ -47,6 +48,7 @@ class Config:
     alpha: alpha.Config
     vf_coef: float
     rew_fn: Literal["id", "sign", "tanh"]
+    target_critic: dict | None
 
 
 class Actor(nn.Module):
@@ -126,6 +128,18 @@ class Trainer(TrainerBase):
         device = next(actor.parameters()).device
 
         self.critic = Critic(cfg.critic, actor).to(device)
+
+        if self.cfg.target_critic is not None:
+            self.critic_t = Critic(cfg.critic, actor).to(device)
+            polyak.sync(self.critic, self.critic_t)
+            self.update_target = polyak.Polyak(
+                source=self.critic,
+                target=self.critic_t,
+                **self.cfg.target_critic,
+            )
+        else:
+            self.critic_t = None
+
         self.opt = self._make_opt(
             [
                 {"params": self.actor.parameters(), "cfg": cfg.actor.opt},
@@ -243,8 +257,17 @@ class Trainer(TrainerBase):
         policy, val = over_seq(self._forward_ac)(batch.obs)
         logp = policy[:-1].log_prob(batch.act)
 
+        if self.critic_t is None:
+            val_t = val
+        else:
+            if self.critic_t.encoder is None:
+                features = over_seq(self.actor)(batch.obs)
+                val_t = over_seq(self.critic_t)(features)
+            else:
+                val_t = over_seq(self.critic_t)(batch.obs)
+
         gamma = self.cfg.gamma * cont
-        adv, ret = gen_adv_est(reward, val, gamma, self.cfg.gae_lambda)
+        adv, ret = gen_adv_est(reward, val_t, gamma, self.cfg.gae_lambda)
         val = val[:-1]
 
         obs = obs.flatten(0, 1)
@@ -269,6 +292,15 @@ class Trainer(TrainerBase):
 
         policy, value = self._forward_ac(all_obs)
 
+        if self.critic_t is None:
+            value_t = value
+        else:
+            if self.critic_t.encoder is None:
+                features = self.actor(all_obs)
+                value_t = self.critic_t(features)
+            else:
+                value_t = self.critic_t(all_obs)
+
         policy = torch.cat(
             [policy[start[idx] : end[idx] - 1] for idx in range(batch_size)]
         )
@@ -281,11 +313,12 @@ class Trainer(TrainerBase):
             seq_wt = torch.cumprod(seq_wt, 0)
 
             gamma = self.cfg.gamma * cont
-            seq_val = value[start[idx] : end[idx]]
+            seq_val_t = value_t[start[idx] : end[idx]]
             reward = self._transform_reward(seq.reward)
-            adv, ret = gen_adv_est(reward, seq_val, gamma, self.cfg.gae_lambda)
+            adv, ret = gen_adv_est(reward, seq_val_t, gamma, self.cfg.gae_lambda)
             advs.append(adv)
             rets.append(ret)
+            seq_val = value[start[idx] : end[idx]]
             vals.append(seq_val[:-1])
             weights.append(seq_wt[:-1])
 
