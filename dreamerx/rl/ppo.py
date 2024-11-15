@@ -188,7 +188,7 @@ class Trainer(TrainerBase):
                 splits = [
                     split
                     for split in perm.split(self.cfg.update_batch)
-                    if len(split) == self.cfg.update_batch
+                    if len(split) >= 0.5 * self.cfg.update_batch
                 ]
 
             for idxes in splits:

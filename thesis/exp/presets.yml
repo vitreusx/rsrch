@@ -171,7 +171,7 @@ thesis:
             full: false
             tag: final
 
-    v1:
+    v1_0:
       $extends: [base]
       _rl_ratio: 0.0
       _v1_variant: "0"
@@ -184,43 +184,11 @@ thesis:
           update_mult: 1.3
           initial_value: 64
 
-    wm_v1:
+    wm_v1_0:
       $extends: [v1]
       _rl_ratio: 4.0
-      _adaptive_setup.rl_to_wm_ratio: 0.0
-
-    wm_v2:
-      $extends: [base]
-      _rl_ratio: 4.0
       _adaptive_setup:
         rl_to_wm_ratio: 0.0
-        type: v2
-        v2:
-          ratio_range: [1, 128]
-          update_mult: 1.3
-          initial_value: 64
-          try_unused_after: 100e3
-
-    wm_v3:
-      $extends: [base]
-      _rl_ratio: 4.0
-      _adaptive_setup:
-        rl_to_wm_ratio: 0.0
-        type: v3
-        v3:
-          ratio_range: [2, 128]
-          update_mult: 1.3
-
-    v4:
-      $extends: [base]
-      _adaptive_setup:
-        rl_to_wm_ratio: 1.0
-        type: v4
-        v4:
-          init_ratio: 16
-          init_time: ${_prefill}
-          final_ratio: 4
-          final_time: 400e3
 
   warm_start:
     # Like `sanity_check`, except that we load the parameters from another run to check if it impacts the performance. We use the same base env ID, but "randomize" it (swap channels, flip axes, permute actions etc.) to simulate continual setting.
