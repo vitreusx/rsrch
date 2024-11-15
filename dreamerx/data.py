@@ -8,7 +8,7 @@ import kornia.augmentation as aug
 import numpy as np
 import torch
 import torch.nn.functional as F
-from kornia.geometry.transform import translate
+from kornia.geometry.transform import translate, center_crop
 from torch import Tensor, nn
 from torch.utils import data
 from torch.utils.data import DataLoader
@@ -100,7 +100,11 @@ class RandomShift(nn.Module):
 
     def forward(self, x: Tensor):
         h, w = x.shape[-2:]
-        x = F.pad(x, (self.shift, self.shift), mode="replicate")
+        x = F.pad(
+            x,
+            (self.shift, self.shift, self.shift, self.shift),
+            mode="replicate",
+        )
         shifts = torch.randint(
             low=-self.shift,
             high=self.shift + 1,
@@ -108,7 +112,7 @@ class RandomShift(nn.Module):
             dtype=x.dtype,
         )
         x = translate(x, shifts, mode="nearest")
-        x = x[..., self.shift : -self.shift, self.shift : -self.shift]
+        x = center_crop(x, (h, w), mode="nearest")
         return x
 
 
