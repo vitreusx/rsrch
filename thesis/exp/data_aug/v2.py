@@ -3,10 +3,10 @@ import shlex
 from itertools import product
 from pathlib import Path
 
-from .utils import *
+from ..utils import *
 
 
-def data_aug(test_name, suffix=""):
+def data_aug_v2(test_name, suffix=""):
     all_tests = []
 
     preset_file = Path(__file__).parent / "presets.yml"
@@ -14,19 +14,21 @@ def data_aug(test_name, suffix=""):
         "-P",
         PRESET_PATH,
         "-p",
-        "thesis.data_aug.v1",
+        "thesis.data_aug.v2",
         "grid_launch",
     ]
     common_opts = {}
 
     envs = A100k_MONO
+    ratios = [2, 4]
     seeds = [*range(5)]
 
-    for env, seed in product(envs, seeds):
+    for env, ratio, seed in product(envs, ratios, seeds):
         opts = {
             "env": {"type": "atari", "atari.env_id": env},
+            "_ratio": ratio,
             "repro.seed": seed,
-            "run.dir": f"runs/{test_name}/{env}-seed={seed}" + suffix,
+            "run.dir": f"runs/{test_name}/{env}-ratio={ratio}-seed={seed}" + suffix,
             **common_opts,
         }
         args = [*common_args, "-o", format_opts(opts)]
@@ -37,10 +39,10 @@ def data_aug(test_name, suffix=""):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--name", default="data_aug")
+    p.add_argument("--name", default="data_aug/v2")
     args = p.parse_args()
 
-    all_tests = data_aug(args.name)
+    all_tests = data_aug_v2(args.name)
 
     prefix = ["python", "-m", "dreamerx"]
     for test in all_tests:
