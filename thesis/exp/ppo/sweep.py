@@ -24,20 +24,20 @@ def ppo_sweep(test_name: str, suffix=""):
     envs = A100k_MONO
     seeds = [*range(5)]
     configs = {
-        "k8_e4_bs256": {
+        "k8_e4_mb8": {
             "rl_ratio": 8,
             "update_epochs": 4,
-            "update_batch": 256,
+            "num_minibatches": 8,
         },
-        "k16_e8_bs0": {
+        "k16_e8_mb1": {
             "rl_ratio": 16,
             "update_epochs": 8,
-            "update_batch": None,
+            "num_minibatches": 1,
         },
-        "k8_e8_bs0": {
+        "k8_e8_mb1": {
             "rl_ratio": 8,
             "update_epochs": 8,
-            "update_batch": None,
+            "num_minibatches": 1,
         },
     }
 
@@ -49,7 +49,7 @@ def ppo_sweep(test_name: str, suffix=""):
             "_rl_ratio": config["rl_ratio"],
             "rl.ppo": {
                 "update_epochs": config["update_epochs"],
-                "update_batch": config["update_batch"],
+                "num_minibatches": config["num_minibatches"],
             },
             "run.dir": f"runs/{test_name}/{env}-cfg={name}-seed={seed}" + suffix,
             **common_opts,

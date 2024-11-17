@@ -6,9 +6,9 @@ from tqdm.auto import tqdm
 from utils import TBScalars
 
 
-def data_aug_2_loader():
-    results_dir = Path("../results/data_aug_2")
-    scalars = TBScalars(".cache/data_aug_2")
+def data_aug_v2_loader():
+    results_dir = Path("../results/data_aug/v2")
+    scalars = TBScalars(".cache/data_aug/v2")
 
     res_df = []
     for test in tqdm([*results_dir.iterdir()]):
@@ -19,9 +19,10 @@ def data_aug_2_loader():
         for (name, typ), value in zip(types.items(), params[1:]):
             test_r[name] = typ(value.removeprefix(f"{name}="))
         df = scalars.read(test)
-        scores = df[df["tag"] == "val/mean_ep_ret"]["value"]
-        test_r["score"] = scores.iloc[-1]
-        res_df.append({"path": test, **test_r})
+        final_val = df[df["tag"] == "val/mean_ep_ret"].iloc[-1]
+        if final_val["step"] >= 400e3:
+            test_r["score"] = final_val["value"]
+            res_df.append({"path": test, **test_r})
 
     res_df = pd.DataFrame.from_records(res_df)
     return res_df, scalars
@@ -40,9 +41,10 @@ def baseline_loader():
         for (name, typ), value in zip(types.items(), params[1:]):
             test_r[name] = typ(value.removeprefix(f"{name}="))
         df = scalars.read(test)
-        scores = df[df["tag"] == "val/mean_ep_ret"]["value"]
-        test_r["score"] = scores.iloc[-1]
-        res_df.append({"path": test, **test_r})
+        final_val = df[df["tag"] == "val/mean_ep_ret"].iloc[-1]
+        if final_val["step"] >= 400e3:
+            test_r["score"] = final_val["value"]
+            res_df.append({"path": test, **test_r})
 
     res_df = pd.DataFrame.from_records(res_df)
     return res_df, scalars
@@ -61,9 +63,10 @@ def pretrain_loader():
         for (name, typ), value in zip(types.items(), params[1:]):
             test_r[name] = typ(value.removeprefix(f"{name}="))
         df = scalars.read(test)
-        scores = df[df["tag"] == "val/mean_ep_ret"]["value"]
-        test_r["score"] = scores.iloc[-1]
-        res_df.append({"path": test, **test_r})
+        final_val = df[df["tag"] == "val/mean_ep_ret"].iloc[-1]
+        if final_val["step"] >= 400e3:
+            test_r["score"] = final_val["value"]
+            res_df.append({"path": test, **test_r})
     res_df = pd.DataFrame.from_records(res_df)
 
     tags = []
@@ -135,8 +138,8 @@ def dreamerv2_loader():
 
 
 def adaptive_ratio_v1_0_loader():
-    results_dir = Path("../results/adaptive_ratio_v1_0")
-    scalars = TBScalars(".cache/adaptive_ratio_v1_0")
+    results_dir = Path("../results/adaptive_ratio/v1_0")
+    scalars = TBScalars(".cache/adaptive_ratio/v1_0")
 
     res_df = []
     for test in tqdm([*results_dir.iterdir()]):
@@ -147,18 +150,19 @@ def adaptive_ratio_v1_0_loader():
         for (name, typ), value in zip(types.items(), params[1:]):
             test_r[name] = typ(value.removeprefix(f"{name}="))
         df = scalars.read(test)
-        scores = df[df["tag"] == "val/mean_ep_ret"]["value"]
-        test_r["score"] = scores.iloc[-1]
-        res_df.append({"path": test, **test_r})
+        final_val = df[df["tag"] == "val/mean_ep_ret"].iloc[-1]
+        if final_val["step"] >= 400e3:
+            test_r["score"] = final_val["value"]
+            res_df.append({"path": test, **test_r})
     res_df = pd.DataFrame.from_records(res_df)
     res_df
 
     return res_df, scalars
 
 
-def adaptive_wm_ratio_v1_0_loader():
-    results_dir = Path("../results/adaptive_wm_ratio_v1_0")
-    scalars = TBScalars(".cache/adaptive_wm_ratio_v1_0")
+def adaptive_ratio_wm_v1_0_loader():
+    results_dir = Path("../results/adaptive_ratio/wm_v1_0")
+    scalars = TBScalars(".cache/adaptive_ratio/wm_v1_0")
 
     res_df = []
     for test in tqdm([*results_dir.iterdir()]):
@@ -169,9 +173,10 @@ def adaptive_wm_ratio_v1_0_loader():
         for (name, typ), value in zip(types.items(), params[1:]):
             test_r[name] = typ(value.removeprefix(f"{name}="))
         df = scalars.read(test)
-        scores = df[df["tag"] == "val/mean_ep_ret"]["value"]
-        test_r["score"] = scores.iloc[-1]
-        res_df.append({"path": test, **test_r})
+        final_val = df[df["tag"] == "val/mean_ep_ret"].iloc[-1]
+        if final_val["step"] >= 400e3:
+            test_r["score"] = final_val["value"]
+            res_df.append({"path": test, **test_r})
     res_df = pd.DataFrame.from_records(res_df)
     res_df
 
@@ -191,12 +196,56 @@ def split_ratios_loader():
         for (name, typ), value in zip(types.items(), params[1:]):
             test_r[name] = typ(value.removeprefix(f"{name}="))
         df = scalars.read(test)
-        df = df[df["tag"] == "val/mean_ep_ret"]
-        test_r["score"] = df.iloc[-1]["value"]
-        res_df.append({"path": test, **test_r})
-        scalars.read(test)
+        final_val = df[df["tag"] == "val/mean_ep_ret"].iloc[-1]
+        if final_val["step"] >= 400e3:
+            test_r["score"] = final_val["value"]
+            res_df.append({"path": test, **test_r})
     res_df = pd.DataFrame.from_records(res_df)
 
     res_df = res_df[res_df["env"].isin(("Assault",))]
 
+    return res_df, scalars
+
+
+def ppo_base_loader():
+    results_dir = Path("../results/ppo/base")
+    scalars = TBScalars(".cache/ppo/base")
+
+    res_df = []
+    for test in tqdm([*results_dir.iterdir()]):
+        params = test.name.split("-")
+        test_r = {}
+        test_r["env"] = params[0]
+        types = {"seed": int}
+        for (name, typ), value in zip(types.items(), params[1:]):
+            test_r[name] = typ(value.removeprefix(f"{name}="))
+        df = scalars.read(test)
+        final_val = df[df["tag"] == "val/mean_ep_ret"].iloc[-1]
+        if final_val["step"] >= 400e3:
+            test_r["score"] = final_val["value"]
+            res_df.append({"path": test, **test_r})
+    res_df = pd.DataFrame.from_records(res_df)
+
+    return res_df, scalars
+
+
+def data_aug_sweep_loader():
+    results_dir = Path("../results/data_aug/sweep")
+    scalars = TBScalars(".cache/data_aug/sweep")
+
+    res_df = []
+    for test in tqdm([*results_dir.iterdir()]):
+        params = test.name.split("-")
+        test_r = {}
+        test_r["env"] = params[0]
+        types = {"type": str, "ratio": int, "seed": int}
+        for (name, typ), value in zip(types.items(), params[1:]):
+            test_r[name] = typ(value.removeprefix(f"{name}="))
+        df = scalars.read(test)
+        final_val = df[df["tag"] == "val/mean_ep_ret"].iloc[-1]
+        if final_val["step"] >= 400e3:
+            test_r["score"] = final_val["value"]
+            res_df.append({"path": test, **test_r})
+
+    res_df = pd.DataFrame.from_records(res_df)
     return res_df, scalars

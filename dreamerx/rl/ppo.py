@@ -1,6 +1,6 @@
 from collections import namedtuple
 from dataclasses import dataclass
-from functools import partial
+from functools import cache, partial
 from typing import Literal, NamedTuple
 
 import numpy as np
@@ -38,7 +38,7 @@ class Config:
     actor: Actor
     critic: Critic
     update_epochs: int
-    update_batch: int | None
+    num_minibatches: int
     adv_norm: bool
     clip_coef: float
     clip_vloss: bool
@@ -115,6 +115,20 @@ class Data(NamedTuple):
     weight: Tensor
 
 
+@cache
+def _get_slices(batch_size: int, num_mb: int):
+    """Divide a batch into a number of minibatches. The minibatch sizes are selected in such a way, that they are divisible by 32, except for the last one. The last batch may be larger than the previous ones."""
+    WARP = 32
+    batch_size_w = WARP * (batch_size // WARP)
+    mb_size = WARP * (batch_size_w // num_mb)
+    mb_size_rem = batch_size - num_mb * mb_size
+    split_sizes = [mb_size] * num_mb
+    split_sizes[-1] += mb_size_rem
+    end = np.cumsum(split_sizes)
+    start = end - np.array(split_sizes)
+    return [slice(start_i, end_i) for start_i, end_i in zip(start, end)]
+
+
 class Trainer(TrainerBase):
     def __init__(
         self,
@@ -181,15 +195,13 @@ class Trainer(TrainerBase):
                     data = self._process_data_var_size(batch)
 
         for _ in range(self.cfg.update_epochs):
-            if self.cfg.update_batch is None:
+            if self.cfg.num_minibatches == 1:
                 splits = [slice(len(data.val))]
             else:
-                perm = torch.randperm(len(data.val))
-                splits = [
-                    split
-                    for split in perm.split(self.cfg.update_batch)
-                    if len(split) >= 0.5 * self.cfg.update_batch
-                ]
+                batch_size = len(data.val)
+                slices = _get_slices(batch_size, self.cfg.num_minibatches)
+                perm = torch.randperm(batch_size)
+                splits = [perm[idx] for idx in slices]
 
             for idxes in splits:
                 weight = data.weight[idxes]

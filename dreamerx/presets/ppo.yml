@@ -33,7 +33,7 @@ ppo:
       gym.env_id: Humanoid-v4
     rl.ppo:
       update_epochs: 10
-      update_batch: 64
+      num_minibatches: 32
       clip_coef: 0.2
       alpha:
         value: 0.0
@@ -63,7 +63,7 @@ ppo:
         term_on_life_loss: true
     rl.ppo:
       update_epochs: 4
-      update_batch: 256
+      num_minibatches: 4
       actor:
         dist:
           type: cat

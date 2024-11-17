@@ -402,7 +402,7 @@ thesis:
           alpha: ${a2c.alpha}
           target_critic: ${a2c.target_critic}
           update_epochs: 4
-          update_batch: ~
+          num_minibatches: 1
           adv_norm: true
           clip_vloss: true
           vf_coef: 0.5
