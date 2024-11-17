@@ -24,6 +24,11 @@ def ppo_sweep(test_name: str, suffix=""):
     envs = A100k_MONO
     seeds = [*range(5)]
     configs = {
+        "k8_e4_mb1": {
+            "rl_ratio": 8,
+            "update_epochs": 4,
+            "num_minibatches": 1,
+        },
         "k8_e4_mb8": {
             "rl_ratio": 8,
             "update_epochs": 4,

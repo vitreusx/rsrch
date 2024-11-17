@@ -426,9 +426,25 @@ We will start with the experiments involving PPO. For the choice of the hyperpar
 
 There remain two hyperparameters to select: the number of update epochs $N$, meaning the amount of times each data batch item is used, and the number of minibatches for each update epoch $M$, being the number of splits of the data batch into minibatches used for each optimization step. Thus, the total number of parameter updates is $NM$. We may note that, for $N = M = 1$, the procedure is in fact equivalent to the original A2C algorithm.
 
-Beyond that, we need to specify the training recipe. We leave the model update ratio fixed at $K_{\rm WM} = 4$, and select RL update ratio $K_{\rm RL}$ in such a way, that the clock time for a single training run is approximately the same, to ensure fair comparison. As the baseline, we select a scenario with $K_{\rm WM} = K_{\rm RL} = 4$.
+Beyond that, we need to specify the training recipe. We leave the model update ratio fixed at $K_{\rm WM} = 4$, and finetune RL update ratio $K_{\rm RL}$, number of update epochs $N$ and number of minibatches $M$. As the baseline, we select a scenario with $K_{\rm WM} = K_{\rm RL} = 4$. We will examine following configurations:
+
+\begin{enumerate}
+  \item $K_{\rm RL} = 8, N = 4, M = 1$: We exchange less frequent RL optimization steps for a greater number of update epochs within each optimization step.
+  \item $K_{\rm RL} = 16, N = 8, M = 1$: A more extreme version of the previous configuration, designed to examine whether the data reuse causes issues.
+  \item $K_{\rm RL} = 8, N = 4, M = 8$: We split the batch into $8$ minibatches, increasing the total number of parameter updates by $8 \times$.
+\end{enumerate}
+
+\paragraph{Results} (...)
 
 \subsubsection{SAC Experiments}
+
+Let us now conduct the experiments with SAC algorithm. In the first order, let us discuss the extent of the hyperparameter sweep to conduct. A complete grid search over network architectures, optimizer parameters etc. is clearly infeasible. We take the approach of reusing A2C's actor architecture and optimizer, and using A2C's encoder and optimizer settings for the value function as a proxy for SAC's $Q$ functions. As both algorithms use the target functions, we copy the target $Q$ function update schedule from A2C - a full sync every $100$ optimization steps, to be precise.
+
+The most impactful hyperparameter left, then, is the choice of temperature/reward scale $\alpha$. As the first step, we perform a random search over the value of the parameter. Ideally, we would perform a grid search, testing each value of $\alpha$ on the set of three environments and five RNG seeds. However, such an experiment would be computationally onerous. What we do instead, rather, is the following: for each pair of the environment/task and the RNG seed, we select the value of $\alpha$ from a log-normal distribution: $\log{\alpha} \sim \mathcal{N}(\log{10^{-3}}, \log{10})$. In other words, we expect the first standard deviation to cover the interval $[10^{-4}, 10^{-2}]$. To increase the coverage, multiple $\alpha$ values can be tested for each pair. Then, we shall estimate the optimal value of $\alpha$.
+
+\paragraph{Results} (...)
+
+Another method, which can be used to derive the value of $\alpha$ temperature, is auto-tuning, as described in (SAC Alg. and App. citation). Briefly, the idea is to specify a schedule of the mean policy entropy, rather than reward scale, and optimize the value of $\alpha$ so that the schedule is achieved. There remains, however, a question of what kind of schedule to use. The recommendations for the model-free case suggest the use of a constant entropy target $0.89 H_{\rm max}$ for the discrete action spaces, where $H_{\rm max}$ denotes the maximum possible entropy for a policy in a given action space. [Recheck the continous case]. However, the entropy curves of the agents in the baseline scenario suggest, that we ought to specify a rapidly decaying entropy schedule, with the final entropy of approximately $0.05 H_{\rm max}$.
 
 \section{Combining the improvements}
 
