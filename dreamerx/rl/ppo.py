@@ -119,7 +119,7 @@ class Data(NamedTuple):
 def _get_slices(batch_size: int, num_mb: int):
     """Divide a batch into a number of minibatches. The minibatch sizes are selected in such a way, that they are divisible by 32, except for the last one. The last batch may be larger than the previous ones."""
     WARP = 32
-    batch_size_w = WARP * (batch_size // WARP)
+    batch_size_w = batch_size // WARP
     mb_size = WARP * (batch_size_w // num_mb)
     mb_size_rem = batch_size - num_mb * mb_size
     split_sizes = [mb_size] * num_mb
