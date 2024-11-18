@@ -369,7 +369,7 @@ thesis:
       $extends: [ent_sched_exp]
       rl.sac.num_qf: 1
 
-    enc_sched2:
+    ent_sched2:
       $extends: [adaptive_ent]
       _target:
         value: linear((20e3, 0.99), (50e3, 0.1), (200e3, 5e-2))
