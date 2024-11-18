@@ -11,6 +11,8 @@
 \newcommand{\algorithmautorefname}{Algorithm}
 \newcommand{\env}[1]{{\tt #1}}
 
+% \doublespacing
+
 \begin{document}
 
 \title{Investigating and Combining Approaches for Data-Efficient Model-based RL}
@@ -430,21 +432,50 @@ Beyond that, we need to specify the training recipe. We leave the model update r
 
 \begin{enumerate}
   \item $K_{\rm RL} = 8, N = 4, M = 1$: We exchange less frequent RL optimization steps for a greater number of update epochs within each optimization step.
-  \item $K_{\rm RL} = 16, N = 8, M = 1$: A more extreme version of the previous configuration, designed to examine whether the data reuse causes issues.
+  \item $K_{\rm RL} = 8, N = 8, M = 1$: A variant of the first configuration, with more update epochs.
+  \item $K_{\rm RL} = 16, N = 8, M = 1$: A more extreme version of the first preset, with an equal number of RL optimization steps, and greater data reuse.
   \item $K_{\rm RL} = 8, N = 4, M = 8$: We split the batch into $8$ minibatches, increasing the total number of parameter updates by $8 \times$.
 \end{enumerate}
 
-\paragraph{Results} (...)
+\paragraph{Results} If we take a look at the final validation scores (\autoref{fig:ppo_sweep}), we may infer that using PPO, in any of the tested configurations, has a positive effect on the performance. We may note that, except for the preset with $M = 8$, the training time is effectively the same.
+
+\begin{figure}
+  \centering
+  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/ppo.sweep.pdf}
+  \caption{}
+  \label{fig:ppo_sweep}
+\end{figure}
 
 \subsubsection{SAC Experiments}
 
-Let us now conduct the experiments with SAC algorithm. In the first order, let us discuss the extent of the hyperparameter sweep to conduct. A complete grid search over network architectures, optimizer parameters etc. is clearly infeasible. We take the approach of reusing A2C's actor architecture and optimizer, and using A2C's encoder and optimizer settings for the value function as a proxy for SAC's $Q$ functions. As both algorithms use the target functions, we copy the target $Q$ function update schedule from A2C - a full sync every $100$ optimization steps, to be precise.
+Let us now conduct the experiments with SAC algorithm. In the first order, let us discuss the extent of the hyperparameter sweep to conduct. A complete grid search over network architectures, optimizer parameters etc. is clearly infeasible. We take the approach of reusing A2C's actor architecture and optimizer, and using A2C's encoder and optimizer settings for the value function as a proxy for SAC's $Q$ functions. As both algorithms use the target functions, we copy the target $Q$ function update schedule from A2C - a full copy every $100$ optimization steps, to be precise.
 
 The most impactful hyperparameter left, then, is the choice of temperature/reward scale $\alpha$. As the first step, we perform a random search over the value of the parameter. Ideally, we would perform a grid search, testing each value of $\alpha$ on the set of three environments and five RNG seeds. However, such an experiment would be computationally onerous. What we do instead, rather, is the following: for each pair of the environment/task and the RNG seed, we select the value of $\alpha$ from a log-normal distribution: $\log{\alpha} \sim \mathcal{N}(\log{10^{-3}}, \log{10})$. In other words, we expect the first standard deviation to cover the interval $[10^{-4}, 10^{-2}]$. To increase the coverage, multiple $\alpha$ values can be tested for each pair. Then, we shall estimate the optimal value of $\alpha$.
 
-\paragraph{Results} (...)
+\paragraph{Results} Let us start with the analysis of the final scores (\autoref{fig:sac_alpha_perf}) Interestingly, the choice of $\alpha$ regularizer does \emph{not} seem to significantly impact the performance. If we take a look at the final entropy values (\autoref{fig:sac_alpha_ent}), which ought to be the primary metric controlled by the value of $\alpha$, we may deduce that, while the value does impact the entropy (the effect can be seen most strongly on the chart concerning \env{Assault}), at a certain point we hit a lower bound of sorts, whereafter further decreasing the value of $\alpha$ does not affect it quite as strongly. The aforementioned lower entropy bound seems to be approximately $10^{-2}$ for all the environments.
 
-Another method, which can be used to derive the value of $\alpha$ temperature, is auto-tuning, as described in (SAC Alg. and App. citation). Briefly, the idea is to specify a schedule of the mean policy entropy, rather than reward scale, and optimize the value of $\alpha$ so that the schedule is achieved. There remains, however, a question of what kind of schedule to use. The recommendations for the model-free case suggest the use of a constant entropy target $0.89 H_{\rm max}$ for the discrete action spaces, where $H_{\rm max}$ denotes the maximum possible entropy for a policy in a given action space. [Recheck the continous case]. However, the entropy curves of the agents in the baseline scenario suggest, that we ought to specify a rapidly decaying entropy schedule, with the final entropy of approximately $0.05 H_{\rm max}$.
+\begin{figure}
+  \centering
+  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/sac.alpha_perf.pdf}
+  \caption{}
+  \label{fig:sac_alpha_perf}
+\end{figure}
+
+\begin{figure}
+  \centering
+  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/sac.alpha_ent.pdf}
+  \caption{}
+  \label{fig:sac_alpha_ent}
+\end{figure}
+
+Another method, which can be used to derive the value of $\alpha$ temperature, is auto-tuning, as described in (SAC Alg. and App. citation). Briefly, the idea is to specify a schedule of the mean policy entropy, rather than the $\alpha$ parameter itself, and optimize the value of $\alpha$ so that the schedule is achieved. There remains, however, a question of what kind of schedule to use. The recommendations for the model-free case suggest the use of a constant entropy target $0.89 H_{\rm max}$ for the discrete action spaces, where $H_{\rm max}$ denotes the maximum possible entropy for a policy in a given action space. However, the entropy curves of the best-performing agents in the baseline scenario (\autoref{fig:baseline_ent}) suggest, that we ought to specify a rapidly decaying entropy schedule, with the final entropy of approximately $0.05 H_{\rm max}$.
+
+\begin{figure}
+  \centering
+  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/baseline_ent.pdf}
+  \caption{}
+  \label{fig:baseline_ent}
+\end{figure}
 
 \section{Combining the improvements}
 

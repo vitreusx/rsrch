@@ -23,7 +23,7 @@ class TBScalars:
 
         dst_path = self.cache_dir / f"{test_dir.name}.h5"
         if not dst_path.exists():
-            board = SummaryReader(test_dir / "board")
+            board = SummaryReader(test_dir / "board", extra_columns={"wall_time"})
             dst_path.parent.mkdir(parents=True, exist_ok=True)
             board.scalars.to_hdf(dst_path, key="scalars")
 
@@ -103,3 +103,15 @@ def make_color_iter(palette="Plotly"):
                 yield f"rgb{(r, g, b)}"
             elif color.startswith("rgb("):
                 yield color
+
+
+def load_config(test_dir: Path):
+    with open(test_dir / "config.yml", "r") as f:
+        return yaml.load(f)
+
+
+def config_value(cfg: dict, key: str):
+    parts = key.split(".")
+    for part in parts:
+        cfg = cfg[part]
+    return cfg

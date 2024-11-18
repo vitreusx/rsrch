@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
+from parse import *
 from tqdm.auto import tqdm
 from utils import TBScalars
 
@@ -207,18 +208,29 @@ def split_ratios_loader():
     return res_df, scalars
 
 
-def ppo_base_loader():
-    results_dir = Path("../results/ppo/base")
-    scalars = TBScalars(".cache/ppo/base")
+def ppo_sweep_loader():
+    results_dir = Path("../results/ppo/sweep")
+    scalars = TBScalars(".cache/ppo/sweep")
 
     res_df = []
     for test in tqdm([*results_dir.iterdir()]):
         params = test.name.split("-")
         test_r = {}
         test_r["env"] = params[0]
-        types = {"seed": int}
+        types = {"cfg": str, "seed": int}
         for (name, typ), value in zip(types.items(), params[1:]):
             test_r[name] = typ(value.removeprefix(f"{name}="))
+
+        cfg = test_r["cfg"]
+        rl_ratio, num_epochs, num_mb = parse("k{}_e{}_mb{}", cfg)
+        del test_r["cfg"]
+        test_r = {
+            **test_r,
+            "rl_ratio": rl_ratio,
+            "num_epochs": num_epochs,
+            "num_mb": num_mb,
+        }
+
         df = scalars.read(test)
         final_val = df[df["tag"] == "val/mean_ep_ret"].iloc[-1]
         if final_val["step"] >= 400e3:
@@ -248,4 +260,48 @@ def data_aug_sweep_loader():
             res_df.append({"path": test, **test_r})
 
     res_df = pd.DataFrame.from_records(res_df)
+    return res_df, scalars
+
+
+def sac_alpha_search_loader():
+    results_dir = Path("../results/sac/alpha_search")
+    scalars = TBScalars(".cache/sac/alpha_search")
+
+    res_df = []
+    for test in tqdm([*results_dir.iterdir()]):
+        params = test.name.split("-")
+        test_r = {}
+        test_r["env"] = params[0]
+        types = {"seed": int, "round": int}
+        for (name, typ), value in zip(types.items(), params[1:]):
+            test_r[name] = typ(value.removeprefix(f"{name}="))
+        df = scalars.read(test)
+        final_val = df[df["tag"] == "val/mean_ep_ret"].iloc[-1]
+        if final_val["step"] >= 400e3:
+            test_r["score"] = final_val["value"]
+            res_df.append({"path": test, **test_r})
+    res_df = pd.DataFrame.from_records(res_df)
+
+    return res_df, scalars
+
+
+def sac_ent_sched_exp_loader():
+    results_dir = Path("../results/sac/ent_sched_exp")
+    scalars = TBScalars(".cache/sac/ent_sched_exp")
+
+    res_df = []
+    for test in tqdm([*results_dir.iterdir()]):
+        params = test.name.split("-")
+        test_r = {}
+        test_r["env"] = params[0]
+        types = {"seed": int}
+        for (name, typ), value in zip(types.items(), params[1:]):
+            test_r[name] = typ(value.removeprefix(f"{name}="))
+        df = scalars.read(test)
+        final_val = df[df["tag"] == "val/mean_ep_ret"].iloc[-1]
+        if final_val["step"] >= 400e3:
+            test_r["score"] = final_val["value"]
+            res_df.append({"path": test, **test_r})
+    res_df = pd.DataFrame.from_records(res_df)
+
     return res_df, scalars
