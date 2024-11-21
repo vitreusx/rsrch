@@ -20,12 +20,16 @@ def final_prelim(test_name: str, suffix=""):
 
     envs = A100k_MONO
     seeds = [*range(5)]
+    configs = [(8, 8), (16, 8), (4, 8), (8, 4)]
 
-    for env, seed in product(envs, seeds):
+    for env, seed, (rl_ratio, num_epochs) in product(envs, seeds, configs):
         opts = {
             "env": {"type": "atari", "atari.env_id": env},
             "repro.seed": seed,
-            "run.dir": f"runs/{test_name}/{env}-seed={seed}" + suffix,
+            "_rl_ratio": rl_ratio,
+            "_update_epochs": num_epochs,
+            "run.dir": f"runs/{test_name}/{env}-cfg={rl_ratio}x{num_epochs}-seed={seed}"
+            + suffix,
             **common_opts,
         }
         args = [*common_args, "-o", format_opts(opts)]
