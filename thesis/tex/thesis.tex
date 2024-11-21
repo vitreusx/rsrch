@@ -1,31 +1,52 @@
-\documentclass[twoside,11pt]{article}
+\documentclass[en]{pracamgr}
+
+\usepackage[autostyle]{csquotes}
 \usepackage{blindtext}
 \usepackage{algorithm}
 \usepackage{algpseudocode}
 \usepackage{amssymb}
 \usepackage{caption}
-\usepackage{svg}
-\usepackage{setspace}
-\usepackage[preprint]{styles/jmlr2e}
+\usepackage[backend=biber,style=authoryear,natbib=true]{biblatex}
+\addbibresource{zotero.bib}
+\usepackage{hyperref}
+\usepackage{bookmark}
+\usepackage{graphicx}
 
-\newcommand{\algorithmautorefname}{Algorithm}
+\newcommand{\algorithmrefname}{Algorithm}
 \newcommand{\env}[1]{{\tt #1}}
 
-% \doublespacing
+\hypersetup{colorlinks=true}
 
 \begin{document}
 
-\title{Investigating and Combining Approaches for Data-Efficient Model-based RL}
+\autor{Jakub Bednarz}{406103}
 
-\author{
-  \name Jakub Bednarz
-  \email jb406103@students.mimuw.edu.pl \\
-  \addr University of Warsaw \\
-  ul. Banacha 2 \\
-  02-097 Warszawa
+\title{Investigating and Combining Approaches for Data-Efficient Model-based RL}
+\titlepl{Analiza i połączenie metod w wydajnym obliczeniowo uczeniu ze wzmocnieniem  bazowanym na modelu}
+
+\kierunek{Machine Learning}
+
+\opiekun{dr. Jacek Cyranka\\
+  Instytut Informatyki\\
 }
 
+\date{Nov 2024}
+
+\dziedzina{
+  11.4 Artificial Intelligence\\
+}
+
+\klasyfikacja{...}
+
+\keywords{...}
+
 \maketitle
+
+\begin{abstract}
+  [Abstract]
+\end{abstract}
+
+\tableofcontents
 
 \section{Introduction}
 
@@ -71,7 +92,7 @@ Formally, the environment can be represented by a Markov decision chain (MDP) in
 
 A number of setups for evaluating data-efficient agents have been established in prior work.
 
-\paragraph{Atari-100k} For discrete control, the \emph{de facto} standard benchmark is Atari-100k (Ref: SimPLe paper), a subset of 26 games from the full Atari Learning Environment (ref the paper) benchmark, limited to $400\times 10^3$ game frames, equivalent to $100 \times 10^3$ agent stops assuming the standard action repeat value of $4$.
+\paragraph{Atari-100k} For discrete control, the \emph{de facto} standard benchmark is Atari-100k \cite{kaiser_model-based_2024}, a subset of 26 games from the full Atari Learning Environment (ref the paper) benchmark, limited to $400\times 10^3$ game frames, equivalent to $100 \times 10^3$ agent stops assuming the standard action repeat value of $4$.
 
 \subsection{Data augmentation in RL}
 
@@ -318,7 +339,7 @@ The results can be found in \autoref{fig:adaptive_v1_0}, along with the baseline
 \begin{figure}
   \centering
   \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/adaptive_v1_0.pdf}
-  \caption{}
+  \caption{The comparison of the final validation scores, for the adaptive ratio experiment {\sf Ada} and the baseline experiments {\sf 1} - {\sf 64}, where the number denotes the model/RL update ratio $K$. Each subplot shows the results for a different environment tested. The bars signify mean and one standard deviation, obtained from a sample of $5$ training runs for each configuration.}
   \label{fig:adaptive_v1_0}
 \end{figure}
 
@@ -327,14 +348,14 @@ Given that the idea behind this approach is to minimize model overfitting by mon
 \begin{figure}
   \centering
   \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/adaptive_v1_0.val_loss.pdf}
-  \caption{}
+  \caption{The comparison of the final model validation loss values, for the adaptive ratio experiment {\sf Ada} and the baseline experiments {\sf 1} - {\sf 64}, where the number denotes the model/RL update ratio $K$. Each subplot shows the results for a different environment tested. The bars signify mean and one standard deviation, obtained from a sample of $5$ training runs for each configuration.}
   \label{fig:adaptive_v1_0_loss}
 \end{figure}
 
 \begin{figure}
   \centering
   \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/adaptive_v1_0.curves.pdf}
-  \caption{}
+  \caption{The curves for the model validation loss and the current update ratio, for the adaptive ratio experiment. Each column represents a different Atari task. Two training runs, corresponding to two different RNG seeds, are shown on each subplot. The model validation curves have been smoothed with exponential moving average to improve the clarity of the presentation.}
   \label{fig:adaptive_v1_0_curves}
 \end{figure}
 
@@ -345,7 +366,7 @@ It appears, then, that the theoretical underpinnings behind the effectiveness of
 \begin{figure}
   \centering
   \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/adaptive_wm_v1_0.pdf}
-  \caption{}
+  \caption{A comparison between the final validation scores for the coupled and the decoupled variants of the adaptive update ratio experiment. Each subplot represents a different environment tested. Each box signifies the results for a given configuration - mean and one standard deviation, obtained from a sample of $5$ training runs for each configuration.}
   \label{fig:adaptive_wm_v1_0}
 \end{figure}
 
@@ -362,14 +383,14 @@ We follow the original paper in choosing random shifts as the image transformati
 \begin{figure}
   \centering
   \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/data_aug.pdf}
-  \caption{}
+  \caption{A comparison of the final validation scores for the data-augmented agent, and a non-data-augmented baseline. Each subplot represents the results for a single environment. In each subplot, results for different values of model/RL update ratio $K$ are grouped together. Each group contains a box, signifying the mean and the standard deviation evaluated across $5$ training runs, for the data-augmented and the non-data-augmented variants.}
   \label{fig:data_aug}
 \end{figure}
 
 \begin{figure}
   \centering
   \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/data_aug.val_loss.pdf}
-  \caption{}
+  \caption{A comparison of the final model validation loss values for the data-augmented agent, and a non-data-augmented baseline. Each subplot represents the results for a single environment. In each subplot, results for different values of model/RL update ratio $K$ are grouped together. Each group contains a box, signifying the mean and the standard deviation evaluated across $5$ training runs, for the data-augmented and the non-data-augmented variants.}
   \label{fig:data_aug_val_loss}
 \end{figure}
 
@@ -378,7 +399,7 @@ If we take a look at the model training loss curves (\autoref{fig:data_aug_train
 \begin{figure}
   \centering
   \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/data_aug.train_curves.pdf}
-  \caption{}
+  \caption{A comparison of the model training loss curves for the data-augmented agent, and a non-data-augmented baseline. Each column represents the results for a single environment. Each row corresponds to a different configuration - model/RL update ratio used. In each subplot, curves for the data-augmented and non-data-augmented variants are displayed. The curves have been smoothed by exponential moving average, to improve the clarity of the presentation.}
   \label{fig:data_aug_train_curves}
 \end{figure}
 
@@ -394,12 +415,14 @@ As suggested in (DrQ paper citation), the type of image augmentation used has a 
   \item {\tt vflip}: Flip the image vertically, with probability $p = 0.1$.
 \end{enumerate}
 
+where $x \sim \mathcal{U}[a, b]$ denotes a sample from the uniform distribution over $[a, b] \subset \mathbb{R}$.
+
 The results (\autoref{fig:data_aug_sweep}) suggest, that no type of image augmentation has a consistent positive effect on the agent performance.
 
 \begin{figure}
   \centering
   \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/data_aug.sweep.pdf}
-  \caption{}
+  \caption{The final validation scores for different data augmentation types. Each row contains the results for a different environment tested. Each of the boxes corresponds to a given augmentation type, and displays the mean and the standard deviation measured with a sample of $5$ training runs.}
   \label{fig:data_aug_sweep}
 \end{figure}
 
@@ -431,19 +454,28 @@ There remain two hyperparameters to select: the number of update epochs $N$, mea
 Beyond that, we need to specify the training recipe. We leave the model update ratio fixed at $K_{\rm WM} = 4$, and finetune RL update ratio $K_{\rm RL}$, number of update epochs $N$ and number of minibatches $M$. As the baseline, we select a scenario with $K_{\rm WM} = K_{\rm RL} = 4$. We will examine following configurations:
 
 \begin{enumerate}
-  \item $K_{\rm RL} = 8, N = 4, M = 1$: We exchange less frequent RL optimization steps for a greater number of update epochs within each optimization step.
-  \item $K_{\rm RL} = 8, N = 8, M = 1$: A variant of the first configuration, with more update epochs.
-  \item $K_{\rm RL} = 16, N = 8, M = 1$: A more extreme version of the first preset, with an equal number of RL optimization steps, and greater data reuse.
-  \item $K_{\rm RL} = 8, N = 4, M = 8$: We split the batch into $8$ minibatches, increasing the total number of parameter updates by $8 \times$.
+  \item {\tt 8/4/1} ($K_{\rm RL} = 8, N = 4, M = 1$) - We exchange less frequent RL optimization steps for a greater number of update epochs within each optimization step.
+  \item {\tt 8/8/1} ($K_{\rm RL} = 8, N = 8, M = 1$) - A variant of the first configuration, with more update epochs.
+  \item {\tt 16/8/1} ($K_{\rm RL} = 16, N = 8, M = 1$) - A more extreme version of the first preset, with an equal number of RL optimization steps, and greater data reuse.
+  \item {\tt 8/4/8} ($K_{\rm RL} = 8, N = 4, M = 8$) - We split the batch into $8$ minibatches, increasing the total number of parameter updates by $8 \times$.
 \end{enumerate}
 
-\paragraph{Results} If we take a look at the final validation scores (\autoref{fig:ppo_sweep}), we may infer that using PPO, in any of the tested configurations, has a positive effect on the performance. We may note that, except for the preset with $M = 8$, the training time is effectively the same.
+\paragraph{Results} If we take a look at the final validation scores (\autoref{fig:ppo_sweep}), we may infer that using PPO, in any of the tested configurations, has, on average, a positive effect on the performance. The relationship is not consistent, though - for example, on \env{MsPacman}, the configuration {\tt 16/8/1} underperforms {\tt 8/4/1}, whereas the opposite is the case on the other two environments.
+
+In order for the comparison to be fair, we ought to make sure, that the total training time does not vastly exceed the baseline. As \autoref{fig:ppo_sweep_time} indicates, except for the preset with $M = 8$, the training time is either the same, or even lower, even though the number of RL optimization steps is higher. This is likely due to the smaller number of imaginary batches, that need to be constructed.
 
 \begin{figure}
   \centering
   \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/ppo.sweep.pdf}
-  \caption{}
+  \caption{Comparison of the final validation scores between the baseline and a number of different configurations of PPO. Each subplot contains the results for a different Atari environment. Each box represents the mean and the standard deviation computed across $5$ training runs.}
   \label{fig:ppo_sweep}
+\end{figure}
+
+\begin{figure}
+  \centering
+  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/ppo_sweep.time.pdf}
+  \caption{Comparison of the total training run durations for the baseline and a number of different configurations of PPO. Each subplot contains the results for a different Atari environment. Each box represents the mean and the standard deviation computed across $5$ training runs.}
+  \label{fig:ppo_sweep_time}
 \end{figure}
 
 \subsubsection{SAC Experiments}
@@ -457,32 +489,43 @@ The most impactful hyperparameter left, then, is the choice of temperature/rewar
 \begin{figure}
   \centering
   \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/sac.alpha_perf.pdf}
-  \caption{}
+  \caption{Relationship between SAC's $\alpha$ value, and the agent performance. Each subplot contains the results for a different Atari environment. Each point represents a single training run. The $x$-axis denotes the value of $\alpha$ parameter used in the test. The $y$-axis signifies the final validation score obtained by the agent.}
   \label{fig:sac_alpha_perf}
 \end{figure}
 
 \begin{figure}
   \centering
   \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/sac.alpha_ent.pdf}
-  \caption{}
+  \caption{Relationship between SAC's $\alpha$ value, and the final mean policy entropy. Each subplot contains the results for a different Atari environment. Each point represents a single training run. The $x$-axis denotes the value of $\alpha$ parameter used in the test. The $y$-axis signifies the final value of the mean policy entropy metric.}
   \label{fig:sac_alpha_ent}
 \end{figure}
 
-Another method, which can be used to derive the value of $\alpha$ temperature, is auto-tuning, as described in (SAC Alg. and App. citation). Briefly, the idea is to specify a schedule of the mean policy entropy, rather than the $\alpha$ parameter itself, and optimize the value of $\alpha$ so that the schedule is achieved. There remains, however, a question of what kind of schedule to use. The recommendations for the model-free case suggest the use of a constant entropy target $0.89 H_{\rm max}$ for the discrete action spaces, where $H_{\rm max}$ denotes the maximum possible entropy for a policy in a given action space. However, the entropy curves of the best-performing agents in the baseline scenario (\autoref{fig:baseline_ent}) suggest, that we ought to specify a rapidly decaying entropy schedule, with the final entropy of approximately $0.05 H_{\rm max}$.
+Another method, which can be used to derive the value of $\alpha$ temperature, is auto-tuning, as described in (SAC Alg. and App. citation). Briefly, the idea is to specify a schedule of the mean policy entropy, rather than the $\alpha$ parameter itself, and optimize the value of $\alpha$ so that the schedule is achieved. The optimization is achieved via minimization of loss function $L = \alpha (H - H_0)$, where $H_0$ denotes the current entropy target.
+
+In order to use it, we must specify the target entropy schedule. The recommendations for the model-free case suggest the use of a constant entropy target of $0.89 H_{\rm max}$ for the discrete action spaces, where $H_{\rm max}$ denotes the maximum possible entropy for a policy in a given action space. However, the entropy curves of the best-performing agents in the baseline scenario (\autoref{fig:baseline_ent}) imply, that we ought to specify a rapidly decaying entropy schedule, with the final mean entropy value of approximately $0.05 H_{\rm max}$.
 
 \begin{figure}
   \centering
   \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/baseline_ent.pdf}
-  \caption{}
+  \caption{Mean policy entropy curves for the best-performing agents in the baseline experiment. Each Atari environment is represented by a different subplot. The $x$-axis denotes the number of environment step passed. The $y$-axis represents the mean policy entropy. Each solid line represents a different training run. The dashed line denotes an example entropy schedule approximating these schedules.}
   \label{fig:baseline_ent}
+\end{figure}
+
+With this in mind, we will now proceed with an experiment, wherein we will set the entropy target to follow the dotted line on \autoref{fig:baseline_ent} - to be precise, we start at $0.99 H_{\rm max}$, descend to $0.1 H_{\rm max}$ by the environment step $50 \times 10^3$, and reach the target of $0.05 H_{\rm max}$ by the environment step $200 \times 10^3$. As for the optimizer for the $\alpha$ loss value, we choose Adam with learning rate $2.5 \times 10^{-3}$, $\epsilon = 10^{-5}$ and leave other parameters as default in Pytorch.
+
+The results (\autoref{fig:sac_ent_sched}) are inconclusive - performance on \env{MsPacman} is significantly improved, remains approximately the same on \env{Assault}, and is degraded on \env{CrazyClimber}.
+
+\begin{figure}
+  \centering
+  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/sac.ent_sched2.pdf}
+  \caption{A comparison between the baseline experiment and the experiment with SAC and a user-defined entropy schedule. Each Atari environment tested is represented by a single subplot. The boxes denote the mean and the standard deviation of the final validation score, estimated with $5$ training runs per configuration.}
+  \label{fig:sac_ent_sched}
 \end{figure}
 
 \section{Combining the improvements}
 
 \section{Discussion}
 
-\vskip 0.2in
-\bibliography{thesis}
-
+\printbibliography
 
 \end{document}

@@ -94,17 +94,23 @@ def sanity_check_loader():
     return res_df, scalars
 
 
+def canonical_task_name(name: str):
+    name = name.removeprefix("atari_")
+    name = "".join(w.capitalize() for w in name.split("_"))
+    if name == "JamesBond":
+        name = "Jamesbond"
+    return name
+
+
 def reference_loader():
     with open("ref_scores/baselines.json", "rb") as f:
         baselines = json.load(f)
 
     records = []
     for task in baselines:
-        name = task.removeprefix("atari_")
-        name = "".join(w.capitalize() for w in name.split("_"))
         records.append(
             {
-                "task": name,
+                "task": canonical_task_name(task),
                 **{
                     k: baselines[task].get(k)
                     for k in ("random", "human_gamer", "human_record")
@@ -122,12 +128,10 @@ def dreamerv2_loader():
 
     records = []
     for run in scores:
-        name = run["task"].removeprefix("atari_")
-        name = "".join(w.capitalize() for w in name.split("_"))
         for x, y in zip(run["xs"], run["ys"]):
             records.append(
                 {
-                    "task": name,
+                    "task": canonical_task_name(run["task"]),
                     "seed": int(run["seed"]),
                     "time": x,
                     "score": y,
@@ -288,6 +292,28 @@ def sac_alpha_search_loader():
 def sac_ent_sched_exp_loader():
     results_dir = Path("../results/sac/ent_sched_exp")
     scalars = TBScalars(".cache/sac/ent_sched_exp")
+
+    res_df = []
+    for test in tqdm([*results_dir.iterdir()]):
+        params = test.name.split("-")
+        test_r = {}
+        test_r["env"] = params[0]
+        types = {"seed": int}
+        for (name, typ), value in zip(types.items(), params[1:]):
+            test_r[name] = typ(value.removeprefix(f"{name}="))
+        df = scalars.read(test)
+        final_val = df[df["tag"] == "val/mean_ep_ret"].iloc[-1]
+        if final_val["step"] >= 400e3:
+            test_r["score"] = final_val["value"]
+            res_df.append({"path": test, **test_r})
+    res_df = pd.DataFrame.from_records(res_df)
+
+    return res_df, scalars
+
+
+def sac_ent_sched2_loader():
+    results_dir = Path("../results/sac/ent_sched2")
+    scalars = TBScalars(".cache/sac/ent_sched2")
 
     res_df = []
     for test in tqdm([*results_dir.iterdir()]):
