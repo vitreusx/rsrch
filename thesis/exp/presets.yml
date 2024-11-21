@@ -185,7 +185,7 @@ thesis:
           initial_value: 64
 
     wm_v1_0:
-      $extends: [v1]
+      $extends: [v1_0]
       _rl_ratio: 4.0
       _adaptive_setup:
         rl_to_wm_ratio: 0.0
@@ -416,3 +416,16 @@ thesis:
           clip_grad: 0.5
           rew_fn: id
           clip_coef: 0.1
+
+  final:
+    prelim:
+      $extends: [ppo.base, adaptive_ratio.wm_v1_0]
+      _rl_ratio: 4
+      _update_epochs: 8
+      _num_mb: 1
+      rl:
+        type: ppo
+        loader: dreamer_rl
+        ppo:
+          update_epochs: ${_update_epochs}
+          num_minibatches: ${_num_mb}
