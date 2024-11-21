@@ -11,11 +11,11 @@
 \usepackage{hyperref}
 \usepackage{bookmark}
 \usepackage{graphicx}
+\usepackage{minted}
 
-\newcommand{\algorithmrefname}{Algorithm}
+\newcommand{\algorithmautorefname}{Algorithm}
+\newcommand{\listingautorefname}{Listing}
 \newcommand{\env}[1]{{\tt #1}}
-
-\hypersetup{colorlinks=true}
 
 \begin{document}
 
@@ -48,7 +48,7 @@
 
 \tableofcontents
 
-\section{Introduction}
+\chapter{Introduction}
 
 Reinforcement Learning (RL), a research field dedicated to developing intelligent autonomous agents, capable of learning to do tasks in various environments, has achieved remarkable progress in recent times. Through the use of deep learning and artificial neural networks, algorithms playing video games at a super-human level or controlling robots without any prior knowledge have been developed.
 
@@ -74,7 +74,7 @@ With this in mind, the goal of this thesis is to answer following questions:
 
 The rest of this thesis is structured as follows: (...)
 
-\section{Background}
+\chapter{Background}
 
 \subsection{Reinforcement Learning}
 
@@ -139,7 +139,9 @@ The main idea of this paper is inspired and motivated by Rainbow architecture an
 % I've already gone through literature, but it would be wise to recheck it a few times since it's quite a provocative statement.
 Our goal is to develop a framework for sample-efficient RL, in a similar fashion to Rainbow - taking a base architecture, an array of approaches developed to improve sample efficiency, and combine them together into a single architecture. To our knowledge, this has not yet been investigated.
 
-\section{Method}
+\chapter{Method}
+
+\section{Overall design}
 
 Let us now consider how these advancements can be integrated into a single unified, modular framework for constructing sample-efficient RL agents.
 
@@ -163,17 +165,204 @@ Our desiderata are best fit with a generic approach inspired by the Dreamer seri
 
 This formulation subsumes most of the algorithms we have considered so far, such as Dreamer, MBPO, PlaNet, SimPLe, or IRIS: the specific method can be replicated by adjusting the architectures of the model and of the RL module, or the form of the input data for the RL module optimization step. Data augmentation may, for example, be implemented by placing a layer between the replay data loader and the model.
 
-% Something is missing here, I believe.
+Beyond the network architecture, a major component of the design of sample-efficient agents is the structure of the training loop, meaning the order and frequency in which environment interaction, model optimization and RL module optimization occur. Indeed, works such as Data-Efficient Rainbow or SR-SPR prove that ordinarily inefficient methods can be made vastly more data-efficient by refining the training process. Thus, it is necessary for the framework to accomodate specifying different kinds of training recipes.
 
-Beyond the network architecture, a major component of the design of sample-efficient agents is the structure of the training loop, meaning the order and frequency in which environment interaction, model optimization and RL module optimization occur. Indeed, works such as Data-Efficient Rainbow or SR-SPR prove that ordinarily inefficient methods can be made vastly more data-efficient by refining the training process. We wish to extend these findings to the domain of model-based RL. This is, however, non-trivial, and requires further investigation.
+\section{Implementation}
+
+In order to facilitate the experiments, we have implemented a modular model-based RL framework in Python, using the PyTorch library. The source code is accessible at \url{https://github.com/vitreusx/rsrch}, and is structured as a regular Python package, making it installable.
+
+The entry point for the framework is the \href{https://github.com/vitreusx/rsrch/blob/devel/dreamerx/runner.py}{{\tt Runner} class}, responsible for instantiating the requisite neural networks, RL environments, replay buffers, data loaders, optimizers etc. We will elaborate on the further aspects of the implementation by following a normal flow of the program.
+
+\subsection{Configuration}
+
+First, we must load the configuration. Due to the variety of the experiments and ablations, that the system needs to accomodate, the framework needs to be highly configurable. Our implementation allows for the control of, among other things, \emph{types} of the networks to be used - one may, for example, use IMPALA observation encoder rather than the original one - as opposed to only e.g. the layer sizes; and the entire structure of the training loop.  We have found following properties to be crucial throughtout the development process:
+
+\begin{enumerate}
+  \item There needs to be a single YAML file with default parameter values.
+  \item We need to be able to compose \emph{preset files}. These files are, in effect, overwrites of the default config. These presets also need to be extensible. For example, we may create a preset corresponding to a single experiment, containing the parameter values to be overriden, and want to create a variant of that experiment by changing a single value. We may also want to combine multiple presets, for example in order to copy environment specification from one preset, and training details from another.
+  \item The solution must allow for variable interpolation, meaning the capacity for one parameter to reference other values in the YAML file. The interpolation cannot be limited to strings alone. Also, we would like to be able to perform mathematical operations to compute certain parameter values on-the-fly. The interpolation ought to be performed after all the presets have been merged into the base configuration object.
+  \item The raw configuration object (a dictionary) needs to be convertible to a Python class, preferably a {\tt dataclass}, in order to ensure type safety and increase the ease of development via the presence of the type hints.
+\end{enumerate}
+
+Of the existing solutions, we have found \href{https://omegaconf.readthedocs.io}{\tt omegaconf} to be the one best matching our desiderata.
+
+\subsection{Environments}
+
+After parsing the configuration file, we must set up the RL environments, such as the Atari games, or DMC tasks. Our main design goal concerning the construction and use of the RL environments has been to separate the implementation details of the environments, and the rest of the project.
+
+The main issue is as follows: the components further down the line, such as the actor networks or the world model, accept the PyTorch tensors as the input, whereas most RL libraries return Numpy arrays. The replay buffer(s) should also store Numpy arrays. We may note, that in some common cases, none of these ``data formats'' are not the same, even the replay buffer data and the data obtained from the environment. For example, many Atari agents utilize \emph{frame stacking}, whereby last $K$ emulator frames are passed to the agent. Clearly, we would like to store only the most recent one in the buffer, to avoid wasting memory - in fact, for a replay buffer of size $2 \times 10^6$ and grayscale observations of size $86 \times 86$, we would need $\approx 60{\rm G}$ of memory to store all of them in an uncompressed form if not doing any memory optimization. Beyond this, we need to make sure, that the data transforms of the environment samples and buffer samples yield the same results. Usually, all these nuances are handled manually, but this approach introduces a lot of possibilities for inadvertantly adding hard-to-fix bugs.
+
+Ideally, then, we would like to hide all of this from the end user. The way we achieve this is through an \emph{environment SDK}. The SDK's role is to expose a minimal interface for creating environments, performing interactions with them, and creating replay buffers to store the experience. The Python-esque pseudocode is provided in \autoref{lst:env_sdk}. The idea is to provide an unified interface for acting in the environment(s) via a {\tt VecAgent} protocol, and to hide the details concerning various conversions, data storage details etc. through {\tt wrap\_buffer} and {\tt rollout} methods of the SDK.
+
+\begin{listing}
+  \begin{minted}[]{python}
+
+    class VecAgent:
+        def reset(self, indices, observations):
+            """Receive first observations of the new episodes in the
+            environments specified by the indices."""
+        
+        def policy(self, indices):
+            """Choose actions to perform in given environments, as specified by
+            the indices."""
+        
+        def step(self, indices, actions, observations):
+            """Observe new observations and actions leading to them in the 
+            environments specified by the indices."""
+
+    class SDK:
+        obs_space: Any
+        """Observation space, in tensor format."""
+        
+        act_space: Any
+        """Action space, in tensor format."""
+
+        def make_envs(self, num_envs: int, **kwargs):
+            """Create a number of environments. The implementation can be
+            optimized, e.g. by vectorizing the environments."""
+        
+        def wrap_buffer(self, buffer):
+            """Adapt a regular replay buffer into an SDK-aware version.
+            When adding data obtained from the environment, it is converted to 
+            the buffer format. When sampling the data, the samples are converted
+            to the tensor format."""
+        
+        def rollout(self, envs, agent: VecAgent):
+            """Create a stream of interactions of an agent with the environment(s).
+            The agent receives data in the tensor format, and should output actions
+            in the tensor format as well."""
+  \end{minted}
+  \caption{Pseudocode for environment SDKs}
+  \label{lst:env_sdk}
+\end{listing}
+
+Another crucial feature is the presence of {\tt obs\_space} and {\tt act\_space} member fields. They provide information concerning the format of the data received by the agent or sampled from the buffer. We provide a set of classes mirroring the {\tt gym.spaces} classes, such as {\tt Image} or {\tt Box}, but for the PyTorch tensors, instead of Numpy arrays.
+
+We provide SDKs for Atari Learning Environment (ALE), DeepMind Control Suite (DMC) and a generic one for \href{https://gymnasium.farama.org/}{\tt gymnasium} environments. For ALE and DMC, we use optimized, C++-based implementations provided by \href{https://github.com/sail-sg/envpool}{\tt envpool} library [Add the paper citation]. We may note that, despite {\tt envpool} not sharing API with Gym environments, we do not need to make any changes to the rest of the code, like the training loop, showcasing one major advantage of using such SDKs over handling all the environment-related code manually.
+
+\subsection{World model and RL modules}
+
+In order to implement swapping out the world model and the RL algorithm implementations, we separate them out into replaceable modules with unified interfaces.
+
+As regards the world model interface, it is difficult to devise a single common scheme for all possible methods we may envision. Some algorithms, for example, perform transitions in observation space, whereas others operate in a latent space. The model can either give the probability distribution over future states, or act in an implicit manner, e.g. by generating future states from noise via Diffusion Models. Certain approaches model the environment only in the sense, that they allow reconstruction of the rewards, and the ``states'' produced do not correspond to the actual environment states.
+
+We take the path of requiring the model to implement (1) an inference process $s_{t+1} \sim p(s_{t+1} \mid s_t, a_t, o_{t+1})$, (2) performing an imaginary rollout $\widetilde{s}_{t+1:t+H}, \widetilde{r}_{t+1:t+H} \sim p(\widetilde{s}_{t+1:t+H}, \widetilde{r}_{t+1:t+H} \mid s_t, a_{t:t+H-1})$, where $H$ is the horizon length. This choice excludes the use of RL algorithms which explicitly require access to the transition probability distribution, but in practice none of the algorithms considered so far had such a requirement.
+
+In the case of RL algorithm modules, we require the sampling of the next action, given the current state $a_t \sim \pi(a_t \mid s_t)$ - the actor is, in effect, memoryless, and we will rely on the world model to encode all the information necessary to perform optimal actions.
+
+During the training process, additional code and networks are necessary to perform optimization. We split these responsibilities off to a separate {\tt Trainer} class. For example, a {\tt Trainer} for a world model may contain, aside from the optimizers, observation decoder, which is strictly speaking not necessary during inference. Similarly, a trainer for an actor-critic RL algorithm would contain the value and $Q$ functions, as well as the target versions (if using double Q learning).
+
+We provide implementations of DreamerV2's world model and RL algorithm - a variant of Advantage Actor-Critic. We follow the original source code for the agent \href{https://github.com/danijar/dreamerv2}{\tt danijar/dreamerv2}. Let us note, that the authors' reference implementation as been written for the Tensorflow deep learning framework. We have considered a number of open-source reimplementations of Dreamer in Pytorch, and found them to be inadequate in some ways:
+
+\begin{enumerate}
+  \item \href{https://github.com/jsikyoon/dreamer-torch}{\tt jsikyoon/dreamer-torch} is a very close translation of the original codebase, suffering from the same issues, mainly the code quality.
+  \item \href{https://github.com/jurgisp/pydreamer}{\tt jurgisp/pydreamer} contains a number of features not present in the original implementation, such as variable model update ratios, using an auxiliary actor-critic in the model, and importance-weighted advantage estimation.
+  \item \href{https://github.com/pytorch/rl}{\tt pytorch/rl} and \href{https://github.com/juliusfrost/dreamer-pytorch}{\tt juliusfrost/dreamer-pytorch} only implement DreamerV1.
+  \item \href{https://github.com/Eclectic-Sheep/sheeprl}{\tt Eclectic-Sheep/sheeprl} is a distributed RL framework.
+\end{enumerate}
+
+As none of the considered options proved either usable as a Python package, or clear enough to ``copy-paste'' into the framework in the form of a standalone module, as described above, we have decided it would be better to reimplement it ourselves. Beyond merely replicating the Tensorflow code, we have added the ability to specify and change the encoder and decoder architectures for observations, rewards and termination signals. During development process, we have also found, that the eager-evaluation nature of Pytorch hurts the performance, compared to Tensorflow implementation, which uses JIT. Thus, we have also implemented a {\tt torch.jit.script} version of the Recurrent State Space Module in PyTorch, which has increased the number of iterations per second by $25 \%$.
+
+Also, we provide implementations of two model-free algorithms: Proximal Policy Optimization (PPO) and Soft Actor-Critic (SAC). We base our implementations on the ones found in \href{https://github.com/vwxyzjn/cleanrl}{\tt vwxyzjn/cleanrl}, with a number of changes made to make them usable in the model-based context:
+
+\begin{enumerate}
+  \item The implementation of SAC used a one-step TD target $y = r + \gamma V(s')$. In order to bring it in line with PPO and A2C, we change it to Generalized Advantage Estimation (GAE).
+  \item Since the ``observations'' given to the model are in fact world model states, we change the default convolutional encoders to the feedforward networks used in the A2C implementation.
+  \item Imaginary sequences generated by the model are unlike the regular sequences drawn from e.g. the replay buffer. Because we do not know \emph{a priori} whether a sampled state is terminal or not - we may only use the terminality predictor of the model, which would return the probability that a state is terminal or not - we need to account for a degree of ``fuzziness'' (in the sense of fuzzy logic) of the latent states. The alternative could be to stop a particular rollout during the generation process, when the termination probability exceeds a given threshold. In that instance, however, we would have to deal with batches of sequences of non-uniform length, which would likewise require changes to the implementation of the RL algorithm, and would likely be computationally inefficient, since we could not perform batched operations easily. We opt, therefore, for the former approach; this is also the approach taken in the DreamerV2's implementation of A2C. In practice, this nuance requires two implementation changes to be made: (1) per-item losses need to be multiplied by a weight factor, to prevent unreal states from affecting the optimization process, (2) GAE and other value estimation methods need to be changed in order to accept non-constant $\gamma$ discount factors.
+\end{enumerate}
+
+\subsection{Data loaders and model-free mode}
+
+Given the replay buffer, the next step is to sample sequences from it, and collate them into a batch to be used for model or RL optimization. We extract this process into a separate \emph{data loader} class, similar to PyTorch {\tt torch.utils.data.DataLoader}. In this way, we make the training loop more readable, and more similar to the regular training loops used for the supervised tasks such as image classification or next-token prediction. The other advantage is the ability to experiment with different kinds of data loaders. We may, for example, use a variant with prioritized sampling, or with data augmentation added.
+
+We can also use this functionality to implement a model-free debug mode. The idea is as follows: when we add a new RL algorithm to test, it would be wise to first test it in a model-free setting, to assess whether any possible agent performance issues are caused by the RL algorithm. This can be achieved in a following fashion:
+
+\begin{enumerate}
+  \item Ordinarily, the RL data loader loads a batch of real-world sequences, performs inference process to obtain the state for each batch item and time step, and performs a rollout ``in imagination'' using the behavior policy and the model. We can, however, replace it by a regular data loader, loading batches of real-environment sequences.
+  \item There remains adjusting the various encoders and other networks to accept environment samples (e.g. images), as opposed to model states. This can be done simply through making changes to the configuration of the RL module.
+\end{enumerate}
+
+\subsection{Training recipes}
+
+After the stage of setting up neural networks, replay buffers, environments etc. we proceed to the training process proper. The main issue is the vastitude of the possible recipes - we could load and/or save checkpoints, load external data to replay buffer, want to use different schedules of performing model and RL training steps, perform validation epochs throughout the process and at the very end, reset network parameters at different time points etc. In order to resolve this issue in as straightforward and user-friendly a manner as possible, we have elected to allow the user to specify the recipe manually in the configuration file.
+
+The relevant configuration field is {\tt stages} - an example can be found in \autoref{lst:recipe_conf}. The task names ({\tt prefill}, {\tt do\_wm\_opt\_step} etc.) correspond to functions of the {\tt Runner} class. We specify the frequency or duration of various actions through {\tt until} and {\tt every} fields - for example, we can see that buffer prefill phase lasts until $P = 20 \times 10^3$ environment steps have passed. The training loop lasts until $T = 400 \times 10^3$ environment steps, and consists of validation epoch every $20 \times 10^3$ steps, model optimization step every $8$ environment steps, RL optimization step every $4$ environment steps etc. Finally, we do a final validation epoch and save the checkpoint.
+
+Such an example experiment configuration would have been difficult to specify precisely, if we were to use pre-defined experiment presets, and would be far less comprehensible.
+
+\begin{listing}
+  \begin{minted}[]{yaml}
+
+    stages:
+      - prefill:
+          until: 20e3
+      - train_loop:
+          until: 400e3
+          tasks:
+            - do_val_epoch: ~
+              every: 20e3
+            - do_wm_val_step: ~
+              every: { n: 16, of: wm_opt_step }
+            - do_rl_val_step: ~
+              every: { n: 16, of: rl_opt_step }
+            - do_wm_opt_step: ~
+              every: 8
+            - do_rl_opt_step: ~
+              every: 4
+            - do_env_step
+      - do_val_epoch
+      - save_ckpt:
+          full: false
+          tag: final
+  \end{minted}
+  \caption{An example {\tt stages} config field.}
+  \label{lst:recipe_conf}
+\end{listing}
+
+\chapter{Experiments}
+
+\section{Experimental setup}
+
+We are interested in evaluating performance on the Atari-100k benchmark. However, performing training runs on the entire set of 26 games and with a full range of RNG seeds for every modification is computationally infeasible. Thus, we will use a subset of these games and a reduced number of seeds as a proxy. To be specific, we shall limit ourselves to a choice of 3 environments and 5 RNG seeds. In order to properly gauge the effect of changes on the full set, we want to construct a subset of Atari-100k with following properties:
+
+\begin{enumerate}
+  % Recheck the claim? Also, define "reasonable"
+  \item Since we are interested in \emph{speeding up} the algorithm, we ought to select such environments, in which the method makes consistent progress in a given extended interaction budget. For example, given a maximum speedup target of $15 \times$, we would focus on the horizon of $15 \cdot (400 \times 10^3) = 6 \times 10^6$ environment steps. If the method doesn't improve much beyond the performance of a random agent, or solves the task immediately, gauging the speedup factor becomes impossible.
+  \item The variance of the results with respect to different RNG seeds used should be minimized, so as to be able to derive the expected score with a limited number of RNG seeds with any degree of accuracy.
+  \item The subset should be as representative of the performance on the whole subset as possible.
+\end{enumerate}
+
+First, let us filter out the environments which do not satisfy first two criteria. In the absence of standardized metrics which would inform our choice quantitatively, we resort to visual inspection of the performance curves for each environment in the first $6 \times 10^6$ steps. The relevant data can be found in \autoref{fig:atari_100k_comp}. Based on it, we select following games for further evaluation: \env{Amidar}, \env{Assault}, \env{Asterix}, \env{CrazyClimber}, \env{JamesBond}, \env{MsPacman} and \env{Pong}.
+
+\begin{figure}
+  \centering
+  \includegraphics[width=\linewidth,height=0.6\paperheight,keepaspectratio]{assets/env_selection.pdf}
+  \caption{Performance curves for Atari-100k, with default settings. The values have been provided by the authors of the DreamerV2 paper. The x-axis represents the number of environment steps passed. The y-axis represents the validation score. Blue curves indicate environments, which we have selected for further evaluation.}
+  \label{fig:atari_100k_comp}
+\end{figure}
+
+Next, we shall select out of this subset 3 games, which are most predictive of the performance on the complete 26-game benchmark. We follow the approach of (Atari-5), and use the source code provided by the authors to arrive at the final result. The three environments selected by the algorithm are: \env{Assault}, \env{CrazyClimber} and \env{MsPacman}.
+
+We use the same environment settings (frame skip values, time limit etc.) as the original DreamerV2. (See Appendix for more details?)
+
+The original implementation of DreamerV2 is written in Tensorflow - we have ported the relevant source code (mainly the implementation of the world model and the actor critic) to Pytorch, resulting in slight changes in overall performance. It remains, however, comparable: \autoref{fig:torch_v_ref} depicts the validation score curves for both the original implementation, and the Pytorch version.
+
+\begin{figure}
+  \centering
+  \includegraphics[width=\linewidth,height=\paperheight,keepaspectratio]{assets/torch_v_ref.pdf}
+  \caption{Comparison of the validation scores for Tensorflow and Pytorch versions. \emph{Note:} The scores for the reference (Tensorflow) version have been supplied by the authors, and were not verified independently.}
+  \label{fig:torch_v_ref}
+\end{figure}
+
+\section{Training recipe optimization}
+
+As mentioned, many model-free algorithms can be made more efficient through training recipe-level improvements. We wish to extend these findings to the domain of model-based RL. This is, however, non-trivial, and requires further investigation.
 
 First, there are purely technical difficulties. Let us, for example, consider scaling up the frequency of model and RL updates. As opposed to the model-free case, we are dealing with two separate learning processes, that of the model and of the RL module, resulting in two separate update frequencies to be tuned. If we were to search for the optimal configuration through a grid search, we would be faced with a quadratic number of training runs to perform, relative to the model-free case, which would quickly become infeasible. It is therefore imperative to reduce the extent of the hyperparameter sweep as much as feasible.
 
 Next, insofar as the collapse of the performance for regular model-free RL agents, when increasing the update-to-data frequency, is attributed to plasticity loss, it is not immediately clear whether model-based agents undergo the same process, whether the model and the RL module suffer from the primacy bias or perhaps only one of them does, and whether interventions proposed in the literature prove beneficial here as well. If such interventions require tuning, as is for example the case for periodic resets, then we possibly encounter another computationally expensive grid search.
 
-Because the optimal training loop parameters are dependent on the specific model and RL modules used, we split our investigation into two parts. First, we shall use a baseline model and RL setup to examine the impact of various design choices in the training loop optimization, with the view of developing architecture-agnostic solution for tuning it. Thereafter, we will look into architectural ablations, to investigate their impact on the performance of the agent.
-
-\section{Training recipe optimization}
+The strategy is as follows:
 
 \subsection{Base architecture}
 
@@ -209,40 +398,7 @@ The training loop is structured as depicted in \autoref{code:dreamer_loop}.
 
 For more details, we refer the reader to the source paper. For our purposes, though, we wish to treat these modules as ``black boxes''.
 
-\subsection{Experimental setup}
-
-We are interested in evaluating performance on the Atari-100k benchmark. However, performing training runs on the entire set of 26 games and with a full range of RNG seeds for every modification is computationally infeasible. Thus, we will use a subset of these games and a reduced number of seeds as a proxy. To be specific, we shall limit ourselves to a choice of 3 environments and 5 RNG seeds. In order to properly gauge the effect of changes on the full set, we want to construct a subset of Atari-100k with following properties:
-
-\begin{enumerate}
-  % Recheck the claim? Also, define "reasonable"
-  \item Since we are interested in \emph{speeding up} the algorithm, we ought to select such environments, in which the method makes consistent progress in a given extended interaction budget. For example, given a maximum speedup target of $15 \times$, we would focus on the horizon of $15 \cdot (400 \times 10^3) = 6 \times 10^6$ environment steps. If the method doesn't improve much beyond the performance of a random agent, or solves the task immediately, gauging the speedup factor becomes impossible.
-  \item The variance of the results with respect to different RNG seeds used should be minimized, so as to be able to derive the expected score with a limited number of RNG seeds with any degree of accuracy.
-  \item The subset should be as representative of the performance on the whole subset as possible.
-\end{enumerate}
-
-First, let us filter out the environments which do not satisfy first two criteria. In the absence of standardized metrics which would inform our choice quantitatively, we resort to visual inspection of the performance curves for each environment in the first $6 \times 10^6$ steps. The relevant data can be found in \autoref{fig:atari_100k_comp}. Based on it, we select following games for further evaluation: \env{Amidar}, \env{Assault}, \env{Asterix}, \env{CrazyClimber}, \env{JamesBond}, \env{MsPacman} and \env{Pong}.
-
-\begin{figure}
-  \centering
-  \includegraphics[width=\linewidth,height=0.6\paperheight,keepaspectratio]{assets/env_selection.pdf}
-  \caption{Performance curves for Atari-100k, with default settings. The values have been provided by the authors of the DreamerV2 paper. The x-axis represents the number of environment steps passed. The y-axis represents the validation score. Blue curves indicate environments, which we have selected for further evaluation.}
-  \label{fig:atari_100k_comp}
-\end{figure}
-
-Next, we shall select out of this subset 3 games, which are most predictive of the performance on the complete 26-game benchmark. We follow the approach of (Atari-5), and use the source code provided by the authors to arrive at the final result. The three environments selected by the algorithm are: \env{Assault}, \env{CrazyClimber} and \env{MsPacman}.
-
-We use the same environment settings (frame skip values, time limit etc.) as the original DreamerV2. (See Appendix for more details?)
-
-The original implementation of DreamerV2 is written in Tensorflow - we have ported the relevant source code (mainly the implementation of the world model and the actor critic) to Pytorch, resulting in slight changes in overall performance. It remains, however, comparable: \autoref{fig:torch_v_ref} depicts the validation score curves for both the original implementation, and the Pytorch version.
-
-\begin{figure}
-  \centering
-  \includegraphics[width=\linewidth,height=\paperheight,keepaspectratio]{assets/torch_v_ref.pdf}
-  \caption{Comparison of the validation scores for Tensorflow and Pytorch versions. \emph{Note:} The scores for the reference (Tensorflow) version have been supplied by the authors, and were not verified independently.}
-  \label{fig:torch_v_ref}
-\end{figure}
-
-\subsection{Na\"ive speedup test}
+\section{Na\"ive speedup test}
 \label{sec:baseline}
 
 We begin with an experiment involving a straightforward increase of the frequency of optimization steps, without any further changes. The goals are as follows: to establish a baseline for further analysis, to find the update-to-data regime where the agent performance degrades, and to investigate what happens at that point with the networks in question.
@@ -277,7 +433,7 @@ As noted previously, the optimal training schedules for the model and the RL mod
   \label{fig:split_ratios_perf}
 \end{figure}
 
-\subsection{Investigating the learning dynamics of the agents}
+\section{Investigating the learning dynamics of the agents}
 
 So far, the experiments suggest that achieving optimal or near-optimal performance may require, at the very least, a hyperparameter sweep over \emph{both} model and RL update frequencies. Given the increase in the number of training runs this would require, we will now investigate methods to auto-select at least some of these parameters. In order to achieve this, we will start with an examination of the various metrics thoughout the run, and see whether they are correlated with the final score. The idea is that if we are able to control them throughout the optimization process, we may be able to guide them in such a way so as to achieve higher final performance.
 
@@ -323,7 +479,7 @@ Analysis of the behavior of the RL component is less straightforward, as there i
 
 To investigate these, we will first take a look at the value curves. [?]
 
-\subsection{Auto-tuning update frequencies}
+\section{Auto-tuning update frequencies}
 
 It would therefore appear that these metrics cannot be directly used for the purposes of guiding the optimization process. There exist, however, works doing precisely that, which demands a further inquiry.
 
@@ -359,7 +515,7 @@ Given that the idea behind this approach is to minimize model overfitting by mon
   \label{fig:adaptive_v1_0_curves}
 \end{figure}
 
-\subsubsection{Decoupled adaptive ratio system}
+\subsection{Decoupled adaptive ratio system}
 
 It appears, then, that the theoretical underpinnings behind the effectiveness of this approach are not quite as clear as one would hope. Despite this, we believe one can nevertheless improve upon this method in a principled fashion. Drawing on the results concerning the decoupling of the optimization rates for the model and the RL modules, we propose a similar decoupling in the adaptive regime. In particular, we will make only the model update ratio adaptive, and keep the RL update ratio fixed at a pre-defined value. The results (\autoref{fig:adaptive_wm_v1_0}) indicate, that the decoupling has a positive impact on the agent performance.
 
@@ -370,9 +526,7 @@ It appears, then, that the theoretical underpinnings behind the effectiveness of
   \label{fig:adaptive_wm_v1_0}
 \end{figure}
 
-\section{Architectural changes}
-
-\subsection{Data augmentation}
+\section{Data augmentation}
 
 Incorporating data augmentation into an RL framework can be done in non-trivial ways. DrQ, for example, combines transforming the input, averaging the Q functions across multiple augmented samples, and averaging the Q targets. In the context of model-based RL, one could develop similar schemes for both the world model and the RL modules, e.g. by averaging posterior state distributions over multiple image augmentations. This, however, would require changing the implementation of these modules, whereas our goal is to make the framework as modular as possible. Therefore, we opt to only augment the input, and forego the averaging of various quantities in question.
 
@@ -426,7 +580,7 @@ The results (\autoref{fig:data_aug_sweep}) suggest, that no type of image augmen
   \label{fig:data_aug_sweep}
 \end{figure}
 
-\subsection{Choice of the RL algorithm choice}
+\section{Choice of the RL algorithm choice}
 
 So far, all the experiments have used the default RL module of DreamerV2, namely a variant of Advantage Actor-Critic (A2C). In this section, we shall investigate the effects of replacing it, whilst keeping the model component intact. Beyond hopefully achieving improvement in terms of agent performance, our objective is to elucidate the design choices when incorporating model-free RL algorithms into a model-based setting.
 
@@ -445,7 +599,7 @@ We follow CleanRL's implementations of SAC and PPO for Atari, with a couple of i
   \item A2C and PPO use generalized advantage estimation to compute the targets for the value functions, whereas CleanRL's SAC implementation uses a one-step bootstrap. To ensure fair comparison, we implement a ``soft'' version of the generalized advantage estimation in SAC. [See Appendix for more details?]
 \end{enumerate}
 
-\subsubsection{PPO Experiments}
+\subsection{PPO Experiments}
 
 We will start with the experiments involving PPO. For the choice of the hyperparameters, we take the approach of replicating the default ones for A2C, whenever applicable. This includes the network architectures of the encoders for the actor and the critic functions, the value of the discount factor $\gamma$ and GAE discount $\lambda$, actor and critic optimizer learning rates, and the entropy penalty $\alpha$.
 
@@ -478,7 +632,7 @@ In order for the comparison to be fair, we ought to make sure, that the total tr
   \label{fig:ppo_sweep_time}
 \end{figure}
 
-\subsubsection{SAC Experiments}
+\subsection{SAC Experiments}
 
 Let us now conduct the experiments with SAC algorithm. In the first order, let us discuss the extent of the hyperparameter sweep to conduct. A complete grid search over network architectures, optimizer parameters etc. is clearly infeasible. We take the approach of reusing A2C's actor architecture and optimizer, and using A2C's encoder and optimizer settings for the value function as a proxy for SAC's $Q$ functions. As both algorithms use the target functions, we copy the target $Q$ function update schedule from A2C - a full copy every $100$ optimization steps, to be precise.
 
@@ -524,7 +678,7 @@ The results (\autoref{fig:sac_ent_sched}) are inconclusive - performance on \env
 
 \section{Combining the improvements}
 
-\section{Discussion}
+\chapter{Discussion}
 
 \printbibliography
 

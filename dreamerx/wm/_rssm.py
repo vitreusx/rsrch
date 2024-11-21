@@ -145,6 +145,7 @@ class GenericRSSM(nn.Module):
         del cfg["type"]
 
         def ctor(in_features: int):
+            nonlocal cfg
             layer_ctor = partial(nn.Linear, in_features)
             if typ == "discrete":
                 space = spaces.torch.TokenSeq(**cfg)
@@ -162,13 +163,14 @@ class GenericRSSM(nn.Module):
 
     def forward(
         self,
-        state: State,
-        obs: Tensor,
-        act: Tensor,
+        input: tuple[Tensor, Tensor],
+        h_0: State,
         sample: bool = True,
     ):
+        obs, act = input
         states, posts, priors = [], [], []
 
+        state = h_0
         for t in range(obs.shape[0]):
             deter = self._img_cell(state, act[t])
             prior = self._img_dist(deter)
