@@ -1,0 +1,22 @@
+\begin{tabular}{lllllll}
+\toprule
+ &  & \multicolumn{3}{r}{Environment} & \multicolumn{2}{r}{Human Norm} \\
+ &  & Assault & CrazyClimber & MsPacman & Mean & Median \\
+Ablation & Preset &  &  &  &  &  \\
+\midrule
+\multirow[t]{3}{*}{Adaptive} & K = 2 & 711 & 45460 & 1317 & 0.83 & 0.94 \\
+ & K = 4 & 769 & 51691 & 1374 & 0.95 & 1.05 \\
+ & K = 8 & 646 & 51694 & 1117 & 0.86 & 0.82 \\
+\cline{1-7}
+\multirow[t]{4}{*}{Combined} & 16/8 & 767 & {\bf 61163} & 1426 & 1.08 & 1.05 \\
+ & 4/8 & 733 & 58230 & 1528 & 1.02 & 0.98 \\
+ & 8/4 & {\bf 831} & 54714 & 1176 & 1.02 & {\bf 1.17} \\
+ & 8/8 & 809 & 60104 & 1414 & {\bf 1.09} & 1.13 \\
+\cline{1-7}
+\multirow[t]{4}{*}{PPO} & 16/8/1 & 767 & 59651 & 1311 & 1.05 & 1.05 \\
+ & 8/4/1 & 694 & 48020 & 1451 & 0.86 & 0.91 \\
+ & 8/4/8 & 820 & 59431 & 1531 & 1.09 & 1.15 \\
+ & 8/8/1 & 762 & 56237 & {\bf 1723} & 1.02 & 1.04 \\
+\cline{1-7}
+\bottomrule
+\end{tabular}

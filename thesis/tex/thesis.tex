@@ -11,6 +11,8 @@
 \usepackage{graphicx}
 \usepackage{minted}
 \usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{multirow}
 
 \usepackage[backend=biber,style=numeric,natbib=true]{biblatex}
 \addbibresource{zotero.bib}
@@ -18,6 +20,9 @@
 \newcommand{\algorithmautorefname}{Algorithm}
 \newcommand{\listingautorefname}{Listing}
 \newcommand{\env}[1]{{\tt #1}}
+\newcommand{\figurewidth}{\linewidth}
+\newcommand{\figureheight}{0.8\paperheight}
+
 \DeclareMathOperator*{\argmax}{arg\,max}
 \DeclareMathOperator*{\argmin}{arg\,min}
 
@@ -325,6 +330,10 @@ Such an example experiment configuration would have been difficult to specify pr
   \label{lst:recipe_conf}
 \end{listing}
 
+\section{Reproduction}
+
+ (A section about running the program and reproducing the experiments.)
+
 \chapter{Experiments}
 
 \section{Experimental setup}
@@ -342,7 +351,7 @@ First, let us filter out the environments which do not satisfy first two criteri
 
 \begin{figure}
   \centering
-  \includegraphics[width=\linewidth,height=0.6\paperheight,keepaspectratio]{assets/env_selection.pdf}
+  \includegraphics[width=\figurewidth,height=0.6\paperheight,keepaspectratio]{assets/env_selection.pdf}
   \caption{Performance curves for Atari-100k, with default settings. The values have been provided by the authors of the DreamerV2 paper. The x-axis represents the number of environment steps passed. The y-axis represents the validation score. Blue curves indicate environments, which we have selected for further evaluation.}
   \label{fig:atari_100k_comp}
 \end{figure}
@@ -355,7 +364,7 @@ The original implementation of DreamerV2 is written in Tensorflow - we have port
 
 \begin{figure}
   \centering
-  \includegraphics[width=\linewidth,height=\paperheight,keepaspectratio]{assets/torch_v_ref.pdf}
+  \includegraphics[width=\figurewidth,height=\paperheight,keepaspectratio]{assets/torch_v_ref.pdf}
   \caption{Comparison of the validation scores for Tensorflow and Pytorch versions. \emph{Note:} The scores for the reference (Tensorflow) version have been supplied by the authors, and were not verified independently.}
   \label{fig:torch_v_ref}
 \end{figure}
@@ -419,7 +428,7 @@ Beyond that, for testing purposes, we also add an online train-validation split 
 
 \begin{figure}
   \centering
-  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/baseline_score.pdf}
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/baseline_score.pdf}
   \caption{Final test episode returns for each of the 3 tested environments, relative to the data-to-update ratio $E$. The line indicates the mean across the RNG seeds, and the shaded area indicates the standard deviation. \emph{Note}: The x-axis is logarithmic.}
   \label{fig:baseline_score}
 \end{figure}
@@ -434,7 +443,7 @@ As noted previously, the optimal training schedules for the model and the RL mod
 
 \begin{figure}
   \centering
-  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/split_ratios_perf.pdf}
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/split_ratios_perf.pdf}
   \caption{Final validation score for each model/RL update ratio configuration. The x-axis represents each run, marked by a tag in the form of '$K_{\rm WM}/K_{\rm RL}$'. The points represent the scores for each seed, with the corresponding box plot to the right.}
   \label{fig:split_ratios_perf}
 \end{figure}
@@ -449,14 +458,14 @@ Since model learning is a supervised learning task, the most imporant metric to 
 
 \begin{figure}
   \centering
-  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/model_val_loss.pdf}
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/model_val_loss.pdf}
   \caption{Relationship between final validation score and final model validation loss. Each point represents a single training run. The x-axis represents the agent performance. The y-axis represents the value of the model validation loss at the end of the training.}
   \label{fig:model_val_loss}
 \end{figure}
 
 \begin{figure}
   \centering
-  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/model_val_curves.pdf}
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/model_val_curves.pdf}
   \caption{Averaged model validation loss curves for each configuration of the environment and the update ratio used. Rows represent different environments, and the columns the different update ratios used. The x-axis corresponds to the number of environment steps taken, and the y-axes represent loss values. The ranges of the y-axes are different for each environment.}
   \label{fig:model_val_curves}
 \end{figure}
@@ -465,14 +474,14 @@ To further examine the behavior of the agent throughout the optimization process
 
 \begin{figure}
   \centering
-  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/model_train_loss.pdf}
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/model_train_loss.pdf}
   \caption{Relationship between final validation score and final model training loss. Each point represents a single training run. The x-axis represents the agent performance. The y-axis represents the value of the model training loss at the end of the training.}
   \label{fig:model_train_loss}
 \end{figure}
 
 \begin{figure}
   \centering
-  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/model_train_curves.pdf}
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/model_train_curves.pdf}
   \caption{Averaged model training loss curves for each configuration of the environment and the update ratio used. Rows represent different environments, and the columns the different update ratios used. The x-axis corresponds to the number of environment steps taken, and the y-axes represent loss values. The ranges of the y-axes are different for each environment, and are {\bf logarithmic} due to the wide range of values.}
   \label{fig:model_train_curves}
 \end{figure}
@@ -481,11 +490,22 @@ To further examine the behavior of the agent throughout the optimization process
 
 As we have noted previously, a number of works have identified the phenomenon of plasticity loss, meaning the inability of neural networks to learn from more recent data samples in the continual learning setting, as a possible culprit in the degradation of the RL agent performance. It might prove fruitful to investigate, whether something similar happens in the case of model-based RL, and specifically the agents based on Dreamer algorithm.
 
-In the first order, we would like to perform a ``post hoc'' test of plasticity loss - the results will not allow us to monitor the occurence of the phenomenon \emph{during} training, but will show whether the degradation has occured. We follow the strategy of \cite{juliani_study_2024}, wherein an agent is trained, starting from the neural network parameters of a previously trained agent. In that study, the process is repeated $10$ times. Due to computational constraints, we only perform a single repetition. Also, the environments under investigation there were drawn from the Coinrun suite of randomized environment. As we are interested in Atari tasks, and there is no standard way to randomize the environment - the idea of changing the Atari game does not work due to different action spaces, meaning different agent architectures required - we devise a custom randomization scheme for Atari. To be specific, at the start of the training run, we choose (1) a particular permutation $\sigma$ of actions, meaning an action $a \in \{0, \ldots, A - 1\} = \mathcal{A}$ is mapped to $\sigma(a) \in \mathcal{A}$; (2) whether to perform horizontal flip of the video frames; (3) whether to perform a vertical flip of the video frames. These randomizations have been selected in order to ensure, that the warm-started agent approximately achieves the performance of a random agent, and that the observation and action statistics, e.g. the mean and standard deviation of the pixel values, remain the same.
+In the first order, we would like to perform a ``post hoc'' test of plasticity loss - the results will not allow us to monitor the occurence of the phenomenon \emph{during} training, but will show whether the degradation has occured. We follow the strategy of \cite{juliani_study_2024}, wherein an agent is trained \emph{warm-started}, i.e. starting from the neural network parameters of a previously trained agent. In that study, the process is repeated $10$ times. Due to computational constraints, we only perform a single repetition. Also, the environments under investigation there were drawn from the Coinrun suite of randomized environment. As we are interested in Atari tasks, and there is no standard way to randomize the environment - the idea of changing the Atari game does not work due to different action spaces, meaning different agent architectures required - we devise a custom randomization scheme for Atari. To be specific, at the start of the training run, we choose (1) a particular permutation $\sigma$ of actions, meaning an action $a \in \{0, \ldots, A - 1\} = \mathcal{A}$ is mapped to $\sigma(a) \in \mathcal{A}$; (2) whether to perform horizontal flip of the video frames; (3) whether to perform a vertical flip of the video frames. These randomizations have been selected in order to ensure, that the warm-started agent approximately achieves the performance of a random agent, and that the observation and action statistics, e.g. the mean and standard deviation of the pixel values, remain the same.
 
 The training recipe follows the reference test with the default DreamerV2 settings and an environment step budget of $6 \times 10^6$, used for comparing the Pytorch and Tensorflow implementations. The choice is motivated by the smaller variance of the results compared to the time horizon of $400 \times 10^3$ used for the other experiments. We load a checkpoint from a baseline test, with the update ratio value of $K = 1$, representing the checkpoints most affected by the primary bias. The environment used during the training run corresponding to the checkpoint is the same, but we change the RNG seeds to introduce further randomization.
 
-(Results)
+The comparison of the warm-started and randomly-initialized agents (\autoref{fig:plas_check}) reveals, that at least in some instances the agents experience plasticity loss. To be specific, for \env{Assault} and \env{CrazyClimber}, we see either negligible or small impairment in terms of performance, whereas the effect is far more substantial for \env{MsPacman}. These findings are consistent with the analysis of the loss curves, since we have observed the stalling of the training process to be most pronounced for \env{MsPacman}. We also believe these results to support the assertion, that the devised Atari randomization scheme is effective for testing plasticity loss, in the sense that the fully trained agents start with a near-random performance, but the permutations and other environment changes do not impair the performance by themselves.
+
+\begin{figure}
+  \centering
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/plas_check.pdf}
+  \caption{A comparison of the validation scores for the warm-started agents, and the ones with parameters initialized randomly. The lines show the mean and the standard deviation of agent validation scores, measured across 5 RNG seeds.}
+  \label{fig:plas_check}
+\end{figure}
+
+As opposed to the model-free case, in this instance we have two components, which may be responsible for the performance degradation. With this in mind, we will now perform a variation of the warm-start test, wherein only the RL component will have the network weights loaded from a previous checkpoint, and the world model will have the parameters initialized randomly. The other parameters of the experiment, such as the training loop structure, shall remain unchanged.
+
+(Results for the actor-only warm start experiment)
 
 \subsection{Analyzing the RL component}
 
@@ -514,7 +534,7 @@ The results can be found in \autoref{fig:adaptive_v1_0}, along with the baseline
 
 \begin{figure}
   \centering
-  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/adaptive_v1_0.pdf}
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/adaptive_v1_0.pdf}
   \caption{The comparison of the final validation scores, for the adaptive ratio experiment {\sf Ada} and the baseline experiments {\sf 1} - {\sf 64}, where the number denotes the model/RL update ratio $K$. Each subplot shows the results for a different environment tested. The bars signify mean and one standard deviation, obtained from a sample of $5$ training runs for each configuration.}
   \label{fig:adaptive_v1_0}
 \end{figure}
@@ -523,14 +543,14 @@ Given that the idea behind this approach is to minimize model overfitting by mon
 
 \begin{figure}
   \centering
-  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/adaptive_v1_0.val_loss.pdf}
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/adaptive_v1_0.val_loss.pdf}
   \caption{The comparison of the final model validation loss values, for the adaptive ratio experiment {\sf Ada} and the baseline experiments {\sf 1} - {\sf 64}, where the number denotes the model/RL update ratio $K$. Each subplot shows the results for a different environment tested. The bars signify mean and one standard deviation, obtained from a sample of $5$ training runs for each configuration.}
   \label{fig:adaptive_v1_0_loss}
 \end{figure}
 
 \begin{figure}
   \centering
-  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/adaptive_v1_0.curves.pdf}
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/adaptive_v1_0.curves.pdf}
   \caption{The curves for the model validation loss and the current update ratio, for the adaptive ratio experiment. Each column represents a different Atari task. Two training runs, corresponding to two different RNG seeds, are shown on each subplot. The model validation curves have been smoothed with exponential moving average to improve the clarity of the presentation.}
   \label{fig:adaptive_v1_0_curves}
 \end{figure}
@@ -541,7 +561,7 @@ It appears, then, that the theoretical underpinnings behind the effectiveness of
 
 \begin{figure}
   \centering
-  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/adaptive_wm_v1_0.pdf}
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/adaptive_wm_v1_0.pdf}
   \caption{A comparison between the final validation scores for the coupled and the decoupled variants of the adaptive update ratio experiment. Each subplot represents a different environment tested. Each box signifies the results for a given configuration - mean and one standard deviation, obtained from a sample of $5$ training runs for each configuration.}
   \label{fig:adaptive_wm_v1_0}
 \end{figure}
@@ -556,14 +576,14 @@ We follow the original paper in choosing random shifts as the image transformati
 
 \begin{figure}
   \centering
-  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/data_aug.pdf}
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/data_aug.pdf}
   \caption{A comparison of the final validation scores for the data-augmented agent, and a non-data-augmented baseline. Each subplot represents the results for a single environment. In each subplot, results for different values of model/RL update ratio $K$ are grouped together. Each group contains a box, signifying the mean and the standard deviation evaluated across $5$ training runs, for the data-augmented and the non-data-augmented variants.}
   \label{fig:data_aug}
 \end{figure}
 
 \begin{figure}
   \centering
-  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/data_aug.val_loss.pdf}
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/data_aug.val_loss.pdf}
   \caption{A comparison of the final model validation loss values for the data-augmented agent, and a non-data-augmented baseline. Each subplot represents the results for a single environment. In each subplot, results for different values of model/RL update ratio $K$ are grouped together. Each group contains a box, signifying the mean and the standard deviation evaluated across $5$ training runs, for the data-augmented and the non-data-augmented variants.}
   \label{fig:data_aug_val_loss}
 \end{figure}
@@ -572,7 +592,7 @@ If we take a look at the model training loss curves (\autoref{fig:data_aug_train
 
 \begin{figure}
   \centering
-  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/data_aug.train_curves.pdf}
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/data_aug.train_curves.pdf}
   \caption{A comparison of the model training loss curves for the data-augmented agent, and a non-data-augmented baseline. Each column represents the results for a single environment. Each row corresponds to a different configuration - model/RL update ratio used. In each subplot, curves for the data-augmented and non-data-augmented variants are displayed. The curves have been smoothed by exponential moving average, to improve the clarity of the presentation.}
   \label{fig:data_aug_train_curves}
 \end{figure}
@@ -595,7 +615,7 @@ The results (\autoref{fig:data_aug_sweep}) suggest, that no type of image augmen
 
 \begin{figure}
   \centering
-  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/data_aug.sweep.pdf}
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/data_aug.sweep.pdf}
   \caption{The final validation scores for different data augmentation types. Each row contains the results for a different environment tested. Each of the boxes corresponds to a given augmentation type, and displays the mean and the standard deviation measured with a sample of $5$ training runs.}
   \label{fig:data_aug_sweep}
 \end{figure}
@@ -632,14 +652,14 @@ In order for the comparison to be fair, we ought to make sure, that the total tr
 
 \begin{figure}
   \centering
-  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/ppo.sweep.pdf}
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/ppo.sweep.pdf}
   \caption{Comparison of the final validation scores between the baseline and a number of different configurations of PPO. Each subplot contains the results for a different Atari environment. Each box represents the mean and the standard deviation computed across $5$ training runs.}
   \label{fig:ppo_sweep}
 \end{figure}
 
 \begin{figure}
   \centering
-  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/ppo_sweep.time.pdf}
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/ppo_sweep.time.pdf}
   \caption{Comparison of the total training run durations for the baseline and a number of different configurations of PPO. Each subplot contains the results for a different Atari environment. Each box represents the mean and the standard deviation computed across $5$ training runs.}
   \label{fig:ppo_sweep_time}
 \end{figure}
@@ -654,14 +674,14 @@ The most impactful hyperparameter left, then, is the choice of temperature/rewar
 
 \begin{figure}
   \centering
-  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/sac.alpha_perf.pdf}
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/sac.alpha_perf.pdf}
   \caption{Relationship between SAC's $\alpha$ value, and the agent performance. Each subplot contains the results for a different Atari environment. Each point represents a single training run. The $x$-axis denotes the value of $\alpha$ parameter used in the test. The $y$-axis signifies the final validation score obtained by the agent.}
   \label{fig:sac_alpha_perf}
 \end{figure}
 
 \begin{figure}
   \centering
-  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/sac.alpha_ent.pdf}
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/sac.alpha_ent.pdf}
   \caption{Relationship between SAC's $\alpha$ value, and the final mean policy entropy. Each subplot contains the results for a different Atari environment. Each point represents a single training run. The $x$-axis denotes the value of $\alpha$ parameter used in the test. The $y$-axis signifies the final value of the mean policy entropy metric.}
   \label{fig:sac_alpha_ent}
 \end{figure}
@@ -672,7 +692,7 @@ In order to use it, we must specify the target entropy schedule. The recommendat
 
 \begin{figure}
   \centering
-  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/baseline_ent.pdf}
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/baseline_ent.pdf}
   \caption{Mean policy entropy curves for the best-performing agents in the baseline experiment. Each Atari environment is represented by a different subplot. The $x$-axis denotes the number of environment step passed. The $y$-axis represents the mean policy entropy. Each solid line represents a different training run. The dashed line denotes an example entropy schedule approximating these schedules.}
   \label{fig:baseline_ent}
 \end{figure}
@@ -683,7 +703,7 @@ The results (\autoref{fig:sac_ent_sched}) are inconclusive - performance on \env
 
 \begin{figure}
   \centering
-  \includegraphics[width=\linewidth,height=0.8\paperheight,keepaspectratio]{assets/sac.ent_sched2.pdf}
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/sac.ent_sched2.pdf}
   \caption{A comparison between the baseline experiment and the experiment with SAC and a user-defined entropy schedule. Each Atari environment tested is represented by a single subplot. The boxes denote the mean and the standard deviation of the final validation score, estimated with $5$ training runs per configuration.}
   \label{fig:sac_ent_sched}
 \end{figure}
@@ -698,7 +718,38 @@ Due to the requisite computational resources required to run the entire benchmar
 
 In reference to the adaptive ratio system, the results suggest the use of a decoupled setup, wherein the RL update ratio is fixed. The performance gain is, however, dependent on the specific update ratio used. The validation scores obtained in the PPO experiment, on the other hand, indicate the use of either {\tt 16/8/1} or {\tt 8/8/1} configuration, the configuration name $K_{\rm RL}/N/M$ denoting the RL optimization ratio, number of PPO epochs and number of PPO minibatches respectively. We exclude the experiments with $M > 1$ due to excessive adverse effect on the training speed, despite possibly yielding improved results.
 
-These findings suggest a following setup: we will set the RL update ratio fixed, and focus on the hyperparameters for the PPO. We will test a slightly wider range of presets: {\tt 8/8/1}, {\tt 16/8/1}, {\tt 4/8/1} and {\tt 8/4/1}.
+These findings suggest a following setup: we will set the RL update ratio fixed, making the model update frequency alone adaptive, and focus on the hyperparameters for the PPO. We will test a slightly wider range of presets: {\tt 8/8/1}, {\tt 16/8/1}, {\tt 4/8/1} and {\tt 8/4/1}.
+
+The scores obtained by the agents (\autoref{fig:final_prelim}) appears inconclusive. None of the tested presets consistently outperforms the other ones - for example, {\tt 4/8} is the best on \env{MsPacman}, {\tt 8/4} on \env{Assault} and {\tt 16/8} on \env{CrazyClimber}. Another question that arises is whether the combination of the two improvements has yielded even better results, or, in other words, whether there has been any synergy between them. To this end, let us compare the results for the adaptive ratio, PPO and their combination side by side. As we can see (\autoref{fig:final_prelim_comp}), the integrated agent does \emph{not} necessarily outperform the individual modifications. For example, on \env{MsPacman}, the PPO-only set of agents seem to achieve higher validation scores than the agents also utilizing the adaptive model ratios. It does, on the other hand, appear to slightly improve the overall results for the \env{Assault} and \env{CrazyClimber} Atari environments.
+
+\begin{figure}
+  \centering
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/final_prelim.pdf}
+  \caption{A comparison between the different hyperparameter presets for the experiment combining improvements in the context of a single agent.}
+  \label{fig:final_prelim}
+\end{figure}
+
+\begin{figure}
+  \centering
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/final_prelim_comp.pdf}
+  \caption{A comparison between the results for the adaptive ratio, PPO and their combination. Each row represents a single Atari environment. The boxes, denoting the mean and standard deviation computed across 5 RNG seeds, are placed into three groups, corresponding to the combined test, adaptive model ratio, and PPO. Each box in a given group corresponds to a different hyperparameter preset.}
+  \label{fig:final_prelim_comp}
+\end{figure}
+
+A more quantitative comparison (\autoref{tab:final_prelim_tab}) supports the choice of either the preset $K_{\rm RL} = 8, N = 8$, or $K_{\rm RL} = 8, N = 4$, with both PPO and the adaptive model update ratio used, depending on whether we want to maximize mean or median human-normalized scores. In our estimation, the former configuration is more appropriate, due to lower gap between the mean and the median values.
+
+\begin{table}
+  \centering
+  \input{{assets/final_prelim_tab.tex}}
+  \caption{A numerical comparison of the results for different ablation types and hyperparameter presets. The middle three columns, under the header ``Environment'' contain the mean final validation scores. The rightmost two columns denote the human-normalized median and mean scores computed across the three environments. The bold numbers indicate highest values.}
+  \label{tab:final_prelim_tab}
+\end{table}
+
+\subsection{Atari-100k benchmark}
+
+Now, we are in the position to perform the complete Atari-100k benchmark, consisting of 26 environments, as opposed to the subset of 3 video games most predictive of the overall performance investigated so far.
+
+(Add the experiment results, training curves etc.)
 
 \chapter{Discussion}
 
