@@ -428,3 +428,12 @@ thesis:
         ppo:
           update_epochs: ${_update_epochs}
           num_minibatches: 1
+
+    benchmark:
+      $extends: [prelim]
+      _rl_ratio: 8
+      _update_epochs: 8
+      env:
+        type: atari
+        atari:
+          repeat_action_probability: 0.0

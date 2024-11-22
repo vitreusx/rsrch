@@ -30,6 +30,36 @@ class OneLineYaml:
 format_opts = OneLineYaml.dumps
 
 
+ATARI_100k = [
+    "Alien",
+    "Amidar",
+    "Assault",
+    "Asterix",
+    "BankHeist",
+    "BattleZone",
+    "Boxing",
+    "Breakout",
+    "ChopperCommand",
+    "CrazyClimber",
+    "DemonAttack",
+    "Freeway",
+    "Frostbite",
+    "Gopher",
+    "Hero",
+    "Jamesbond",
+    "Kangaroo",
+    "Krull",
+    "KungFuMaster",
+    "MsPacman",
+    "Pong",
+    "PrivateEye",
+    "Qbert",
+    "RoadRunner",
+    "Seaquest",
+    "UpNDown",
+]
+
+
 # A subset of 3 games, which are (1) sufficiently monotonic to properly evaluate the speedup to be achieved, (2) are most predictive of the performance on Atari-100k subset of games.
 A100k_MONO = ["Assault", "CrazyClimber", "MsPacman"]
 
