@@ -13,9 +13,11 @@
 \usepackage{amsmath}
 \usepackage{booktabs}
 \usepackage{multirow}
+\usepackage{adjustbox}
 
 \usepackage[backend=biber,style=numeric,natbib=true]{biblatex}
 \addbibresource{zotero.bib}
+\addbibresource{other.bib}
 
 \newcommand{\algorithmautorefname}{Algorithm}
 \newcommand{\listingautorefname}{Listing}
@@ -59,130 +61,185 @@
 
 \chapter{Introduction}
 
-Reinforcement Learning (RL), a research field dedicated to developing intelligent autonomous agents, capable of learning to do tasks in various environments, has achieved remarkable progress in recent times. Through the use of deep learning and artificial neural networks, algorithms playing video games at a super-human level or controlling robots without any prior knowledge have been developed.
+Reinforcement Learning (RL), a research field dedicated to developing intelligent autonomous agents, capable of learning to do tasks in various environments \cite{sutton2018reinforcement}, has achieved remarkable progress in recent times. Through the use of deep learning and artificial neural networks, algorithms playing complex games at a super-human level, such as Atari \cite{mnihHumanlevelControlDeep2015}, Go \cite{silverMasteringGameGo2016}, Dota 2 \cite{openaiDota2Large2019}, or StarCraft II \cite{vinyalsGrandmasterLevelStarCraft2019}, as well as controlling robots \cite{openaiSolvingRubiksCube2019,brohanRT1RoboticsTransformer2023} and finetuning Large Language Models from human feedback \cite{ouyangTrainingLanguageModels2022}, have been developed.
 
-However, most of the current state-of-the-art techniques have a significant drawback: they require excessive amounts of data (which, in this setting, we regard as the total time spent interacting with the environment) in order to achieve such performance. For example, standard benchmark on a collection of Atari video games assumes a total ``budget'' of 200 million game frames, equivalent to a human playing for $\approx 40$ days without rest. This shortcoming greatly limits real-world deployment of such methods, as without a simulator of the target environment learning the proper behavior is impossible.
+However, most of the current state-of-the-art techniques have a significant drawback: they require excessive amounts of data (which, in this setting, we regard as the total time spent interacting with the environment) in order to achieve such performance. For example, the standard benchmark on a collection of Atari video games \cite{bellemareArcadeLearningEnvironment2013} assumes a total interaction budget of 200 million game frames, equivalent to a single person playing for $\approx 40$ days without rest. For playing Dota 2, thousands of years in total are required. This shortcoming greatly limits real-world deployment of such methods. Simulation of the target environment is often not available, and even in the presence of such models, the inaccuracies cause the policies developed in simulation to not transfer completely to the real world. There may also arise additional safety considerations \cite{yampolskiy2018artificial}, forcing us to constrain the number of interactions to a minimum.
 
-In order to remedy this problem, many approaches designed with \emph{sample efficiency}, being the performance obtained with a given (small) number of interactions with the environment, in mind, have been proposed, such as:
+In order to remedy this problem, many approaches designed with \emph{sample efficiency}, being the maximization of agent performance in a given (small) number of interactions with the environment, in mind, have been proposed. Arguably the most appealing method is to learn a model of the environment, in order to predict the future or possible future events, and learn the optimal policy without any interactions with the real environment. Indeed, a number of data-efficient architectures have been developed using the world models in this capacity, via lookahead search \cite{schrittwieserMasteringAtariGo2020,yeMasteringAtariGames2021} or learning policies purely from synthetic data \cite{haRecurrentWorldModels2018,hafnerDreamControlLearning2020,kaiserModelBasedReinforcementLearning2024,hafnerMasteringDiverseDomains2024}.
 
-\begin{itemize}
-  \item Improving sample efficiency of existing algorithms, without any major architectural changes, by carefully tuning the number of optimization steps per single environment step.
-  \item Learning a model of the environment, with which one can either simulate environment interactions for the model-free method, or use the model in a more sophisticated way, e.g. through a planning algorithm.
-  \item Better architectures of the neural networks comprising the agents.
-\end{itemize}
+There have, however, been efforts conducted to render learning the policy sample-efficient without the use of environment modelling. One line of research, for example, attempts to simply optimize the training recipe, e.g. the number of optimization steps per single environment interaction, without changing either the RL algorithm used, or the architecture \cite{doroSampleEfficientReinforcementLearning2022,schmidtFastDataEfficientTraining2021}. Other works introduce data augmentation \cite{kostrikovImageAugmentationAll2021,yaratsMasteringVisualContinuous2021}, self-supervised learning \cite{schwarzerDataEfficientReinforcementLearning2021} or using larger neural network backbones \cite{hafnerMasteringDiverseDomains2024,schwarzerBiggerBetterFaster2023}.
 
-All these have resulted in marked improvements in terms of sample efficiency. One may observe, however, that such methods have been developed independent of each other, and in many cases are orthogonal, meaning it is possible to envision a single RL agent combining many such strategies and modifications, hopefully capable of reaching even higher performance than standalone algorithms.
+All these have resulted in significant improvements in terms of sample efficiency. Many of these innovations have been developed independent of each other, however, and in many cases are orthogonal, meaning it is possible to envision a single RL agent combining many such strategies and modifications, possibly capable of reaching even higher performance than standalone algorithms. A similar feat has been achieved by the Rainbow agent \cite{hesselRainbowCombiningImprovements2017}, which augments a base RL architecture DQN \cite{mnihHumanlevelControlDeep2015} with an array of small modifications, which turn out to provide significant boost to the base agent in terms of final performance. Works such as BBF \cite{schwarzerBiggerBetterFaster2023} have shown, that such an approach can also be used to increase sample efficiency of the agents, in the model-free scenario.
 
-With this in mind, the goal of this thesis is to answer following questions:
+The goal of this thesis is to investigate whether this can be achieved for sample-efficient model-based RL. To be precise, our goal is to take a model-based architecture, originally not designed with data efficiency in mind - specifically DreamerV2 \cite{hafnerMasteringAtariDiscrete2022} - and use the ideas developed in other works, mostly in the context of model-free RL, adapting them if necessary to suit the different architecture, to see whether one can achieve significant performance benefits without any major architectural interventions.
+
+The rest of the thesis is structured as follows. First, we perform the literature review, in order to assess what are the existing methods for improving data efficiency of RL agents. We identify the use of world models, finetuning the training recipes, applying data augmentations, and changing the RL algorithms used in model-based RL as the most promising developments to incorporate into our design. We propose how to combine them into a single RL agent, and design empirical studies aimed at investigating the effects of the ablations, and the changes in terms of agent performance.
+
+After having considered a number of existing RL frameworks, and deeming them unsuitable for the purpose of conducting our study, we design and implement a novel PyTorch-based \cite{paszkePyTorchImperativeStyle2019} RL framework capable of facilitating our experiments. We describe how different design choices help with making the framework as flexible, yet user-friendly, as possible, and highlight the advantages our solution has over other model-based RL frameworks. We make the framework and all the code necessary to replicate the experiments conducted in this thesis publicly available at \url{https://github.com/vitreusx/rsrch}.
+
+Then, we will follow up with the execution of the experiments, and the analysis of the results. We discover that the design of the training loop, and the use of improved RL modules yield greatest improvements in terms of the final performance of the agent. On the other hand, otherwise promising avenues, such as the use of data augmentation, prove ultimately unsuccessful in improving the algorithm, and can even significantly degrade the policies learned.
+
+Having in mind the number of hyperparameters which such a modular design introduces, we also employ and analyze methods for auto-tuning some of them. Specifically, following \cite{dorkaDynamicUpdatetoDataRatio2023}, we implement and improve upon a mechanism for automatically adjusting optimization frequency based on the model validation loss.
+
+Throughout, we provide a detailed analysis of the learning dynamics and the behavior of the trained agents, in order to elucidate the causes of the observed performance improvements and hits, as well as better direct our efforts towards further modifications to discuss and test.
+
+Finally, we use these findings to implement an RL agent using these modifications in tandem, and verify that the combination yields a further improvement in terms of validation scores achieved. We then test the best-performing configuration on Atari-100k benchmark, a standard benchmark for visual sample-efficient RL algorithms, and compare it with other state-of-the-art solutions. We find, that (...)
+
+In summary, our principal contributions are:
 
 \begin{enumerate}
-  \item \emph{What are the existing methods for improving data efficiency of RL agents?}
-  \item \emph{How to approach the design of a single algorithm combining these methods?}
-  \item \emph{What are the synergies and interferences between these modifications?} And, relatedly, \emph{what (if any) improvement in terms of performance can we expect from such an agent?}
+  \item An open source, highly customizable and modular model-based RL framework.
+  \item An in-depth analysis of the effects of various ablations of a model-based architecture.
+  \item A sample-efficient model-based RL agent architecture, (reaching the performance comparable with state-of-the-art works?)
 \end{enumerate}
 
-The rest of this thesis is structured as follows: (...)
-
-\chapter{Background}
+\chapter{Preliminaries}
 
 \section{Reinforcement Learning}
 
-Reinforcement Learning is a field of artificial intelligence and machine learning concerned with constructing intelligent agents capable of learning what actions to take in an environment so as to maximize a scalar reward signal.
+Reinforcement Learning is a field of artificial intelligence and machine learning concerned with constructing intelligent agents capable of learning what actions to take in an environment so as to maximize a scalar reward signal \cite{sutton2018reinforcement}.
 
-Formally, the environment can be represented by a Markov decision chain (MDP) in the form of a tuple $\langle \mathcal{S}, \mathcal{A}, p \rangle$ consisting of the state space $\mathcal{S}$, action space $\mathcal{A}$ and transition probability $p(s_{t+1}, r_{t} \mid s_t, a_t)$, where $r_t \in \mathbb{R}$ denotes the reward granted at that step. Additionally, in the case of partially observable environments, we have an observation space $\mathcal{O}$ and an observation probability $p(o_t \mid s_t)$. The agent, starting from an initial observation $o_1$, acts according to a probability distribution $\pi(a_t \mid o_{\leq t})$ conditioned on previous observations until it reaches a \emph{terminal} state $s_T$. The goal of reinforcement learning and the RL agent is to maximize the expected sum of rewards (so called returns) obtained along the trajectory $G = \mathbb{E} \left\{\sum_{t=1}^{T-1} r_t\right\}$.
+Formally, the environment can be represented by a Markov decision chain (MDP) in the form of a tuple $\langle \mathcal{S}, \mathcal{A}, p \rangle$ consisting of the state space $\mathcal{S}$, action space $\mathcal{A}$ and transition probability $p(s_{t+1}, r_{t} \mid s_t, a_t)$, where $r_t \in \mathbb{R}$ denotes the reward granted at that step. Additionally, in the case of partially observable environments, we have an observation space $\mathcal{O}$ and an observation probability $p(o_t \mid s_t)$. The agent, starting from an initial observation $o_1$, acts according to a probability distribution $\pi(a_t \mid o_{\leq t})$ conditioned on previous observations until it reaches a \emph{terminal} state $s_T$. The goal of reinforcement learning and the RL agent is to maximize the expected sum of rewards (so called returns) obtained along the trajectory $J = \mathbb{E} \left\{\sum_{t=1}^{T-1} r_t\right\}$.
 
-There are two further quantities of interest. The state value function $V^\pi(s)$ equal to the expected returns of an agent acting with a policy $\pi(a_t \mid s_t)$, when starting from a state $s$. The state-action value function $Q^\pi(s, a)$ (called thereafter $Q$ function) equal to the expected returns of an agent acting with a policy $\pi$, when starting from a state $s$ and having just performed action $a$. These value functions are usually $\gamma$-discounted: rather than using the returns $\mathbb{E} \left\{\sum_{t=1}^{T-1} r_t\right\}$, we consider $\mathbb{E} \left\{\sum_{t=1}^{T-1} \gamma^{t-1} r_t\right\}$ for $0 < \gamma < 1$. This allows us to use fixed-point arguments in the proofs of various RL theorems. It is also the standard approach taken by prominent RL algorithms.
+There are two further quantities of interest. The state value function $V^\pi(s)$ equal to the expected returns of an agent acting with a policy $\pi(a_t \mid s_t)$, when starting from a state $s$. The state-action value function $Q^\pi(s, a)$ (called thereafter $Q$ function) equal to the expected returns of an agent acting with a policy $\pi$, when starting from a state $s$ and having just performed action $a$. These value functions are usually $\gamma$-discounted: rather than using the returns $\mathbb{E} \left\{\sum_{t=1}^{T-1} r_t\right\}$, we consider $\mathbb{E} \left\{\sum_{t=1}^{T-1} \gamma^{t-1} r_t\right\}$ for $0 < \gamma < 1$. This allows us to use fixed-point arguments in the proofs of various RL theorems. It is also the version most often used by deep RL algorithms.
 
 One approach towards learning behavior in an environment is \emph{Q-learning}. The idea is as follows: we want to learn an optimal policy $\pi^*$ such, that $V^{\pi^*}$ is maximized for all states $s$. It is clear, that such a policy should choose $a$, which maximizes $Q^{\pi^*}(s, a)$, i.e. $\pi^*$ should be deterministic, and return $\pi^*(s) = \argmax_a Q^{\pi^*}(s, a)$. It can be shown, that such a policy, and such an induced $Q$-function $Q^{\pi^*} =: Q^*$ satisfy $Q^*(s, a) = \mathbb{E}_{s'} \left\{r + \gamma Q^*(s', \pi^*(s'))\right\}$. This recurrence relation allows us, in turn, to learn the value of $Q^*$ through fixed-point iteration.
 
-\section{Deep RL}
+A different way to learn optimal behavior is to learn the policy directly, rather than construct it from $Q$-value estimates, by taking a gradient of the returns and using standard first-order optimization methods. Specifically, by the policy gradient theorem \cite{suttonPolicyGradientMethods1999}, we have $\nabla_\theta J = \mathbb{E}\left[\sum_t \Psi_t \nabla_\theta \log{\pi_\theta(a_t \mid s_t)}\right]$ for an on-policy sequence $(s_{1:T+1}, a_{1:T}, r_{1:T})$, where $\Psi_t$ can be e.g. total trajectory returns $J$, state-action value $Q(s_t, a_t)$, or an \emph{advantage value} $Q(s_t, a_t) - V(s_t)$.
 
- [A section about DQN, SAC, PPO and other such stuff?]
+\subsection{Deep RL}
 
-\section{Benchmarks for sample-efficient RL}
+The advances in deep learning have allowed components such as $Q$ or value functions, and policies, to be realized as expressive function approximators, leading to breakthroughs in settings hitherto considered unsolvable. In a foundational work, \cite{mnihHumanlevelControlDeep2015} have designed a $Q$-learning-based agent DQN, reaching human-level performance on a suite of Atari video games. Actor-critic methods, such as Deep Deterministic Policy Gradients (DDPG) \cite{lillicrapContinuousControlDeep2019} and Soft Actor Critic (SAC) \cite{haarnojaSoftActorCriticOffPolicy2018} have extended this approach to continuous action spaces. Methods based on policy gradients, such as Trust Region Policy Optimization (TRPO) \cite{schulmanTrustRegionPolicy2017} and Proximal Policy Optimization (PPO) \cite{schulmanProximalPolicyOptimization2017}, have also been developed.
 
-A number of setups for evaluating data-efficient agents have been established in prior work.
+\section{Sample-efficient RL}
 
-\paragraph{Atari-100k} For discrete control, the \emph{de facto} standard benchmark is Atari-100k \cite{kaiser_model-based_2024}, a subset of 26 games from the full Atari Learning Environment (ref the paper) benchmark, limited to $400\times 10^3$ game frames, equivalent to $100 \times 10^3$ agent stops assuming the standard action repeat value of $4$.
+Works such as DQN have reached human-level performance in arcade by playing an equivalent of $38.5$ days ($200 \times 10^6$ frames with frame rate of $60$ FPS). Even with a simulator available, the excessive number of data required by standard RL algorithms can prove troublesome, as in the case of OpenAI Five \cite{openaiDota2Large2019}, which had to be trained for 10 months on an entire distributed system, and required development of sophisticated ``surgery'' techniques due to having to restart training at multiple points in time. In domains such as robotics, this kind of scaling quickly becomes prohibitively expensive and time-consuming. Thus, developing sample-efficient methods is necessary to allow the deployment of deep RL agents in real environments.
+
+\subsection{Benchmarks for data-efficient RL}
+
+In order to gauge progress in sample-efficient deep RL, a number of standardized benchmarks have been proposed.
+
+\paragraph{Atari-100k} For discrete control, the \emph{de facto} standard benchmark is Atari-100k \cite{kaiserModelBasedReinforcementLearning2024}, a subset of 26 games from the full Atari Learning Environment \cite{bellemareArcadeLearningEnvironment2013} benchmark, limited to $400\times 10^3$ game frames, equivalent to $100 \times 10^3$ agent steps, assuming the standard practice of repeating every agent's action $4$ times.
+
+\paragraph{DMC} For image-based continuous control, the most widely used benchmark has been DeepMind Control suite \cite{tassaDeepMindControlSuite2018} limited to either $100 \times 10^3$ or $500 \times 10^3$ agent interactions, as proposed in \cite{kaiserModelBasedReinforcementLearning2024}. This setup has been used by e.g. \cite{kostrikovImageAugmentationAll2021,srinivasCURLContrastiveUnsupervised2020}.
+
+\section{Model-based RL}
+
+Whereas a model-free RL agent seeks only to learn the policy $\pi$, either directly or indirectly through a $Q$ function, a model-based agent seeks also to simulate the environment itself and be able to predict the future, in order to aid learning the policy, or avoid having to do it altogether \cite{sutton2018reinforcement}.
+
+\subsection{Learning the model}
+
+Most model-based RL algorithms aim to predict future stats or observations. SimPLE \cite{kaiserModelBasedReinforcementLearning2024} performs the transition in input (image) space - the UNet-like model receives input consisting of last $K$ frames, as well as action conditioning, and is trained to output next frame. The main issue with this approach is that encoding and decoding images in such a fashion proves to be computationally expensive. Indeed, the training time is $5$ A100-days (as reported by \cite{hafnerMasteringDiverseDomains2024}). Thus, other model often opt to perform modelling in the latent space. World Models \cite{haRecurrentWorldModels2018}, for example, uses a two-stage training recipe: visual inputs are first compressed into a latent vector using a Variational Autoencoder \cite{kingmaAutoEncodingVariationalBayes2022}, whereafter a combination of an RNN and a ``distribution head'' model the transition probabilities in the latent space. In the context of PlaNet agent \cite{hafnerLearningLatentDynamics2019}, the authors raise the issues surrounding modelling stochastic environments autoregressively, and propose the use of both deterministic and stochastic recurrent networks in order to deal with stochasticity without inducing the decay of the information stored in the state vector. This approach has been further refined in the Dreamer series of models \cite{hafnerDreamControlLearning2020,hafnerMasteringAtariDiscrete2022,hafnerMasteringDiverseDomains2024} by e.g. using discrete latent states, employing better techniques for learning prior and posterior state distributions, improving critic learning through the use of value distributions \cite{bellemareDistributionalPerspectiveReinforcement2017}. IRIS \cite{micheliTransformersAreSampleEfficient2023} uses a VQ-VAE \cite{oordNeuralDiscreteRepresentation2018} to encode input observations into a sequence of discrete tokens, and a GPT-like Transformer architecture \cite{vaswaniAttentionAllYou2017} to predict future tokens, along with rewards and episode-end indicators.
+
+Model states do not necessarily need to correspond to real states - in the case of \emph{value-equivalent models}, the states and the transition function are optimized to approximate the values to be obtained after executing a sequence of actions \cite{silverPredictronEndToEndLearning2017}. The idea is to construct an abstract MDP, in which planning is equivalent to planning in the real environment. This way, model capacity is wholly used for the purposes of learning the policy, as opposed to modelling potentially irrelevant details. TreeQN \cite{farquharTreeQNATreeCDifferentiable2018}, for example, learns a differentiable, recursive, tree-structured model acting as a replacement for the $Q$ function in arbitrary model-free RL algorithm. In MuZero \cite{schrittwieserMasteringAtariGo2020}, the model is optimized to jointly predict rewards, the action-selection policy, and the value function, leading to an agent capable of learning to play Atari, Go and chess at a superhuman level. EfficientZero \cite{yeMasteringAtariGames2021} adapts MuZero for sample-efficient image-based RL, through addition of self-supervised consistency loss \cite{chenExploringSimpleSiamese2020}, refinements in reward and value prediction, and a method to correct off-policy issues when using replay buffer samples to compute value targets.
+
+\subsection{Using the model}
+
+One class of methods uses the model for \emph{planning}; such techniques are also known as \emph{lookahead methods}. Here, planning refers to any decision process which actively uses the world model. For example, in its simplest incarnation, Model-Predictive Control (MPC), at every time step, optimizes a sequence of actions $a_t, \ldots, a_{t+H-1}$ such that the expected total rewards $\mathbb{E}\left\{\sum_{k=0}^{H-1} r_{t+k} \right\}$ is maximized, and selects the first action $a_t$ - at the next step, the procedure is performed again. The action sequence can be optimized using any zero-order method, like Monte Carlo (i.e. sampling the actions randomly and selecting the one with the best score), or through Cross-Entropy Method (CEM). A variation of this idea is to employ a Monte Carlo Search Tree in order to focus on more promising directions of exploration. In all cases, an auxiliary value function predictor can also be used in order to approximate the returns beyond the rollout horizon.
+
+At the other end of the spectrum lay approaches which use model rollouts for learning the policy. Such rollouts can be used either as a data augmentation technique, or completely replace training on real data, instead learning behaviors entirely in the ``imagination'' via regular model-free RL algorithms. The former approach, for example, has been utilized in MBPO \cite{jannerWhenTrustYour2021}, whereas the Dreamer series of algorithms \cite{hafnerDreamControlLearning2020,hafnerMasteringAtariDiscrete2022,hafnerMasteringDiverseDomains2024} follows the latter strategy.
 
 \section{Data augmentation in RL}
 
-Drawing from the common practice of using data augmentation (e.g. image transformations like rotation, random shifts) in supervised learning to improve performance and reduce overfitting, DrQ develops an RL-specific augmentation schema: beyond simply applying random transforms to observations, we may also use the fact that $Q$ and $V$ functions should be invariant w.r.t. the transforms to smooth them out by averaging.
+Drawing from the common practice of using data augmentation (e.g. image transformations like rotation, random shifts) in supervised learning to improve performance and reduce overfitting, there exist also methods, which apply these techniques in the context of RL. RAD \cite{laskinReinforcementLearningAugmented2020} apply transforms, such as cropping, translation, conversion to grayscale or color jitter, to SAC and PPO. DrQ \cite{kostrikovImageAugmentationAll2021} develops an RL-specific augmentation schema: beyond simply applying random transforms to observations, the authors also use the fact, that $Q$ and state-value functions ought to be invariant with respect to the transforms to smooth them out by averaging across multiple samples. In robotics, domain randomization has become a crucial component of sim2real pipelines \cite{tobinDomainRandomizationTransferring2017,openaiSolvingRubiksCube2019}.
 
 \section{Self-supervised RL}
 
-Standard deep RL methods, such as DQN or SAC, only utilize the reward signal in order to learn useful state representations to be used to learn the policy. Some authors have proposed employing techniques from the area of self-supervised/unsupervised learning in order to combat this inefficiency.
+Standard deep RL methods, such as DQN or SAC, only utilize the reward signal in order to learn useful state representations to be used to learn the policy. Some authors have proposed employing techniques from the area of self-supervised learning (SSL) in order to combat this inefficiency.
 
 Broadly speaking, self-supervised learning consists of adding additional \emph{pretext tasks}, which are solved not for their own sake, but rather to provide learning signal for the downstream representations. Many kinds of pretext tasks have been suggested:
 
 \begin{itemize}
-  \item For visual input, one option is to exploit inherent structure of images, via rotation prediction, colorization (reconstructing the image from a grayscale version) or jigsaw (splitting an image into patches, randomizing the order and reconstructing the original image).
-  \item Contrastive learning (CL) approaches, based on the instance discrimination task, construct such representations, that views (augmentations, crops etc.) of the same instance (``positive pairs'') are pulled together, and views of different instances (``negative pairs'') are pulled apart. Some CL methods do not use negative pairs altogether, relying on momentum, batch normalization and projection heads to avoid collapse of the representations.
-  \item Generative approaches reconstruct input from noisy or corrupted versions. Autoencoders, variational autoencoders (VAEs) and denoising VAEs pass the (possibly augmented) input through a latent bottleneck in order to recover the original input. The corruption can also take form of masking patches of the input - this approach has proven especially suited to pre-training representations for NLP and Vision Transformers.
+  \item For visual input, one option is to exploit inherent structure of images, via rotation prediction \cite{gidarisUnsupervisedRepresentationLearning2018}, colorization (reconstructing the image from a grayscale version) \cite{zhangColorfulImageColorization2016} or jigsaw (splitting an image into patches, randomizing the order and reconstructing the original image) \cite{norooziUnsupervisedLearningVisual2017}.
+  \item Contrastive learning (CL) approaches, based on the instance discrimination task, construct such representations, that views (augmentations, crops etc.) of the same instance (``positive pairs'') are pulled together, and views of different instances (``negative pairs'') are pulled apart \cite{chopraLearningSimilarityMetric2005,schroffFaceNetUnifiedEmbedding2015}. Some CL methods do not use negative pairs altogether, relying on momentum, batch normalization and projection heads to avoid collapse of the representations \cite{grillBootstrapYourOwn2020}.
+  \item Generative approaches reconstruct input from noisy or corrupted versions. Autoencoders, variational autoencoders (VAEs) and denoising VAEs \cite{inproceedings} pass the (possibly augmented) input through a latent bottleneck in order to recover the original input. The corruption can also take form of masking patches of the input - this approach has proven especially suited to pre-training representations for NLP \cite{devlinBERTPretrainingDeep2019} and Vision Transformers \cite{heMaskedAutoencodersAre2021}.
 \end{itemize}
 
-Similarly, self-supervised RL techniques attempt to incorporate pretext tasks into regular RL pipelines. Arguably the simplest way is to apply SSL to augment learning of observation embeddings. For example, CURL takes a base RL model (in this instance SAC) and uses MoCo to help train the observation encoder via an auxiliary CL loss term. Some architectures, however, design the pretext task to be more RL-specific. SPR, for instance, treats a future state and a state predicted by a transition model from the past state and the sequence of actions in between as a positive pair. Masked World Models use the paradigm of masking image patches and reconstructing them, with an important addition of also predicting rewards, which proves crucial for achieving high final performance.
+Similarly, self-supervised RL techniques attempt to incorporate pretext tasks into regular RL pipelines. Arguably the simplest way is to apply SSL to augment learning of observation embeddings. For example, CURL \cite{srinivasCURLContrastiveUnsupervised2020} takes a base RL model (in this instance SAC) and uses MoCo \cite{heMomentumContrastUnsupervised2020} to help train the observation encoder via an auxiliary CL loss term. Some architectures, however, design the pretext task to be more RL-specific. SPR \cite{schwarzerDataEfficientReinforcementLearning2021}, for instance, treats a future state and a state predicted by a transition model from the past state and the sequence of actions in between as a positive pair. Masked World Models \cite{seoMaskedWorldModels2022} use the paradigm of masking image patches and reconstructing them, with an important addition of also predicting rewards, which proves crucial for achieving high final performance.
 
-\section{Model-based RL}
+\section{Training recipes for data-efficient RL}
 
-Whereas a model-free RL agent seeks only to learn the policy $\pi$, a model-based agent seeks also to model the probability, or simply allow sampling, of future states and rewards $\widetilde{s_{t+1}}, \widetilde{r_{t+1}}, \ldots, \widetilde{s_{t+H}}, \widetilde{r_{t+H}}$ given past observations $o_{\leq T}$ and actions to perform $a_{t}, \ldots, a_{t+H-1}$, where $H$ denotes the imagination horizon.
-
-\subsection{Learning the model}
-
-SimPLE performs the transition in input (image) space - the UNet-like model receives input consisting of last $K$ frames, as well as action conditioning, and is trained to output next frame. Stochasticity of the environment is modeled by encoding the input-output pair into a discrete latent vector (intuitively representing which of the possible futures to expect) which is fed to the decoder; the distribution of these latent vectors is modeled autoregressively with an LSTM for use at inference time. The issue with the approach is that encoding and decoding images in such a fashion proves to be computationally expensive. Thus, other model often opt to perform modelling in the latent space. World Models, for example, uses a two-stage training recipe: visual inputs are first compressed into a latent vector using a Variational Autoencoder, whereafter a combination of an RNN and a ``distribution head'' model the transition probabilities in the latent space. In (PlaNet), the authors raise the issues surrounding modelling stochastic environments autoregressively and propose the use of both deterministic and stochastic recurrent networks in order to deal with stochasticity without inducing the decay of the information stored in the state vector. This approach has been further refined in the Dreamer series of models by e.g. using discrete latents or employing better techniques for pulling together prior and posterior state distributions.
-
-Model states do not necessarily need to correspond to real states - in the case of \emph{value-equivalent models}, the states and the transition function are optimized to approximate the values to be obtained after executing a sequence of actions. (Speak of MuZero \&c?)
-
-\subsection{Using the model}
-
-Let us take a look now at how such a world model can be used in an RL agent. One class of methods uses the model for \emph{planning}; such techniques are also known as \emph{lookahead methods}. Here, planning refers to any decision process which actively uses the world model. For example, in its simplest incarnation, Model-Predictive Control (MPC), at every time step, optimizes a sequence of actions $a_t, \ldots, a_{t+H-1}$ such that the expected total rewards $\mathbb{E}\left\{\sum_{k=0}^{H-1} r_{t+k} \right\}$ is maximized, and selects the first action $a_t$ - at the next step, the procedure is performed again. The action sequence can be optimized using any zero-order method, like Monte Carlo (i.e. sampling the actions randomly and selecting the one with the best score), or through Cross-Entropy Method (CEM). A variation of this idea is to employ a Monte Carlo Search Tree in order to focus on more promising directions of exploration. In all cases, an auxiliary value function predictor can also be used in order to approximate the returns beyond the rollout horizon.
-
-At the other end of the spectrum lay approaches which use model rollouts for learning the policy. Such rollouts can be used either as a data augmentation technique, or completely replace training on real data, instead learning behaviors entirely in the ``imagination'' via regular model-free RL algorithms.
-
-\section{Training recipes for data-efficient RL}\label{train_recipes}
-
-A recent line of research has focused on achieving greater sample efficiency without any architectural changes - rather, the idea is to optimize the training recipe, which we define as the way optimization and environment interaction steps are organized throughout the training process. In some cases, as shown in (Data-Efficient Rainbow), it is sufficient to simply increase the frequency of optimization steps per environment step. At sufficiently high replay ratios, the final performance of the agents starts to decrease. In (Primacy Bias paper), the authors analyze this phenomenon, and suggest that the fundamental cause of this is \emph{primacy bias}, whereby the neural networks overfit to early interactions, causing the loss of ability to learn and generalize from more recent data. The proposed remedy is to periodically fully or partially reinitialize the networks used by the agent - this simple procedure is shown to significantly improve performance in low-sample regime.
+A recent line of research has focused on achieving greater sample efficiency without any architectural changes - rather, the idea is to optimize the training recipe, which we define as the way optimization and environment interaction steps are organized throughout the training process. In some cases, as shown in \cite{vanhasseltWhenUseParametric2019}, it is sufficient to simply increase the frequency of optimization steps per environment step. At sufficiently high replay ratios, the final performance of the agents starts to decrease. In \cite{nikishinPrimacyBiasDeep2022}, the authors analyze this phenomenon, and suggest that the fundamental cause of this is \emph{primacy bias}, whereby the neural networks overfit to early interactions, causing the loss of ability to learn and generalize from more recent data. The proposed remedy is to periodically fully or partially reinitialize the networks used by the agent - this simple procedure is shown to significantly improve performance in the low-sample regime.
 
 \section{Integrated architectures}
 
-The main idea of this paper is inspired and motivated by Rainbow architecture and associated paper. In it, the authors took a base off-policy model-free RL algorithm, DQN, applied an array of modifications developed by other authors (specifically: double Q-learning, dueling networks, prioritized sampling, noisy networks, distributional RL and multi-step TD targets), adapted to fit together in a unified architecture, and achieved substantial improvements in terms of final performance of the agent.
+The main idea of this paper is inspired and motivated by Rainbow architecture \cite{hesselRainbowCombiningImprovements2017}. In it, the authors took a base off-policy model-free RL algorithm, DQN \cite{mnihHumanlevelControlDeep2015}, applied an array of modifications developed by other authors (specifically: double Q-learning \cite{hasseltDeepReinforcementLearning2015}, dueling networks \cite{wangDuelingNetworkArchitectures2016}, prioritized sampling \cite{schaulPrioritizedExperienceReplay2016}, noisy networks \cite{fortunatoNoisyNetworksExploration2019}, distributional RL \cite{bellemareDistributionalPerspectiveReinforcement2017} and multi-step TD targets \cite{suttonLearningPredictMethods1988}), adapted to fit together in a unified architecture, and achieved substantial improvements in terms of final performance of the agent.
 
-% I've already gone through literature, but it would be wise to recheck it a few times since it's quite a provocative statement.
-Our goal is to develop a framework for sample-efficient RL, in a similar fashion to Rainbow - taking a base architecture, an array of approaches developed to improve sample efficiency, and combine them together into a single architecture. To our knowledge, this has not yet been investigated.
+In the context of sample-efficient reinforcement learning, a recently introduced Bigger-Better-Faster (BBF) \cite{schwarzerBiggerBetterFaster2023} agent employs a similar strategy. The authors take the SR-SPR architecture \cite{doroSampleEfficientReinforcementLearning2022} and outfit it with harder periodic resets, larger encoder backbones used, a \emph{receding update horizon} \cite{kearnsBiasVarianceErrorBounds2000}, meaning a variable length of sequences used for value estimation, a discount factor $\gamma$ schedule \cite{francois-lavetHowDiscountDeep2016}, and the use of weight decay, by using AdamW optimizer \cite{loshchilovDecoupledWeightDecay2018}. Through careful study and incorporation of these ablations, human-level performance with human-level sample efficiency is achieved.
+
+The objective of this thesis is to investigate a similar scheme in the context of model-based RL. However, unlike Rainbow and BBF, the changes we propose to test are rather higher-level compared with e.g. increasing model size, or adding distributional value estimation, mostly being drawn from other data-efficient architectures. Also, due to increased complexity of model-based RL frameworks, a different kind of approach is needed in order to incorporate these changes.
 
 \chapter{Method}
 
-\section{Overall design}
+\section{Design of the framework and the empirical studies}
 
-Let us now consider how these advancements can be integrated into a single unified, modular framework for constructing sample-efficient RL agents.
+We are now in a position to consider what modifications to apply, design the structure of the RL agent capable of supporting them, and specify what studies concretely should we, at a minimum, conduct. With this, we will be able to assess whether existing RL frameworks can be used to perform the empirical tests.
 
-The use of world models in a number of state-of-the-art approaches for data-efficient RL informs our choice to design the architecture in a model-based fashion. Thus, the framework shall consist of a world model, the RL agent proper, along with a replay buffer.
+Of the existing benchmarks for sample efficiency, we target Atari-100k, a set of 26 video games for Atari 2600, with the environment interaction cap of $100 \times 10^3$, as the \emph{de facto} standard in visual control.
 
-In many cases, the advances in sample efficiency result from the development of better model or RL algorithm architectures \emph{in isolation}. With this in mind, we wish to make the framework allow for possibly seamless swapping out of the model and RL modules. In order to do this, we need to examine how different model-based architectures structure the interaction between the model and the RL modules.
+\subsection{World model}
+
+First, we need to choose what kind of a model-based RL architecture to implement, which would best suit our objectives. Although models trained to value equivalence have proven very sample-efficient, they are also tightly coupled, making introduction of arbitrary modifications either difficult, or infeasible. We will therefore focus on world models trained independently of any policy, with observation reconstruction and/or self-supervised auxiliary losses being the main drivers of optimization. The framework should allow swapping out of the world model implementations at will, and support adjusting all the hyperparameters thereof.
+
+We decide to focus on a single world model architecture. It is, of course, reasonable to expect model improvements to lead to better behavioral policies. We would, however, rather shed light on the less-highlighted aspects of the design of an model-based RL algorithm beside the model alone. We select DreamerV2 \cite{hafnerMasteringAtariDiscrete2022} for a number of reasons:
+
+\begin{enumerate}
+  \item As opposed to the next iteration of the algorithm, DreamerV3 \cite{hafnerMasteringDiverseDomains2024}, it has not been designed with sample efficiency in mind. Because of this, we believe it can serve as a proxy for arbitrary model architecture, with the recommendations in this paper being possibly applicable to future work in model-based RL.
+  \item Having high base performance, measured in the extended setting with an interaction budget of $50 \times 10^6$, we hope that we can reach performance comparable with state-of-the-art methods even in the setting with $100 \times 10^3$ interactions. For example, (Compute the requisite speedup factor to each e.g. BBF).
+  \item Compared with e.g. IRIS \cite{micheliTransformersAreSampleEfficient2023} or SimPLE \cite{kaiserModelBasedReinforcementLearning2024}, the world model used is computationally friendly, taking hours rather than entire days for a single training run to complete, allowing us to conduct a vast array of tests.
+\end{enumerate}
+
+\subsection{RL algorithms}
+
+Aside from the world model itself, the other major component of the architecture is the RL algorithm (or RL module) itself. The interaction between the two can be realized in a number of distinct ways:
 
 \begin{enumerate}
   \item Dreamer series takes the approach of training a (possibly arbitrary) model-free RL algorithm purely with simulated experience. The model and the RL modules are essentially independent of each other.
-  \item One may mix real and simulated data for the purposes of training the RL agent. For example, in MBPO, the authors use an on-policy method, but augment the data with imaginary rollouts.
+  \item One may mix real and simulated data for the purposes of training the RL agent. For example, in MBPO, the authors use an on-policy method (specificially PPO), but augment the data with imaginary rollouts. This requires the model states to be of the same data type as the observations, which limits its usefulness in the context of visual control, as is the case when playing Atari games.
   \item The agent module may not even require any training per se. For example, PETS and PlaNet use cross-entropy method (CEM) for selecting actions to perform by planning with the learned model.
-  \item Methods using value-equivalent models, such as MuZero or EfficientZero, train the model and the RL module jointly. In this instance, the interaction is more complex.
 \end{enumerate}
 
-Our desiderata are best fit with a generic approach inspired by the Dreamer series. To be precise, we consider a following scheme:
+Thus, ideally there needs to be an option for the RL module to use the world model actively, in order to support planning-based methods. It also needs to be possible to take any model-free RL algorithm, and be able to use it in the framework, possibly with some small modifications to account for the model-based setting.
+
+In our tests, we will start with the RL algorithm supplied in the DreamerV2, namely a variant of Advantage Actor-Critic (A2C). Thus, our starting point will be an agent analogous to DreamerV2, with the same world model and RL algorithm. We shall examine the effect of replacing aforementioned module with two model-free algorithms: Soft Actor-Critic (SAC) and Proximal Policy Optimization (PPO). The choice is motivated by following factors:
 
 \begin{enumerate}
-  \item The world model is independent of the RL module, and is optimized on samples from a replay buffer.
-  \item The RL module may use the model actively, and may require optimization using batches of on- or off-policy rollouts, either real or simulated, or a mixture of both (if the observation and model state spaces coincide.)
+  \item Since the original RL algorithm in DreamerV2 uses, for Atari environments, vanilla policy gradients with Generalized Advantage Estimation, the most straightforward way to improve upon it is to replace it with an improved policy-gradient-based algorithm. We select PPO due to high performance and the ability to reuse simulated data, possibly increasing the overall computational performance.
+  \item Beyond that, we would like to investigate the behavior of $Q$-learning algorithms in a model-based setting. We select SAC as a strong baseline.
 \end{enumerate}
 
-This formulation subsumes most of the algorithms we have considered so far, such as Dreamer, MBPO, PlaNet, SimPLe, or IRIS: the specific method can be replicated by adjusting the architectures of the model and of the RL module, or the form of the input data for the RL module optimization step. Data augmentation may, for example, be implemented by placing a layer between the replay data loader and the model.
+\subsection{Training recipes}
 
-Beyond the network architecture, a major component of the design of sample-efficient agents is the structure of the training loop, meaning the order and frequency in which environment interaction, model optimization and RL module optimization occur. Indeed, works such as Data-Efficient Rainbow or SR-SPR prove that ordinarily inefficient methods can be made vastly more data-efficient by refining the training process. Thus, it is necessary for the framework to accomodate specifying different kinds of training recipes.
+Beyond the network architecture, a major component of the design of sample-efficient agents is the structure of the training loop, meaning the order and frequency in which environment interaction, model optimization and RL module optimization occur. Indeed, works such as Data-Efficient Rainbow \cite{vanhasseltWhenUseParametric2019} or SR-SPR \cite{doroSampleEfficientReinforcementLearning2022} prove, that ordinarily inefficient methods can be made vastly more data-efficient by refining the training process. Thus, it is necessary for the framework to accomodate specifying different kinds of training recipes. Ideally, the entire training recipe ought to be adjustable via a configuration file. Following the work on plasticity loss and applying periodic resets, it should also be possible to specify a relevant reset policy in the same fashion.
+
+We will investigate the straightforward approach of tuning the model/RL update ratio. We would also like to assess, whether \emph{decoupling} the two update frequencies has a positive effect on the performance. Given the number of hyperparameters to consider, it is also crucial to verify, whether a method for automatically tuning these parameters can be devised.
+
+As for applying the periodic resets, we have found the required number of tests to be computationally infeasible, as the literature suggests different reset frequencies, and different reset strategies - one may reset all the parameters, or only the last $K$ layers, and the resetting may be full or partial. This would, presumably, have to be conducted separately for the model and the RL modules, further increasing the extent of the hyperparamter sweep. Furthermore, prior work \cite{julianiStudyPlasticityLoss2024} suggests, that there may not necessarily be any clear training-time indicator of the phenomenon occuring. We will therefore limit our investigation to merely detecting, whether primacy bias occurs in our setting.
+
+\subsection{Data augmentation}
+
+Since applying data augmentation has proven to significantly improve data efficiency, the framework also needs to support their use. While some works recommend applying data augmentations in ways specifically suited for RL, such as $Q$ function averaging, it requires modifications to be made in the RL module code, whereas one of our desiderata is the freedom in testing various RL algorithms. Thus, we only require the framework to provide an option to augment observations.
+
+In our tests, we will follow the augmentation strategies devised for the DrQ agent \cite{kostrikovImageAugmentationAll2021}.
+
+\subsection{Self-supervised RL}
+
+As regards the use of self-supervised learning and specifically pretext tasks, it is difficult to envision a completely generic and architecture-agnostic way to implement it. Moreover, it can be argued, that the use of an entire world model should render the benefits of adding auxiliary objectives and pretext tasks null. We will therefore not pursue this avenue of research. We may observe, however, that the considered framework should nevertheless allow for experiments involving these ablations, through introduction of new world models and/or RL modules incorporating such auxiliary objectives.
 
 \section{Implementation}
 
-In order to facilitate the experiments, we have implemented a modular model-based RL framework in Python, using the PyTorch library. The source code is accessible at \url{https://github.com/vitreusx/rsrch}, and is structured as a regular Python package, making it installable.
+We have considered a number of existing RL frameworks, with the goal of finding one which would support all the features we have described and facilitate the experiments. We have, however, found publicly available solutions to be inadequate for our study:
 
-The entry point for the framework is the \href{https://github.com/vitreusx/rsrch/blob/devel/dreamerx/runner.py}{{\tt Runner} class}, responsible for instantiating the requisite neural networks, RL environments, replay buffers, data loaders, optimizers etc. We will elaborate on the further aspects of the implementation by following a normal flow of the program.
+\begin{enumerate}
+  \item \href{https://github.com/google/dopamine}{\tt {google/dopamine}} \cite{castro18dopamine} - Only supports model-free algorithms. The algorithms are also written in JAX \cite{jax2018github}, meaning there is a greater barrier for entry for the users. Ultimately, we found it to be infeasible to convert it to a full-featured model-based framework.
+  \item \href{https://github.com/vwxyzjn/cleanrl}{\tt {vwxyzjn/cleanrl}} \cite{huang2022cleanrl} - Only supports model-free algorithms. Also, due to a single-file design, it does not provide sufficient infrastructure for our experiments.
+  \item \href{https://github.com/facebookresearch/mbrl-lib}{\tt {facebookresearch/mbrl-lib}} \cite{pinedaMBRLLibModularLibrary2021} - Only supports continuous state-action spaces. Moreover, we found the configurability and testing infrastructure (e.g. support of Tensorboard or Weights and Biases) lacking or nonexistent.
+  \item \href{https://github.com/opendilab/DI-engine}{\tt {opendilab/DI-engine}} \cite{ding21diengine} - Although there is support for some model-based RL algorithms, such as MBPO or DreamerV3, they are not configurable to the extent we desire. Rather than being a single unified framework, it is a collection of disparate RL algorithms.
+\end{enumerate}
+
+Thus, in order to facilitate the experiments, we have implemented a modular model-based RL framework in Python, using the PyTorch deep learning framework. The source code is accessible at \url{https://github.com/vitreusx/rsrch}, and is structured as a regular Python package. All the experiments can be performed with a (suitably configured) call to {\tt {python -m dreamerx}}.
+
+The main component responsible for running the experiments is the \href{https://github.com/vitreusx/rsrch/blob/devel/dreamerx/runner.py}{{\tt Runner} class}, responsible for instantiating the requisite neural networks, RL environments, replay buffers, data loaders, optimizers etc. We will now elucidate various aspects of the implementation, by following an execution flow of the program.
 
 \subsection{Configuration}
 
@@ -190,12 +247,60 @@ First, we must load the configuration. Due to the variety of the experiments and
 
 \begin{enumerate}
   \item There needs to be a single YAML file with default parameter values.
-  \item We need to be able to compose \emph{preset files}. These files are, in effect, overwrites of the default config. These presets also need to be extensible. For example, we may create a preset corresponding to a single experiment, containing the parameter values to be overriden, and want to create a variant of that experiment by changing a single value. We may also want to combine multiple presets, for example in order to copy environment specification from one preset, and training details from another.
+  \item We need to be able to compose \emph{presets}. These YAML entries are, in effect, overrides of the default config. These presets also need to be extensible and composable. For example, we may create a preset corresponding to a single experiment, containing the parameter values to be overriden, and want to create a variant of that experiment by changing a single value. We may also want to combine multiple presets, for example in order to copy environment specification from one preset, and training details from another.
   \item The solution must allow for variable interpolation, meaning the capacity for one parameter to reference other values in the YAML file. The interpolation cannot be limited to strings alone. Also, we would like to be able to perform mathematical operations to compute certain parameter values on-the-fly. The interpolation ought to be performed after all the presets have been merged into the base configuration object.
   \item The raw configuration object (a dictionary) needs to be convertible to a Python class, preferably a {\tt dataclass}, in order to ensure type safety and increase the ease of development via the presence of the type hints.
 \end{enumerate}
 
 Of the existing solutions, we have found \href{https://omegaconf.readthedocs.io}{\tt omegaconf} to be the one best matching our desiderata.
+
+\begin{sloppypar}
+  An abbreviated example of the preset system in action can be found in \autoref{lst:presets}. We have the main configuration file {\tt dreamerx/config.yml} with default values, and an entry {\tt data} with the description of replay buffer and data loader settings. Then, in another file {\tt thesis/exp/presets.yml}, we can find two presets {\tt data\_aug.v1} and {\tt data\_aug.v2}, corresponding to two experiments. The {\tt v1} experiment \emph{extends} yet another experiment, {\tt adaptive\_ratio.wm\_v1}, not shown due to space constraints, applying all the other overrides present there, setting an internal parameter {\tt \_rl\_ratio}, and overriding the augmentation settings of a data loader. The end user, rather than having to supply the entire complex configuration via command line, can write it in a human-readable YAML format, and then simply invoke the {\tt dreamerx} module with a preset option {\tt -p thesis.data\_aug.v1} to launch an experiment.
+\end{sloppypar}
+
+\begin{listing}
+  \begin{minted}[fontsize=\small]{yaml}
+
+  --- dreamerx/config.yml
+  (...)
+  data:
+    capacity: 2e6
+    val_frac: 0.0
+    loaders:
+      dreamer_wm:
+        batch_size: 16
+        slice_len: 50
+        subseq_len: [50, 50]
+        prioritize_ends: true
+        ongoing: false
+        augment:
+          type: none
+  (...)
+
+  -- thesis/exp/presets.yml
+  (...)
+  thesis.data_aug:
+    v1:
+      $extends: [adaptive_ratio.wm_v1]
+      _rl_ratio: 4.0
+      data.loaders.dreamer_wm:
+        augment:
+          type: drq
+          drq:
+            max_shift: 4
+
+    v2:
+      $extends: [baseline]
+      data.loaders.dreamer_wm:
+        augment:
+          type: drq
+          drq:
+            max_shift: 4
+  (...)
+  \end{minted}
+  \caption{An example use of the preset system}
+  \label{lst:presets}
+\end{listing}
 
 \subsection{Environments}
 
@@ -203,10 +308,10 @@ After parsing the configuration file, we must set up the RL environments, such a
 
 The main issue is as follows: the components further down the line, such as the actor networks or the world model, accept the PyTorch tensors as the input, whereas most RL libraries return Numpy arrays. The replay buffer(s) should also store Numpy arrays. We may note, that in some common cases, none of these ``data formats'' are not the same, even the replay buffer data and the data obtained from the environment. For example, many Atari agents utilize \emph{frame stacking}, whereby last $K$ emulator frames are passed to the agent. Clearly, we would like to store only the most recent one in the buffer, to avoid wasting memory - in fact, for a replay buffer of size $2 \times 10^6$ and grayscale observations of size $86 \times 86$, we would need $\approx 60{\rm G}$ of memory to store all of them in an uncompressed form if not doing any memory optimization. Beyond this, we need to make sure, that the data transforms of the environment samples and buffer samples yield the same results. Usually, all these nuances are handled manually, but this approach introduces a lot of possibilities for inadvertantly adding hard-to-fix bugs.
 
-Ideally, then, we would like to hide all of this from the end user. The way we achieve this is through an \emph{environment SDK}. The SDK's role is to expose a minimal interface for creating environments, performing interactions with them, and creating replay buffers to store the experience. The Python-esque pseudocode is provided in \autoref{lst:env_sdk}. The idea is to provide an unified interface for acting in the environment(s) via a {\tt VecAgent} protocol, and to hide the details concerning various conversions, data storage details etc. through {\tt wrap\_buffer} and {\tt rollout} methods of the SDK.
+Ideally, then, we would like to hide all of this from the user of the framework. The way we achieve this is through an \emph{environment SDK}. The SDK's role is to expose a minimal interface for creating environments, performing interactions with them, and creating replay buffers to store the experience. The Python-esque pseudocode is provided in \autoref{lst:env_sdk}. The idea is to provide an unified interface for acting in the environment(s) via a {\tt VecAgent} protocol, and to hide the details concerning various conversions, data storage details etc. through {\tt wrap\_buffer} and {\tt rollout} methods of the SDK.
 
 \begin{listing}
-  \begin{minted}[]{python}
+  \begin{minted}[fontsize=\small]{python}
 
     class VecAgent:
         def reset(self, indices, observations):
@@ -249,21 +354,23 @@ Ideally, then, we would like to hide all of this from the end user. The way we a
 
 Another crucial feature is the presence of {\tt obs\_space} and {\tt act\_space} member fields. They provide information concerning the format of the data received by the agent or sampled from the buffer. We provide a set of classes mirroring the {\tt gym.spaces} classes, such as {\tt Image} or {\tt Box}, but for the PyTorch tensors, instead of Numpy arrays.
 
-We provide SDKs for Atari Learning Environment (ALE), DeepMind Control Suite (DMC) and a generic one for \href{https://gymnasium.farama.org/}{\tt gymnasium} environments. For ALE and DMC, we use optimized, C++-based implementations provided by \href{https://github.com/sail-sg/envpool}{\tt envpool} library [Add the paper citation]. We may note that, despite {\tt envpool} not sharing API with Gym environments, we do not need to make any changes to the rest of the code, like the training loop, showcasing one major advantage of using such SDKs over handling all the environment-related code manually.
+We provide SDKs for Atari Learning Environment (ALE), DeepMind Control Suite (DMC) and a generic one for \href{https://gymnasium.farama.org/}{\tt gymnasium} environments. For ALE and DMC, we use optimized, C++-based implementations provided by \href{https://github.com/sail-sg/envpool}{\tt envpool} library \cite{weng2022envpool}. We may note that, despite {\tt envpool} not sharing API with Gym environments, we do not need to make any changes to the rest of the code, like the training loop, showcasing one major advantage of using such SDKs over handling all the environment-related code manually.
 
 \subsection{World model and RL modules}
 
 In order to implement swapping out the world model and the RL algorithm implementations, we separate them out into replaceable modules with unified interfaces.
 
-As regards the world model interface, it is difficult to devise a single common scheme for all possible methods we may envision. Some algorithms, for example, perform transitions in observation space, whereas others operate in a latent space. The model can either give the probability distribution over future states, or act in an implicit manner, e.g. by generating future states from noise via Diffusion Models. Certain approaches model the environment only in the sense, that they allow reconstruction of the rewards, and the ``states'' produced do not correspond to the actual environment states.
+As regards the world model interface, it is difficult to devise a single common scheme for all possible methods we may envision. Some algorithms, for example, perform transitions in observation space, whereas others operate in a latent space. The model can either give the probability distribution over future states, or act in an implicit manner, e.g. by generating future states from noise via Diffusion Models.
 
-We take the path of requiring the model to implement (1) an inference process $s_{t+1} \sim p(s_{t+1} \mid s_t, a_t, o_{t+1})$, (2) performing an imaginary rollout $\widetilde{s}_{t+1:t+H}, \widetilde{r}_{t+1:t+H} \sim p(\widetilde{s}_{t+1:t+H}, \widetilde{r}_{t+1:t+H} \mid s_t, a_{t:t+H-1})$, where $H$ is the horizon length. This choice excludes the use of RL algorithms which explicitly require access to the transition probability distribution, but in practice none of the algorithms considered so far had such a requirement.
+\begin{sloppypar}
+  We take the path of requiring the model to implement (1) an inference process $s_{t+1} \sim p(s_{t+1} \mid s_t, a_t, o_{t+1})$, (2) performing an imaginary rollout $\widetilde{s}_{t+1:t+H}, \widetilde{r}_{t+1:t+H} \sim p(\widetilde{s}_{t+1:t+H}, \widetilde{r}_{t+1:t+H} \mid s_t, a_{t:t+H-1})$, where $H$ is the horizon length. This choice excludes the use of RL algorithms which explicitly require access to the transition probability distribution, but in practice none of the algorithms considered so far had such a requirement.
+\end{sloppypar}
 
 In the case of RL algorithm modules, we require the sampling of the next action, given the current state $a_t \sim \pi(a_t \mid s_t)$ - the actor is, in effect, memoryless, and we will rely on the world model to encode all the information necessary to perform optimal actions.
 
 During the training process, additional code and networks are necessary to perform optimization. We split these responsibilities off to a separate {\tt Trainer} class. For example, a {\tt Trainer} for a world model may contain, aside from the optimizers, observation decoder, which is strictly speaking not necessary during inference. Similarly, a trainer for an actor-critic RL algorithm would contain the value and $Q$ functions, as well as the target versions (if using double Q learning).
 
-We provide implementations of DreamerV2's world model and RL algorithm - a variant of Advantage Actor-Critic. We follow the original source code for the agent \href{https://github.com/danijar/dreamerv2}{\tt danijar/dreamerv2}. Let us note, that the authors' reference implementation as been written for the Tensorflow deep learning framework. We have considered a number of open-source reimplementations of Dreamer in Pytorch, and found them to be inadequate in some ways:
+We provide implementations of DreamerV2's world model and RL algorithm - a variant of Advantage Actor-Critic. We follow the original source code for the agent \href{https://github.com/danijar/dreamerv2}{\tt danijar/dreamerv2}. Let us note, that the authors' reference implementation as been written for the Tensorflow deep learning framework \cite{tensorflow2015-whitepaper}. We have considered a number of open-source reimplementations of Dreamer in Pytorch, and found them to be inadequate in some ways:
 
 \begin{enumerate}
   \item \href{https://github.com/jsikyoon/dreamer-torch}{\tt jsikyoon/dreamer-torch} is a very close translation of the original codebase, suffering from the same issues, mainly the code quality.
@@ -299,7 +406,7 @@ After the stage of setting up neural networks, replay buffers, environments etc.
 
 The relevant configuration field is {\tt stages} - an example can be found in \autoref{lst:recipe_conf}. The task names ({\tt prefill}, {\tt do\_wm\_opt\_step} etc.) correspond to functions of the {\tt Runner} class. We specify the frequency or duration of various actions through {\tt until} and {\tt every} fields - for example, we can see that buffer prefill phase lasts until $P = 20 \times 10^3$ environment steps have passed. The training loop lasts until $T = 400 \times 10^3$ environment steps, and consists of validation epoch every $20 \times 10^3$ steps, model optimization step every $8$ environment steps, RL optimization step every $4$ environment steps etc. Finally, we do a final validation epoch and save the checkpoint.
 
-Such an example experiment configuration would have been difficult to specify precisely, if we were to use pre-defined experiment presets, and would be far less comprehensible.
+Such an example experiment configuration would have been difficult to specify precisely, if we were to use pre-defined experiment presets, and would be far less comprehensible. In contrast, our solution allows the user (almost) full control over the structure of the training loop, and makes user's intentions far easier to discern.
 
 \begin{listing}
   \begin{minted}[]{yaml}
@@ -326,13 +433,9 @@ Such an example experiment configuration would have been difficult to specify pr
           full: false
           tag: final
   \end{minted}
-  \caption{An example {\tt stages} config field.}
+  \caption{An example {\tt stages} configuration field.}
   \label{lst:recipe_conf}
 \end{listing}
-
-\subsection{Reproduction}
-
-(A section about running the program and reproducing the experiments.)
 
 \chapter{Experiments}
 
@@ -358,7 +461,7 @@ First, let us filter out the environments which do not satisfy first two criteri
 
 Next, we shall select out of this subset 3 games, which are most predictive of the performance on the complete 26-game benchmark. We follow the approach of (Atari-5), and use the source code provided by the authors to arrive at the final result. The three environments selected by the algorithm are: \env{Assault}, \env{CrazyClimber} and \env{MsPacman}.
 
-We use the same environment settings (frame skip values, time limit etc.) as the original DreamerV2. (See Appendix for more details?)
+We use the same environment settings (frame skip values, time limit etc.) as the original DreamerV2.
 
 The original implementation of DreamerV2 is written in Tensorflow - we have ported the relevant source code (mainly the implementation of the world model and the actor critic) to Pytorch, resulting in slight changes in overall performance. It remains, however, comparable: \autoref{fig:torch_v_ref} depicts the validation score curves for both the original implementation, and the Pytorch version.
 
@@ -377,43 +480,7 @@ First, there are purely technical difficulties. Let us, for example, consider sc
 
 Next, insofar as the collapse of the performance for regular model-free RL agents, when increasing the update-to-data frequency, is attributed to plasticity loss, it is not immediately clear whether model-based agents undergo the same process, whether the model and the RL module suffer from the primacy bias or perhaps only one of them does, and whether interventions proposed in the literature prove beneficial here as well. If such interventions require tuning, as is for example the case for periodic resets, then we possibly encounter another computationally expensive grid search.
 
-The strategy is as follows:
-
-\subsection{Base architecture}
-
-We choose DreamerV2 architecture as the baseline for the purposes of optimizing the training recipe. The choice is driven by a number of factors:
-
-\begin{enumerate}
-  \item We wish to start with a non-sample-efficient setup, and (hopefully) make it more data-efficient.
-  \item We want to focus on the visual domains, such as Atari-100k.
-  \item The model and the RL module are, asymptotically, capable of reaching high performance, meaning we will not be bottlenecked by the insufficiency in the model/RL modules themselves.
-\end{enumerate}
-
-The agent consists of two modules:
-
-\begin{itemize}
-  \item The world model -- an observation encoder and a Recurrent State Space Model (RSSM) for modeling stochastic latent dynamics.
-  \item The RL module -- an actor-critic algorithm, optimized either via backpropagation on the values themselves, or through the use of policy gradients.
-\end{itemize}
-
-The training loop is structured as depicted in \autoref{code:dreamer_loop}.
-
-\begin{algorithm}
-  \caption{Dreamer training recipe}
-  \label{code:dreamer_loop}
-  \begin{algorithmic}[1]
-    \State Gather $P$ env samples with an agent acting randomly, and put them into a replay buffer
-    \While{Total number of env steps $<T$}
-    \State Optimize the world model using batch of real rollouts $(o_{1:L}, a_{1:L-1}, r_{1:L-1}, \gamma)$ drawn from the replay buffer.
-    \State Optimize the RL agent using the batch of dream data $(s_{1:H}, a_{1:H-1}, \widetilde{r}_{1:H-1}, \widetilde{\gamma}_{1:H})$, generated by starting from the states obtained through an inference process on real-world rollouts, and imagining next $H-1$ states with the world model.
-    \State Perform $E=64$ environment steps using the behavior policy, and store them in the replay buffer.
-    \EndWhile
-  \end{algorithmic}
-\end{algorithm}
-
-For more details, we refer the reader to the source paper. For our purposes, though, we wish to treat these modules as ``black boxes''.
-
-\section{Na\"ive speedup test}
+\section{Simple speedup test}
 \label{sec:baseline}
 
 We begin with an experiment involving a straightforward increase of the frequency of optimization steps, without any further changes. The goals are as follows: to establish a baseline for further analysis, to find the update-to-data regime where the agent performance degrades, and to investigate what happens at that point with the networks in question.
@@ -490,7 +557,7 @@ To further examine the behavior of the agent throughout the optimization process
 
 As we have noted previously, a number of works have identified the phenomenon of plasticity loss, meaning the inability of neural networks to learn from more recent data samples in the continual learning setting, as a possible culprit in the degradation of the RL agent performance. It might prove fruitful to investigate, whether something similar happens in the case of model-based RL, and specifically the agents based on Dreamer algorithm.
 
-In the first order, we would like to perform a ``post hoc'' test of plasticity loss - the results will not allow us to monitor the occurence of the phenomenon \emph{during} training, but will show whether the degradation has occured. We follow the strategy of \cite{juliani_study_2024}, wherein an agent is trained \emph{warm-started}, i.e. starting from the neural network parameters of a previously trained agent. In that study, the process is repeated $10$ times. Due to computational constraints, we only perform a single repetition. Also, the environments under investigation there were drawn from the Coinrun suite of randomized environment. As we are interested in Atari tasks, and there is no standard way to randomize the environment - the idea of changing the Atari game does not work due to different action spaces, meaning different agent architectures required - we devise a custom randomization scheme for Atari. To be specific, at the start of the training run, we choose (1) a particular permutation $\sigma$ of actions, meaning an action $a \in \{0, \ldots, A - 1\} = \mathcal{A}$ is mapped to $\sigma(a) \in \mathcal{A}$; (2) whether to perform horizontal flip of the video frames; (3) whether to perform a vertical flip of the video frames. These randomizations have been selected in order to ensure, that the warm-started agent approximately achieves the performance of a random agent, and that the observation and action statistics, e.g. the mean and standard deviation of the pixel values, remain the same.
+In the first order, we would like to perform a ``post hoc'' test of plasticity loss - the results will not allow us to monitor the occurence of the phenomenon \emph{during} training, but will show whether the degradation has occured. We follow the strategy of \cite{julianiStudyPlasticityLoss2024}, wherein an agent is trained \emph{warm-started}, i.e. starting from the neural network parameters of a previously trained agent. In that study, the process is repeated $10$ times. Due to computational constraints, we only perform a single repetition. Also, the environments under investigation there were drawn from the Coinrun suite of randomized environment. As we are interested in Atari tasks, and there is no standard way to randomize the environment - the idea of changing the Atari game does not work due to different action spaces, meaning different agent architectures required - we devise a custom randomization scheme for Atari. To be specific, at the start of the training run, we choose (1) a particular permutation $\sigma$ of actions, meaning an action $a \in \{0, \ldots, A - 1\} = \mathcal{A}$ is mapped to $\sigma(a) \in \mathcal{A}$; (2) whether to perform horizontal flip of the video frames; (3) whether to perform a vertical flip of the video frames. These randomizations have been selected in order to ensure, that the warm-started agent approximately achieves the performance of a random agent, and that the observation and action statistics, e.g. the mean and standard deviation of the pixel values, remain the same.
 
 The training recipe follows the reference test with the default DreamerV2 settings and an environment step budget of $6 \times 10^6$, used for comparing the Pytorch and Tensorflow implementations. The choice is motivated by the smaller variance of the results compared to the time horizon of $400 \times 10^3$ used for the other experiments. We load a checkpoint from a baseline test, with the update ratio value of $K = 1$, representing the checkpoints most affected by the primary bias. The environment used during the training run corresponding to the checkpoint is the same, but we change the RNG seeds to introduce further randomization.
 
@@ -624,13 +691,6 @@ The results (\autoref{fig:data_aug_sweep}) suggest, that no type of image augmen
 
 So far, all the experiments have used the default RL module of DreamerV2, namely a variant of Advantage Actor-Critic (A2C). In this section, we shall investigate the effects of replacing it, whilst keeping the model component intact. Beyond hopefully achieving improvement in terms of agent performance, our objective is to elucidate the design choices when incorporating model-free RL algorithms into a model-based setting.
 
-The RL algorithms we wish to test are Proximal Policy Optimization (PPO) and Soft Actor-Critic (SAC). The selection is motivated the following factors:
-
-\begin{enumerate}
-  \item Since the original RL algorithm in DreamerV2 uses, for Atari environments, vanilla policy gradients with Generalized Advantage Estimation, the most straightforward way to improve upon it is to replace it with an improved policy-gradient-based algorithm. We select PPO due to high performance and the ability to reuse simulated data, possibly increasing the overall computational performance.
-  \item Beyond that, we would like to investigate the behavior of $Q$-learning algorithms in a model-based setting. We select SAC as a strong baseline.
-\end{enumerate}
-
 \subsection{PPO Experiments}
 
 We will start with the experiments involving PPO. For the choice of the hyperparameters, we take the approach of replicating the default ones for A2C, whenever applicable. This includes the network architectures of the encoders for the actor and the critic functions, the value of the discount factor $\gamma$ and GAE discount $\lambda$, actor and critic optimizer learning rates, and the entropy penalty $\alpha$.
@@ -749,7 +809,31 @@ A more quantitative comparison (\autoref{tab:final_prelim_tab}) supports the cho
 
 Now, we are in the position to perform the complete Atari-100k benchmark, consisting of 26 environments, as opposed to the subset of 3 video games most predictive of the overall performance investigated so far.
 
-(Add the experiment results, training curves etc.)
+\paragraph{Setup} We follow standard environment settings described in \cite{kaiserModelBasedReinforcementLearning2024}. The main difference between the regular configuration is that for $200\times 10^6$ environment steps, \emph{sticky actions} are used, meaning an action is repeated with probability $p=0.25$, whereas for Atari-100k benchmark, they are disabled. For each of the 26 Atari games, we perform $5$ training runs, with different RNG seeds.
+
+\paragraph{Results} The complete results can be found in \autoref{tab:atari_100k_scores}. We compare our agent's performance with a selection of sample-efficient architectures, both model-based (SimPLe, TWM, IRIS, DreamerV3), model-free (SR-SPR, BBF) and utilizing look-ahead search (EfficientZero). The per-environment and aggregate human-normalized median and mean scores have been taken from \cite{hafnerMasteringDiverseDomains2024} and \cite{schwarzerBiggerBetterFaster2023}.
+
+Overall, the agent does not attain state-of-the-art performance, but, we argue, it performs better than might perhaps be expected. If we look at the human-normalized mean scores, we can see, that our method reaches performance comparable with the best model-based approach, DreamerV3. We also improve upon IRIS in the same metric. The human-normalized \emph{median} performance, however, lags significantly behind DreamerV3 or BBF.
+
+\begin{table}
+  \centering
+  \begin{adjustbox}{width=1.0\textwidth}
+    \input{{assets/benchmark.tex}}
+  \end{adjustbox}
+  \caption{A comparison of Atari-100k scores for different models.}
+  \label{tab:atari_100k_scores}
+\end{table}
+
+If we take a look at the validation score curves (\autoref{fig:atari_100k_curves}) (...)
+
+\begin{figure}
+  \centering
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/atari_100k.curves.pdf}
+  \caption{Atari-100k validation score curves.}
+  \label{fig:atari_100k_curves}
+\end{figure}
+
+Our solution is also more compute-efficient than the alternatives. A single training run takes approximately $3.5$ hours running on half an A100 accelerator, compared with $0.1$ A100-days for DreamerV3, $8$ A100-hours for BBF, or $3.5$ A100-days for IRIS.
 
 \chapter{Discussion}
 
