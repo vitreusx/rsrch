@@ -84,10 +84,17 @@ def sanity_check_loader():
 
     res_df = []
     for test in tqdm([*results_dir.iterdir()]):
-        env, seed = test.name.split("-")
-        seed = int(seed.removeprefix("seed="))
-        res_df.append({"path": test, "env": env, "seed": seed})
-        scalars.read(test)
+        params = test.name.split("-")
+        test_r = {}
+        test_r["env"] = params[0]
+        types = {"seed": int}
+        for (name, typ), value in zip(types.items(), params[1:]):
+            test_r[name] = typ(value.removeprefix(f"{name}="))
+        df = scalars.read(test)
+        final_val = df[df["tag"] == "val/mean_ep_ret"].iloc[-1]
+        if final_val["step"] >= 6e6:
+            test_r["score"] = final_val["value"]
+            res_df.append({"path": test, **test_r})
     res_df = pd.DataFrame.from_records(res_df)
     res_df
 

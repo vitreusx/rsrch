@@ -19,6 +19,11 @@
 \addbibresource{zotero.bib}
 \addbibresource{other.bib}
 
+\AtEveryBibitem{
+    \clearfield{urlyear}
+    \clearfield{urlmonth}
+}
+
 \newcommand{\algorithmautorefname}{Algorithm}
 \newcommand{\listingautorefname}{Listing}
 \newcommand{\env}[1]{{\tt #1}}
@@ -27,6 +32,7 @@
 
 \DeclareMathOperator*{\argmax}{arg\,max}
 \DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator*{\clip}{clip}
 
 \begin{document}
 
@@ -43,13 +49,17 @@
 
 \date{Nov 2024}
 
-\dziedzina{
+\dziedzina{%
   11.4 Artificial Intelligence\\
 }
 
-\klasyfikacja{...}
+\klasyfikacja{%
+  I. Computing methodologies\\
+  I.2. Artificial Intelligence\\
+  I.2.6. Learning
+}
 
-\keywords{...}
+\keywords{deep learning, reinforcement learning, model-based, sample-efficient RL}
 
 \maketitle
 
@@ -73,9 +83,9 @@ All these have resulted in significant improvements in terms of sample efficienc
 
 The goal of this thesis is to investigate whether this can be achieved for sample-efficient model-based RL. To be precise, our goal is to take a model-based architecture, originally not designed with data efficiency in mind - specifically DreamerV2 \cite{hafnerMasteringAtariDiscrete2022} - and use the ideas developed in other works, mostly in the context of model-free RL, adapting them if necessary to suit the different architecture, to see whether one can achieve significant performance benefits without any major architectural interventions.
 
-The rest of the thesis is structured as follows. First, we perform the literature review, in order to assess what are the existing methods for improving data efficiency of RL agents. We identify the use of world models, finetuning the training recipes, applying data augmentations, and changing the RL algorithms used in model-based RL as the most promising developments to incorporate into our design. We propose how to combine them into a single RL agent, and design empirical studies aimed at investigating the effects of the ablations, and the changes in terms of agent performance.
+The rest of the thesis is structured as follows. First, we perform the literature review, in order to assess what are the existing methods for improving data efficiency of RL agents. We identify the finetuning the training recipes, applying data augmentations, and changing the RL algorithms used in model-based RL as the most promising developments to incorporate into our design. We propose how to combine them into a single RL agent, and design empirical studies aimed at investigating the effects of the ablations, and the changes in terms of agent performance.
 
-After having considered a number of existing RL frameworks, and deeming them unsuitable for the purpose of conducting our study, we design and implement a novel PyTorch-based \cite{paszkePyTorchImperativeStyle2019} RL framework capable of facilitating our experiments. We describe how different design choices help with making the framework as flexible, yet user-friendly, as possible, and highlight the advantages our solution has over other model-based RL frameworks. We make the framework and all the code necessary to replicate the experiments conducted in this thesis publicly available at \url{https://github.com/vitreusx/rsrch}.
+After having considered a number of existing RL frameworks, and deeming them unsuitable for the purpose of conducting our study, we design and implement a novel PyTorch-based \cite{paszkePyTorchImperativeStyle2019} RL framework capable of facilitating our experiments. We describe how different design choices help with making the framework as flexible, yet user-friendly, as possible, and highlight the advantages our solution has over other model-based RL frameworks. We make the framework and all the code necessary to replicate the experiments conducted in this thesis publicly available at \href{https://github.com/vitreusx/rsrch}{\tt vitreusx/rsrch}.
 
 Then, we will follow up with the execution of the experiments, and the analysis of the results. We discover that the design of the training loop, and the use of improved RL modules yield greatest improvements in terms of the final performance of the agent. On the other hand, otherwise promising avenues, such as the use of data augmentation, prove ultimately unsuccessful in improving the algorithm, and can even significantly degrade the policies learned.
 
@@ -90,7 +100,7 @@ In summary, our principal contributions are:
 \begin{enumerate}
   \item An open source, highly customizable and modular model-based RL framework.
   \item An in-depth analysis of the effects of various ablations of a model-based architecture.
-  \item A sample-efficient model-based RL agent architecture, (reaching the performance comparable with state-of-the-art works?)
+  \item A sample-efficient model-based RL agent architecture, comparable with state-of-the-art model-based data-efficient RL architectures.
 \end{enumerate}
 
 \chapter{Preliminaries}
@@ -101,7 +111,7 @@ Reinforcement Learning is a field of artificial intelligence and machine learnin
 
 Formally, the environment can be represented by a Markov decision chain (MDP) in the form of a tuple $\langle \mathcal{S}, \mathcal{A}, p \rangle$ consisting of the state space $\mathcal{S}$, action space $\mathcal{A}$ and transition probability $p(s_{t+1}, r_{t} \mid s_t, a_t)$, where $r_t \in \mathbb{R}$ denotes the reward granted at that step. Additionally, in the case of partially observable environments, we have an observation space $\mathcal{O}$ and an observation probability $p(o_t \mid s_t)$. The agent, starting from an initial observation $o_1$, acts according to a probability distribution $\pi(a_t \mid o_{\leq t})$ conditioned on previous observations until it reaches a \emph{terminal} state $s_T$. The goal of reinforcement learning and the RL agent is to maximize the expected sum of rewards (so called returns) obtained along the trajectory $J = \mathbb{E} \left\{\sum_{t=1}^{T-1} r_t\right\}$.
 
-There are two further quantities of interest. The state value function $V^\pi(s)$ equal to the expected returns of an agent acting with a policy $\pi(a_t \mid s_t)$, when starting from a state $s$. The state-action value function $Q^\pi(s, a)$ (called thereafter $Q$ function) equal to the expected returns of an agent acting with a policy $\pi$, when starting from a state $s$ and having just performed action $a$. These value functions are usually $\gamma$-discounted: rather than using the returns $\mathbb{E} \left\{\sum_{t=1}^{T-1} r_t\right\}$, we consider $\mathbb{E} \left\{\sum_{t=1}^{T-1} \gamma^{t-1} r_t\right\}$ for $0 < \gamma < 1$. This allows us to use fixed-point arguments in the proofs of various RL theorems. It is also the version most often used by deep RL algorithms.
+There are two further quantities of interest. The state value function $V^\pi(s)$ equal to the expected returns of an agent acting with a policy $\pi(a_t \mid s_t)$, when starting from a state $s$. The state-action value function $Q^\pi(s, a)$ (called thereafter $Q$ function) equal to the expected returns of an agent acting with a policy $\pi$, when starting from a state $s$ and having just performed action $a$. These value functions are usually $\gamma$-discounted: rather than using the returns $\mathbb{E} \left\{\sum_{t=1}^{T-1} r_t\right\}$, we consider $\mathbb{E} \left\{\sum_{t=1}^{T-1} \gamma^{t-1} r_t\right\}$ for $0 < \gamma < 1$.
 
 One approach towards learning behavior in an environment is \emph{Q-learning}. The idea is as follows: we want to learn an optimal policy $\pi^*$ such, that $V^{\pi^*}$ is maximized for all states $s$. It is clear, that such a policy should choose $a$, which maximizes $Q^{\pi^*}(s, a)$, i.e. $\pi^*$ should be deterministic, and return $\pi^*(s) = \argmax_a Q^{\pi^*}(s, a)$. It can be shown, that such a policy, and such an induced $Q$-function $Q^{\pi^*} =: Q^*$ satisfy $Q^*(s, a) = \mathbb{E}_{s'} \left\{r + \gamma Q^*(s', \pi^*(s'))\right\}$. This recurrence relation allows us, in turn, to learn the value of $Q^*$ through fixed-point iteration.
 
@@ -113,7 +123,7 @@ The advances in deep learning have allowed components such as $Q$ or value funct
 
 \section{Sample-efficient RL}
 
-Works such as DQN have reached human-level performance in arcade by playing an equivalent of $38.5$ days ($200 \times 10^6$ frames with frame rate of $60$ FPS). Even with a simulator available, the excessive number of data required by standard RL algorithms can prove troublesome, as in the case of OpenAI Five \cite{openaiDota2Large2019}, which had to be trained for 10 months on an entire distributed system, and required development of sophisticated ``surgery'' techniques due to having to restart training at multiple points in time. In domains such as robotics, this kind of scaling quickly becomes prohibitively expensive and time-consuming. Thus, developing sample-efficient methods is necessary to allow the deployment of deep RL agents in real environments.
+Works such as DQN have reached human-level performance in arcade by playing an equivalent of $\approx 38.5$ days ($200 \times 10^6$ frames with frame rate of $60$ FPS). Even with a simulator available, the excessive number of data required by standard RL algorithms can prove troublesome, as in the case of OpenAI Five \cite{openaiDota2Large2019}, which had to be trained for 10 months on an entire distributed system, and required development of sophisticated ``surgery'' techniques due to having to restart training at multiple points in time. In domains such as robotics, this kind of scaling quickly becomes prohibitively expensive and time-consuming. Thus, developing sample-efficient methods is necessary to allow the deployment of deep RL agents in real environments.
 
 \subsection{Benchmarks for data-efficient RL}
 
@@ -129,7 +139,7 @@ Whereas a model-free RL agent seeks only to learn the policy $\pi$, either direc
 
 \subsection{Learning the model}
 
-Most model-based RL algorithms aim to predict future stats or observations. SimPLE \cite{kaiserModelBasedReinforcementLearning2024} performs the transition in input (image) space - the UNet-like model receives input consisting of last $K$ frames, as well as action conditioning, and is trained to output next frame. The main issue with this approach is that encoding and decoding images in such a fashion proves to be computationally expensive. Indeed, the training time is $5$ A100-days (as reported by \cite{hafnerMasteringDiverseDomains2024}). Thus, other model often opt to perform modelling in the latent space. World Models \cite{haRecurrentWorldModels2018}, for example, uses a two-stage training recipe: visual inputs are first compressed into a latent vector using a Variational Autoencoder \cite{kingmaAutoEncodingVariationalBayes2022}, whereafter a combination of an RNN and a ``distribution head'' model the transition probabilities in the latent space. In the context of PlaNet agent \cite{hafnerLearningLatentDynamics2019}, the authors raise the issues surrounding modelling stochastic environments autoregressively, and propose the use of both deterministic and stochastic recurrent networks in order to deal with stochasticity without inducing the decay of the information stored in the state vector. This approach has been further refined in the Dreamer series of models \cite{hafnerDreamControlLearning2020,hafnerMasteringAtariDiscrete2022,hafnerMasteringDiverseDomains2024} by e.g. using discrete latent states, employing better techniques for learning prior and posterior state distributions, improving critic learning through the use of value distributions \cite{bellemareDistributionalPerspectiveReinforcement2017}. IRIS \cite{micheliTransformersAreSampleEfficient2023} uses a VQ-VAE \cite{oordNeuralDiscreteRepresentation2018} to encode input observations into a sequence of discrete tokens, and a GPT-like Transformer architecture \cite{vaswaniAttentionAllYou2017} to predict future tokens, along with rewards and episode-end indicators.
+Most model-based RL algorithms aim to predict future stats or observations. SimPLE \cite{kaiserModelBasedReinforcementLearning2024} performs the transition in input (image) space - the UNet-like model receives input consisting of last $K$ frames, as well as action conditioning, and is trained to output next frame. The main issue with this approach is that encoding and decoding images in such a fashion proves to be computationally expensive. Indeed, the training time is $5$ A100-days (as reported by \cite{hafnerMasteringDiverseDomains2024}). Thus, other model often opt to perform modelling in the latent space. World Models \cite{haRecurrentWorldModels2018}, for example, uses a two-stage training recipe: visual inputs are first compressed into a latent vector using a Variational Autoencoder \cite{kingmaAutoEncodingVariationalBayes2022}, whereafter a combination of an RNN and a ``distribution head'' model the transition probabilities in the latent space. In the context of PlaNet agent \cite{hafnerLearningLatentDynamics2019}, the authors raise the issues surrounding modelling stochastic environments autoregressively, and propose the use of both deterministic and stochastic recurrent networks in order to deal with stochasticity without inducing the decay of the information stored in the state vector. This approach has been further refined in the Dreamer series of models \cite{hafnerDreamControlLearning2020,hafnerMasteringAtariDiscrete2022,hafnerMasteringDiverseDomains2024} by e.g. using discrete latent states, employing better techniques for learning prior and posterior state distributions, or improving critic learning through the use of value distributions \cite{bellemareDistributionalPerspectiveReinforcement2017}. IRIS \cite{micheliTransformersAreSampleEfficient2023} uses a VQ-VAE \cite{oordNeuralDiscreteRepresentation2018} to encode input observations into a sequence of discrete tokens, and a GPT-like Transformer architecture \cite{vaswaniAttentionAllYou2017} to predict future tokens, along with rewards and episode-end indicators. MBPO \cite{jannerWhenTrustYour2021} uses a bootstrap ensemble of individual dynamics models in order to model aleatoric and epistemic uncertainties, and better prevent model exploitation.
 
 Model states do not necessarily need to correspond to real states - in the case of \emph{value-equivalent models}, the states and the transition function are optimized to approximate the values to be obtained after executing a sequence of actions \cite{silverPredictronEndToEndLearning2017}. The idea is to construct an abstract MDP, in which planning is equivalent to planning in the real environment. This way, model capacity is wholly used for the purposes of learning the policy, as opposed to modelling potentially irrelevant details. TreeQN \cite{farquharTreeQNATreeCDifferentiable2018}, for example, learns a differentiable, recursive, tree-structured model acting as a replacement for the $Q$ function in arbitrary model-free RL algorithm. In MuZero \cite{schrittwieserMasteringAtariGo2020}, the model is optimized to jointly predict rewards, the action-selection policy, and the value function, leading to an agent capable of learning to play Atari, Go and chess at a superhuman level. EfficientZero \cite{yeMasteringAtariGames2021} adapts MuZero for sample-efficient image-based RL, through addition of self-supervised consistency loss \cite{chenExploringSimpleSiamese2020}, refinements in reward and value prediction, and a method to correct off-policy issues when using replay buffer samples to compute value targets.
 
@@ -137,11 +147,11 @@ Model states do not necessarily need to correspond to real states - in the case 
 
 One class of methods uses the model for \emph{planning}; such techniques are also known as \emph{lookahead methods}. Here, planning refers to any decision process which actively uses the world model. For example, in its simplest incarnation, Model-Predictive Control (MPC), at every time step, optimizes a sequence of actions $a_t, \ldots, a_{t+H-1}$ such that the expected total rewards $\mathbb{E}\left\{\sum_{k=0}^{H-1} r_{t+k} \right\}$ is maximized, and selects the first action $a_t$ - at the next step, the procedure is performed again. The action sequence can be optimized using any zero-order method, like Monte Carlo (i.e. sampling the actions randomly and selecting the one with the best score), or through Cross-Entropy Method (CEM). A variation of this idea is to employ a Monte Carlo Search Tree in order to focus on more promising directions of exploration. In all cases, an auxiliary value function predictor can also be used in order to approximate the returns beyond the rollout horizon.
 
-At the other end of the spectrum lay approaches which use model rollouts for learning the policy. Such rollouts can be used either as a data augmentation technique, or completely replace training on real data, instead learning behaviors entirely in the ``imagination'' via regular model-free RL algorithms. The former approach, for example, has been utilized in MBPO \cite{jannerWhenTrustYour2021}, whereas the Dreamer series of algorithms \cite{hafnerDreamControlLearning2020,hafnerMasteringAtariDiscrete2022,hafnerMasteringDiverseDomains2024} follows the latter strategy.
+At the other end of the spectrum lay approaches which use model rollouts for learning the policy. Such rollouts can then be used to completely replace training on real data, instead learning behaviors entirely in the ``imagination'' via regular model-free RL algorithms, as in the Dreamer series of algorithms \cite{hafnerDreamControlLearning2020,hafnerMasteringAtariDiscrete2022,hafnerMasteringDiverseDomains2024} or MBPO \cite{jannerWhenTrustYour2021}. Due to the differentiability of the world model, one can also perform backpropagation of values through dynamics gradients directly \cite{hafnerDreamControlLearning2020}.
 
 \section{Data augmentation in RL}
 
-Drawing from the common practice of using data augmentation (e.g. image transformations like rotation, random shifts) in supervised learning to improve performance and reduce overfitting, there exist also methods, which apply these techniques in the context of RL. RAD \cite{laskinReinforcementLearningAugmented2020} apply transforms, such as cropping, translation, conversion to grayscale or color jitter, to SAC and PPO. DrQ \cite{kostrikovImageAugmentationAll2021} develops an RL-specific augmentation schema: beyond simply applying random transforms to observations, the authors also use the fact, that $Q$ and state-value functions ought to be invariant with respect to the transforms to smooth them out by averaging across multiple samples. In robotics, domain randomization has become a crucial component of sim2real pipelines \cite{tobinDomainRandomizationTransferring2017,openaiSolvingRubiksCube2019}.
+Drawing from the common practice of using data augmentation (e.g. image transformations like rotation, random shifts) in supervised learning to improve performance and reduce overfitting, there exist also methods, which apply these techniques in the context of RL. RAD \cite{laskinReinforcementLearningAugmented2020} apply transforms, such as cropping, translation, conversion to grayscale or color jitter, to SAC and PPO. DrQ \cite{kostrikovImageAugmentationAll2021} develops an RL-specific augmentation schema: beyond simply applying random transforms to observations, the authors also use the fact, that $Q$ and state-value functions ought to be invariant with respect to the transforms to smooth them out by averaging across multiple samples. In robotics, domain randomization has become a crucial component of transfering policies trained in simulation to the real world \cite{tobinDomainRandomizationTransferring2017,openaiSolvingRubiksCube2019}.
 
 \section{Self-supervised RL}
 
@@ -195,8 +205,7 @@ Aside from the world model itself, the other major component of the architecture
 
 \begin{enumerate}
   \item Dreamer series takes the approach of training a (possibly arbitrary) model-free RL algorithm purely with simulated experience. The model and the RL modules are essentially independent of each other.
-  \item One may mix real and simulated data for the purposes of training the RL agent. For example, in MBPO, the authors use an on-policy method (specificially PPO), but augment the data with imaginary rollouts. This requires the model states to be of the same data type as the observations, which limits its usefulness in the context of visual control, as is the case when playing Atari games.
-  \item The agent module may not even require any training per se. For example, PETS and PlaNet use cross-entropy method (CEM) for selecting actions to perform by planning with the learned model.
+  \item The agent module may not even require any training per se. For example, PETS \cite{chuaDeepReinforcementLearning2018} and PlaNet \cite{hafnerLearningLatentDynamics2019} use cross-entropy method (CEM) for selecting actions to perform by planning with the learned model.
 \end{enumerate}
 
 Thus, ideally there needs to be an option for the RL module to use the world model actively, in order to support planning-based methods. It also needs to be possible to take any model-free RL algorithm, and be able to use it in the framework, possibly with some small modifications to account for the model-based setting.
@@ -214,7 +223,7 @@ Beyond the network architecture, a major component of the design of sample-effic
 
 We will investigate the straightforward approach of tuning the model/RL update ratio. We would also like to assess, whether \emph{decoupling} the two update frequencies has a positive effect on the performance. Given the number of hyperparameters to consider, it is also crucial to verify, whether a method for automatically tuning these parameters can be devised.
 
-As for applying the periodic resets, we have found the required number of tests to be computationally infeasible, as the literature suggests different reset frequencies, and different reset strategies - one may reset all the parameters, or only the last $K$ layers, and the resetting may be full or partial. This would, presumably, have to be conducted separately for the model and the RL modules, further increasing the extent of the hyperparamter sweep. Furthermore, prior work \cite{julianiStudyPlasticityLoss2024} suggests, that there may not necessarily be any clear training-time indicator of the phenomenon occuring. We will therefore limit our investigation to merely detecting, whether primacy bias occurs in our setting.
+As for applying the periodic resets, we have found the required number of tests to be computationally infeasible, as the literature suggests different reset frequencies, and different reset strategies - one may reset all the parameters, or only the last $K$ layers, and the resetting may be full or partial. This would, presumably, have to be conducted separately for the model and the RL modules, further increasing the extent of the hyperparamter sweep. Furthermore, prior work \cite{julianiStudyPlasticityLoss2024} suggests, that there may not necessarily be any clear training-time indicator of the phenomenon occuring. We will therefore limit our investigation to detecting, whether primacy bias occurs in our setting, and whether any metrics can be used to detect it.
 
 \subsection{Data augmentation}
 
@@ -354,7 +363,7 @@ Ideally, then, we would like to hide all of this from the user of the framework.
 
 Another crucial feature is the presence of {\tt obs\_space} and {\tt act\_space} member fields. They provide information concerning the format of the data received by the agent or sampled from the buffer. We provide a set of classes mirroring the {\tt gym.spaces} classes, such as {\tt Image} or {\tt Box}, but for the PyTorch tensors, instead of Numpy arrays.
 
-We provide SDKs for Atari Learning Environment (ALE), DeepMind Control Suite (DMC) and a generic one for \href{https://gymnasium.farama.org/}{\tt gymnasium} environments. For ALE and DMC, we use optimized, C++-based implementations provided by \href{https://github.com/sail-sg/envpool}{\tt envpool} library \cite{weng2022envpool}. We may note that, despite {\tt envpool} not sharing API with Gym environments, we do not need to make any changes to the rest of the code, like the training loop, showcasing one major advantage of using such SDKs over handling all the environment-related code manually.
+We provide SDKs for Atari Learning Environment (ALE), DeepMind Control Suite (DMC) and a generic one for \href{https://gymnasium.farama.org/}{\tt gymnasium} environments. For ALE and DMC, we use optimized, C++-based implementations provided by \href{https://github.com/sail-sg/envpool}{\tt envpool} library \cite{wengEnvPoolHighlyParallel2022}. We may note that, despite {\tt envpool} not sharing API with Gym environments, we do not need to make any changes to the rest of the code, like the training loop, showcasing one major advantage of using such SDKs over handling all the environment-related code manually.
 
 \subsection{World model and RL modules}
 
@@ -384,7 +393,7 @@ As none of the considered options proved either usable as a Python package, or c
 Also, we provide implementations of two model-free algorithms: Proximal Policy Optimization (PPO) and Soft Actor-Critic (SAC). We base our implementations on the ones found in \href{https://github.com/vwxyzjn/cleanrl}{\tt vwxyzjn/cleanrl}, with a number of changes made to make them usable in the model-based context:
 
 \begin{enumerate}
-  \item The implementation of SAC used a one-step TD target $y = r + \gamma V(s')$. In order to bring it in line with PPO and A2C, we change it to Generalized Advantage Estimation (GAE).
+  \item The implementation of SAC used a one-step TD target $y = r + \gamma V(s')$. In order to bring it in line with PPO and A2C, we change it to Generalized Advantage Estimation (GAE) \cite{schulmanHighDimensionalContinuousControl2018}.
   \item Since the ``observations'' given to the model are in fact world model states, we change the default convolutional encoders to the feedforward networks used in the A2C implementation.
   \item Imaginary sequences generated by the model are unlike the regular sequences drawn from e.g. the replay buffer. Because we do not know \emph{a priori} whether a sampled state is terminal or not - we may only use the terminality predictor of the model, which would return the probability that a state is terminal or not - we need to account for a degree of ``fuzziness'' (in the sense of fuzzy logic) of the latent states. The alternative could be to stop a particular rollout during the generation process, when the termination probability exceeds a given threshold. In that instance, however, we would have to deal with batches of sequences of non-uniform length, which would likewise require changes to the implementation of the RL algorithm, and would likely be computationally inefficient, since we could not perform batched operations easily. We opt, therefore, for the former approach; this is also the approach taken in the DreamerV2's implementation of A2C. In practice, this nuance requires two implementation changes to be made: (1) per-item losses need to be multiplied by a weight factor, to prevent unreal states from affecting the optimization process, (2) GAE and other value estimation methods need to be changed in order to accept non-constant $\gamma$ discount factors.
 \end{enumerate}
@@ -439,18 +448,19 @@ Such an example experiment configuration would have been difficult to specify pr
 
 \chapter{Experiments}
 
+We can now conduct the relevant empirical studies. First, we must discuss the experimental setup, meaning the environments tested, as well as the number of training runs for each configuration - the process of training deep RL agents being highly erratic and dependent on the initial RNG seed. Then, we will take a look at the training loop optimizations, as a natural prerequisite for any further modifications to be tested. We shall follow it up with the exploration of data augmentation and the choice of the RL algorithm used.
+
 \section{Experimental setup}
 
 We are interested in evaluating performance on the Atari-100k benchmark. However, performing training runs on the entire set of 26 games and with a full range of RNG seeds for every modification is computationally infeasible. Thus, we will use a subset of these games and a reduced number of seeds as a proxy. To be specific, we shall limit ourselves to a choice of 3 environments and 5 RNG seeds. In order to properly gauge the effect of changes on the full set, we want to construct a subset of Atari-100k with following properties:
 
 \begin{enumerate}
-  % Recheck the claim? Also, define "reasonable"
   \item Since we are interested in \emph{speeding up} the algorithm, we ought to select such environments, in which the method makes consistent progress in a given extended interaction budget. For example, given a maximum speedup target of $15 \times$, we would focus on the horizon of $15 \cdot (400 \times 10^3) = 6 \times 10^6$ environment steps. If the method doesn't improve much beyond the performance of a random agent, or solves the task immediately, gauging the speedup factor becomes impossible.
-  \item The variance of the results with respect to different RNG seeds used should be minimized, so as to be able to derive the expected score with a limited number of RNG seeds with any degree of accuracy.
+  \item The variance of the results with respect to different RNG seeds used should be minimized, so as to be able to derive the expected score with a limited number of RNG seeds with a reasonable degree of accuracy.
   \item The subset should be as representative of the performance on the whole subset as possible.
 \end{enumerate}
 
-First, let us filter out the environments which do not satisfy first two criteria. In the absence of standardized metrics which would inform our choice quantitatively, we resort to visual inspection of the performance curves for each environment in the first $6 \times 10^6$ steps. The relevant data can be found in \autoref{fig:atari_100k_comp}. Based on it, we select following games for further evaluation: \env{Amidar}, \env{Assault}, \env{Asterix}, \env{CrazyClimber}, \env{JamesBond}, \env{MsPacman} and \env{Pong}.
+First, let us filter out the environments which do not satisfy first two criteria. In the absence of standardized metrics which would inform our choice quantitatively, we resort to a visual inspection of the performance curves for each environment in the first $6 \times 10^6$ steps. The relevant data can be found in \autoref{fig:atari_100k_comp}. Based on it, we select following games for further evaluation: \env{Amidar}, \env{Assault}, \env{Asterix}, \env{CrazyClimber}, \env{JamesBond}, \env{MsPacman} and \env{Pong}.
 
 \begin{figure}
   \centering
@@ -459,11 +469,11 @@ First, let us filter out the environments which do not satisfy first two criteri
   \label{fig:atari_100k_comp}
 \end{figure}
 
-Next, we shall select out of this subset 3 games, which are most predictive of the performance on the complete 26-game benchmark. We follow the approach of (Atari-5), and use the source code provided by the authors to arrive at the final result. The three environments selected by the algorithm are: \env{Assault}, \env{CrazyClimber} and \env{MsPacman}.
+Next, we select out of this subset 3 games, which are most predictive of the performance on the complete 26-game benchmark. We follow the approach of \cite{aitchisonAtari5DistillingArcade2022} and use the source code provided by the authors to arrive at the final result. The three environments selected by the algorithm are: \env{Assault}, \env{CrazyClimber} and \env{MsPacman}.
 
-We use the same environment settings (frame skip values, time limit etc.) as the original DreamerV2.
+We use the same environment settings (frame skip values, time limit etc.) as the original DreamerV2 agent.
 
-The original implementation of DreamerV2 is written in Tensorflow - we have ported the relevant source code (mainly the implementation of the world model and the actor critic) to Pytorch, resulting in slight changes in overall performance. It remains, however, comparable: \autoref{fig:torch_v_ref} depicts the validation score curves for both the original implementation, and the Pytorch version.
+Since the original implementation of DreamerV2 is written in Tensorflow, we have ported the relevant source code (mainly the implementation of the world model and the actor critic) to Pytorch, resulting in slight changes in overall performance. It remains, however, comparable: \autoref{fig:torch_v_ref} depicts the validation score curves for both the original implementation, and the Pytorch version.
 
 \begin{figure}
   \centering
@@ -474,39 +484,49 @@ The original implementation of DreamerV2 is written in Tensorflow - we have port
 
 \section{Training recipe optimization}
 
-As mentioned, many model-free algorithms can be made more efficient through training recipe-level improvements. We wish to extend these findings to the domain of model-based RL. This is, however, non-trivial, and requires further investigation.
+In the first order, we will investigate the training recipe-level optimizations, specifically tuning the data-to-update ratio. The rationale is to find the optimal update-to-data regime, and to establish a baseline for further analysis.
 
-First, there are purely technical difficulties. Let us, for example, consider scaling up the frequency of model and RL updates. As opposed to the model-free case, we are dealing with two separate learning processes, that of the model and of the RL module, resulting in two separate update frequencies to be tuned. If we were to search for the optimal configuration through a grid search, we would be faced with a quadratic number of training runs to perform, relative to the model-free case, which would quickly become infeasible. It is therefore imperative to reduce the extent of the hyperparameter sweep as much as feasible.
-
-Next, insofar as the collapse of the performance for regular model-free RL agents, when increasing the update-to-data frequency, is attributed to plasticity loss, it is not immediately clear whether model-based agents undergo the same process, whether the model and the RL module suffer from the primacy bias or perhaps only one of them does, and whether interventions proposed in the literature prove beneficial here as well. If such interventions require tuning, as is for example the case for periodic resets, then we possibly encounter another computationally expensive grid search.
-
-\section{Simple speedup test}
+\subsection{Simple speedup test}
 \label{sec:baseline}
 
-We begin with an experiment involving a straightforward increase of the frequency of optimization steps, without any further changes. The goals are as follows: to establish a baseline for further analysis, to find the update-to-data regime where the agent performance degrades, and to investigate what happens at that point with the networks in question.
+We begin with an experiment involving a straightforward increase of the frequency of optimization steps, without any further changes.
 
-\paragraph{Setup} Base DreamerV2 training recipe begins with a prefill of $P = 200 \times 10^3$ and continues until the total step count is $T = 200 \times 10^6$. The latter loop consists of $E = 64$ env steps (at the frame skip value of $4$, this corresponds to $16$ agent steps) and a single optimization step.
+\paragraph{Setup} Base DreamerV2 training recipe (\autoref{alg:dreamerv2_loop}) begins with a prefill of $P = 200 \times 10^3$ and continues until the total step count is $T = 200 \times 10^6$. The latter loop consists of $K = 64$ env steps (at the frame skip value of $4$, this corresponds to $16$ agent steps) and a single optimization step, consisting of optimizing the world model, and using the obtained model states to optimize the RL module.
+
+\begin{algorithm}
+  \caption{Base DreamerV2 training loop}
+  \label{alg:dreamerv2_loop}
+  \begin{algorithmic}[1]
+    \State Gather $P$ env samples with an agent acting randomly, and put them into a replay buffer
+    \While{Total number of env steps $<T$}
+    \State Optimize the world model using batch of real rollouts $\left\{(o_{1:L}, a_{1:L-1}, r_{1:L-1}, \gamma)_i\right\}_{i=1}^N$ drawn from the replay buffer.
+    \State Optimize the RL agent using the batch of dream data $\left\{(s_{1:H}, a_{1:H-1}, \widetilde{r}_{1:H-1}, \widetilde{\gamma}_{1:H})_i\right\}_{i=1}^{NL}$, generated by starting from the states obtained through an inference process on real-world rollouts, and imagining next $H-1$ states with the world model.
+    \State Perform $K$ environment steps using the behavior policy, and store them in the replay buffer.
+    \EndWhile
+  \end{algorithmic}
+\end{algorithm}
 
 We replace $T$ by $400 \times 10^3$ to match Atari-100k benchmark environment budget, and $P$ with $20 \times 10^3$. Then, we perform tests with varying values of $E \in \{64, 32, 16, 8, 4, 2\}$, for a set of $3$ selected environments and $5$ RNG seeds.
 
-Beyond that, for testing purposes, we also add an online train-validation split mechanism: each episode in the replay buffer is assigned either to the training set or the validation set -- to be precise, every $(1/p)$-th episode is assigned to the validation set, where $p = 0.15$.
+Beyond that, for testing purposes, we also add an online train-validation split mechanism: each episode in the replay buffer is assigned either to the training set or the validation set -- to be precise, every $(1/p)$-th episode, starting from the first one, is assigned to the validation set, where $p = 0.15$. As a side-effect, we optionally extend the buffer prefill stage until at least one training and one validation episode have been collected.
 
-\paragraph{Results} Let us first analyze final test performance, depending on the data-to-update ratio $E$, for each environment (\autoref{fig:baseline_score}). The mean final score is maximized for a given region of the values of $E$, beyond which it decreases, presumably either due to under- or overoptimization. For each task, the optimal value is different: $2-4$ for \env{CrazyClimber}, $\approx 8$ for \env{Assault} and a wide range for \env{MsPacman}.
+\paragraph{Results} Let us first analyze final test performance, depending on the data-to-update ratio $K$, for each environment (\autoref{fig:baseline_score}). The mean final score is maximized for a given region of the values of $K$, beyond which it decreases, presumably either due to under- or overoptimization. For each task, the optimal value is different: $2-4$ for \env{CrazyClimber}, $\approx 8$ for \env{Assault} and a wide range for \env{MsPacman}.
 
 \begin{figure}
   \centering
   \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/baseline_score.pdf}
-  \caption{Final test episode returns for each of the 3 tested environments, relative to the data-to-update ratio $E$. The line indicates the mean across the RNG seeds, and the shaded area indicates the standard deviation. \emph{Note}: The x-axis is logarithmic.}
+  \caption{Final test episode returns for each of the 3 tested environments, relative to the data-to-update ratio $K$. The line indicates the mean across the RNG seeds, and the shaded area indicates the standard deviation. \emph{Note}: The x-axis is logarithmic.}
   \label{fig:baseline_score}
 \end{figure}
 
 \subsection{Decoupling model and RL optimization}
+\label{ssec:decoupled_ratio}
 
-As noted previously, the optimal training schedules for the model and the RL module need not coincide - we may, for example, find that the model is overfitting, yet the RL head remains underoptimized. The next experiment aims to investigate the empirical effects of decoupling model and RL update frequencies.
+The optimal training schedules for the model and the RL module need not coincide - we may, for example, find that the model is overfitting, yet the RL head remains underoptimized. The next experiment aims to investigate the empirical effects of decoupling model and RL update frequencies.
 
-\paragraph{Setup} We adjust the code, so that the model is optimized once every $K_{\rm WM}$ environment steps, and the RL module is optimized once every $K_{\rm RL}$ environment steps. A grid search is performed for \env{Assault} environment [Extend to all three, if there's enough compute time], with ratios $K_{\rm WM}, K_{\rm RL} \in \{2, 4, 8\}$, corresponding to the observed regime, where the performance starts decreasing.
+\paragraph{Setup} We adjust the code, relative to \autoref{sec:baseline}, so that the model is optimized once every $K_{\rm WM}$ environment steps, and the RL module is optimized once every $K_{\rm RL}$ environment steps. A grid search is performed for \env{Assault} environment alone, due to computational constraints, with ratios $K_{\rm WM}, K_{\rm RL} \in \{2, 4, 8\}$, corresponding to the observed regime, where the performance starts decreasing.
 
-\paragraph{Results} \autoref{fig:split_ratios_perf} shows the agent performance depending on the configuration of the ratios. Both the model and the RL ratios play a significant role in determining the final score, though no clear pattern can be determined - for example, increasing RL update ratio does not necessarily improve the performance.
+\paragraph{Results} \autoref{fig:split_ratios_perf} displays the agent performance depending on the configuration of the ratios. Both the model and the RL ratios play a significant role in determining the final score, though no clear pattern can be determined - for example, increasing the RL update ratio does not necessarily improve the performance, as the score for $K_{\rm WM} = 4, K_{\rm RL} = 2$ is lower than the score for $K_{\rm WM} = 4, K_{\rm RL} = 4$.
 
 \begin{figure}
   \centering
@@ -517,11 +537,16 @@ As noted previously, the optimal training schedules for the model and the RL mod
 
 \section{Investigating the learning dynamics of the agents}
 
-So far, the experiments suggest that achieving optimal or near-optimal performance may require, at the very least, a hyperparameter sweep over \emph{both} model and RL update frequencies. Given the increase in the number of training runs this would require, we will now investigate methods to auto-select at least some of these parameters. In order to achieve this, we will start with an examination of the various metrics thoughout the run, and see whether they are correlated with the final score. The idea is that if we are able to control them throughout the optimization process, we may be able to guide them in such a way so as to achieve higher final performance.
+So far, the experiments suggest that achieving optimal or near-optimal performance may require, at the very least, a hyperparameter sweep over \emph{both} model and RL update frequencies. Given the increase in the number of training runs this would require, we are in dire need of an auto-selection schema for these parameters. In order to achieve this, we will start with an examination of the various metrics thoughout the run, and see whether they are correlated with the final score. The idea is that, if we are able to detect signs of applying non-optimal training schedules, e.g. through under- or overfitting, we might be able to adjust these parameters to reach the optimal regimes automatically and achieve maximal final performance.
 
 \subsection{Analyzing the world model}
+\label{ssec:wm_analysis}
 
-Since model learning is a supervised learning task, the most imporant metric to monitor is, we might presume, the validation loss. We compute it as follows: throughout the training process, we will load a batch of data using the validation episodes, and compute the mean model loss. We will start with the aggregate results - the relationship between the final validation loss and the final agent performance, for the equal-ratio experiment described in \autoref{sec:baseline}. As we can see in \autoref{fig:model_val_loss}, it would appear, somewhat surprisingly, that the value, for individual trials, is not meaningfully correlated with the final score achieved by the agent. A closer inspection of the validation loss curves (\autoref{fig:model_val_curves}) reveals, that the agents do not, in general, exhibit classical overfitting behavior, in the sense that the validation loss curves plateau at worst, and in general the loss value keeps decreasing. The learning process nevertheless degrades, as the final values of the validation loss keep increasing as the ratio of the optimization and environment steps increases. The ratio values, for which the final loss value is the smallest, do not correspond to the ones which achieve the highest performance.
+\subsubsection{Model validation loss}
+
+Since model learning is a supervised learning task, the clearest indicator of under- or overfitting ought to be the validation loss. We compute it as follows: throughout the training process (to be precise, every $16$ model optimization steps), we load a batch of data using the validation episodes only, and compute the mean model loss for these items.
+
+\paragraph{Results} We will start with the aggregate results - the relationship between the final validation loss and the final agent performance, for the equal-ratio experiment described in \autoref{sec:baseline}. As we can see in \autoref{fig:model_val_loss}, it would appear, somewhat surprisingly, that the value, for individual training runs, is not meaningfully correlated with the final score achieved by the agent. A closer inspection of the validation loss curves (\autoref{fig:model_val_curves}) reveals, that the agents do not, in general, exhibit classical overfitting behavior, in the sense that the validation loss curves plateau at worst, and in general the loss value keeps decreasing. The learning process nevertheless degrades, as the final values of the validation loss keep increasing as the ratio of the optimization and environment steps increases. The ratio values, for which the final loss value is the smallest, do not correspond to the ones which achieve the highest performance.
 
 \begin{figure}
   \centering
@@ -533,11 +558,13 @@ Since model learning is a supervised learning task, the most imporant metric to 
 \begin{figure}
   \centering
   \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/model_val_curves.pdf}
-  \caption{Averaged model validation loss curves for each configuration of the environment and the update ratio used. Rows represent different environments, and the columns the different update ratios used. The x-axis corresponds to the number of environment steps taken, and the y-axes represent loss values. The ranges of the y-axes are different for each environment.}
+  \caption{Averaged model validation loss curves for each configuration of the environment and the update ratio used. Rows represent different environments, and the columns the different update ratios used. The $x$-axis corresponds to the number of environment steps taken, and the $y$-axes represent loss values.}
   \label{fig:model_val_curves}
 \end{figure}
 
-To further examine the behavior of the agent throughout the optimization process, let us take a look at the \emph{training} loss curves. An aggregate comparison (\autoref{fig:model_train_loss}) reveals a degree of correlation between  the agent performance scores and the training loss values. The loss curves (\autoref{fig:model_train_curves}) are of altogether different nature, compared to the validation loss curves. We can see a clear monotonic relationship between the final loss value achieved and the update frequency, though, as before, the better values do not lead to improvements in terms of the quality of the agents. Perhaps more interestingly, at very high update frequencies (i.e. small data-to-update ratios), the optimization process seems to stall out completely. For the value of $K = 1$, for example, in all three environments tested, near-``optimal'' value is reached after the first $100 \times 10^3$ environment steps, whereafter it either improves marginally, or even increases.
+\subsubsection{Model training loss}
+
+To further examine the behavior of the agent throughout the optimization process, let us take a look at the \emph{training} loss curves. An aggregate comparison (\autoref{fig:model_train_loss}) reveals a modest degree of correlation between the agent performance scores and the training loss values. The loss curves (\autoref{fig:model_train_curves}) are of altogether different nature, compared to the validation loss curves. We can see a clear monotonic relationship between the final loss value achieved and the update frequency, though, as before, the better values do not lead to improvements in terms of the quality of the agents. Perhaps more interestingly, at very high update frequencies (i.e. small data-to-update ratios), the optimization process seems to stall out completely. For the value of $K = 1$, for example, in all three environments tested, near-``optimal'' value is reached after the first $100 \times 10^3$ environment steps, whereafter it either improves marginally, or even increases.
 
 \begin{figure}
   \centering
@@ -555,13 +582,17 @@ To further examine the behavior of the agent throughout the optimization process
 
 \subsection{Plasticity analysis}
 
-As we have noted previously, a number of works have identified the phenomenon of plasticity loss, meaning the inability of neural networks to learn from more recent data samples in the continual learning setting, as a possible culprit in the degradation of the RL agent performance. It might prove fruitful to investigate, whether something similar happens in the case of model-based RL, and specifically the agents based on Dreamer algorithm.
+A number of works have identified the phenomenon of plasticity loss, meaning the inability of neural networks to learn from more recent data samples in the continual learning setting, as a possible culprit in the degradation of the RL agent performance \cite{julianiStudyPlasticityLoss2024,nikishinPrimacyBiasDeep2022,lyleUnderstandingPlasticityNeural2023}. It might prove fruitful to investigate, whether something similar happens in the case of model-based RL, and specifically the agents based on Dreamer algorithm.
 
-In the first order, we would like to perform a ``post hoc'' test of plasticity loss - the results will not allow us to monitor the occurence of the phenomenon \emph{during} training, but will show whether the degradation has occured. We follow the strategy of \cite{julianiStudyPlasticityLoss2024}, wherein an agent is trained \emph{warm-started}, i.e. starting from the neural network parameters of a previously trained agent. In that study, the process is repeated $10$ times. Due to computational constraints, we only perform a single repetition. Also, the environments under investigation there were drawn from the Coinrun suite of randomized environment. As we are interested in Atari tasks, and there is no standard way to randomize the environment - the idea of changing the Atari game does not work due to different action spaces, meaning different agent architectures required - we devise a custom randomization scheme for Atari. To be specific, at the start of the training run, we choose (1) a particular permutation $\sigma$ of actions, meaning an action $a \in \{0, \ldots, A - 1\} = \mathcal{A}$ is mapped to $\sigma(a) \in \mathcal{A}$; (2) whether to perform horizontal flip of the video frames; (3) whether to perform a vertical flip of the video frames. These randomizations have been selected in order to ensure, that the warm-started agent approximately achieves the performance of a random agent, and that the observation and action statistics, e.g. the mean and standard deviation of the pixel values, remain the same.
+\subsubsection{Plasticity loss check}
 
-The training recipe follows the reference test with the default DreamerV2 settings and an environment step budget of $6 \times 10^6$, used for comparing the Pytorch and Tensorflow implementations. The choice is motivated by the smaller variance of the results compared to the time horizon of $400 \times 10^3$ used for the other experiments. We load a checkpoint from a baseline test, with the update ratio value of $K = 1$, representing the checkpoints most affected by the primary bias. The environment used during the training run corresponding to the checkpoint is the same, but we change the RNG seeds to introduce further randomization.
+In the first order, we would like to perform a ``post hoc'' test of plasticity loss - the results will not allow us to monitor the occurence of the phenomenon \emph{during} training, but will show whether the degradation has occured.
 
-The comparison of the warm-started and randomly-initialized agents (\autoref{fig:plas_check}) reveals, that at least in some instances the agents experience plasticity loss. To be specific, for \env{Assault} and \env{CrazyClimber}, we see either negligible or small impairment in terms of performance, whereas the effect is far more substantial for \env{MsPacman}. These findings are consistent with the analysis of the loss curves, since we have observed the stalling of the training process to be most pronounced for \env{MsPacman}. We also believe these results to support the assertion, that the devised Atari randomization scheme is effective for testing plasticity loss, in the sense that the fully trained agents start with a near-random performance, but the permutations and other environment changes do not impair the performance by themselves.
+\paragraph{Setup} We follow the strategy of \cite{julianiStudyPlasticityLoss2024}, wherein an agent is trained \emph{warm-started}, i.e. starting from the neural network parameters of a previously trained agent. In that study, the process is repeated $10$ times. Due to computational constraints, we only perform a single repetition. Also, the environments under investigation there were drawn from the Coinrun suite of randomized environment. As we are interested in Atari tasks, and there is no standard way to randomize the environment - the idea of changing the Atari game does not work due to different action spaces, meaning different agent architectures are required - we devise a custom randomization scheme for Atari. At the start of the training run, we choose (1) a particular permutation $\sigma$ of actions, meaning an action $a \in \{0, \ldots, A - 1\} =: \mathcal{A}$ is mapped to $\sigma(a) \in \mathcal{A}$; (2) with probability $50\%$, whether to flip horizontally all the video frames; (3) with probability $50\%$, whether to flip vertically all the video frames. These randomizations have been selected in order to ensure, that the warm-started agent approximately achieves the performance of a random agent, and that the observation and action statistics, e.g. the mean and standard deviation of the pixel values, remain the same.
+
+The training recipe follows the reference test with the default DreamerV2 settings and an environment step budget of $6 \times 10^6$, also used to compare the Pytorch and Tensorflow implementations. The choice is motivated by the smaller variance of the results compared to the time horizon of $400 \times 10^3$ used for the other experiments. We load a checkpoint from a baseline test (\autoref{sec:baseline}) with the update ratio value of $K = 1$, representing the checkpoints most affected by the primary bias. The environment used during the training run corresponding to the checkpoint is the same, but it is randomized, and we change the RNG seeds to introduce further randomization.
+
+\paragraph{Results} The comparison of the warm-started and randomly-initialized agents (\autoref{fig:plas_check}) reveals, that, at least in some instances, the agents experience plasticity loss. To be specific, for \env{Assault} and \env{CrazyClimber}, we see either negligible or small impairment in terms of performance, whereas the effect is far more substantial for \env{MsPacman}. These findings are consistent with the analysis of the loss curves, since we have observed the stalling of the training process to be most pronounced for \env{MsPacman}. Since the degradation cannot realistically be caused by increased difficulty of the setting, having merely applied action permutations and random flips, we can only conclude that the underlying cause is primary bias.
 
 \begin{figure}
   \centering
@@ -570,34 +601,35 @@ The comparison of the warm-started and randomly-initialized agents (\autoref{fig
   \label{fig:plas_check}
 \end{figure}
 
-As opposed to the model-free case, in this instance we have two components, which may be responsible for the performance degradation. With this in mind, we will now perform a variation of the warm-start test, wherein only the RL component will have the network weights loaded from a previous checkpoint, and the world model will have the parameters initialized randomly. The other parameters of the experiment, such as the training loop structure, shall remain unchanged.
+\subsubsection{Metrics related to plasticity loss}
 
-(Results for the actor-only warm start experiment)
+A number of factors have been recognized as being potentially indicative of plasticity loss. We follow suggestion of \cite{julianiStudyPlasticityLoss2024} to test weight magnitude increase and the number of dead activation units, the latter being the number of activation units which have saturated, e.g. never produce non-negative outputs for ReLU units.
 
-\subsection{Analyzing the RL component}
+We will specifically look at the relationship between these values at the end of training run for the source checkpoint, and the performance in the randomized setting. We find (\autoref{fig:plas_check_metrics}) no clear correlation between these metrics and the performance achieved in the warm-started training run. This appears consistent with prior work \cite{lyleUnderstandingPlasticityNeural2023}, in which various plausible explanations of why neural networks may lose the ability to fit new targets over time have been found to lack explanatory power.
 
-Analysis of the behavior of the RL component is less straightforward, as there is no analogue of under- or overfitting of supervised models in the case of reinforcement learning. There are, however, a couple of phenomena, which can cause performance collapse, such as:
+\begin{figure}
+  \centering
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/plas_check.metrics.pdf}
+  \caption{Relationship between plasticity-related metrics and agent performance. Rows represent metrics used, while the columns represent the different components (neural networks) measured. The $x$-axis represents agent performance normalized by the mean score achieved in a non-warm-started setting. The $y$-axis represents values of the particular metrics.}
+  \label{fig:plas_check_metrics}
+\end{figure}
 
-\begin{enumerate}
-  \item Value overestimation: Since most RL algorithms compute value estimates via bootstrapping, it is possible for bad initial value estimates to be amplified by the optimization process.
-  \item Model exploitation: In the context of model-based RL, and specifically the methods based on Dreamer architecture, since all the data given to the RL module is imagined by the model, inaccuracies thereof can cause the agent to learn wrong policies which perform well in the model-induced MDP.
-  \item Policy collapse: for actor-critic methods, without any regularization, the policy will tend to rapidly concentrate on the actions with the highest advantage estimates, which in turn would hurt exploration and prevent the agent from learning more optimal behaviors.
-\end{enumerate}
+\subsubsection{A comment on the possible interventions}
 
-To investigate these, we will first take a look at the value curves. [?]
+In works such as \cite{doroSampleEfficientReinforcementLearning2022,schwarzerBiggerBetterFaster2023}, periodic resets of the parameters have been used with great effect to counteract the plasticity loss. Although an auto-reset scheme may perhaps be possible to construct, we consider such an investigation to be out-of-scope for this thesis, due to aforementioned lack of clear indicators of it occuring. Thus, due to the extent of required hyperparameter optimization and the inability to reduce it through automated methods, we decide not to pursue adding periodic resets to the developed agent.
 
 \section{Auto-tuning update frequencies}
 
-It would therefore appear that these metrics cannot be directly used for the purposes of guiding the optimization process. There exist, however, works doing precisely that, which demands a further inquiry.
+The findings in \autoref{ssec:wm_analysis} suggest, that model validation loss cannot be directly used for the purposes of guiding the optimization process. There exist, however, works doing precisely that, which demands a further inquiry.
 
-We will specifically do a closer examination of (Dynamic update ratios paper). The approach taken by the authors is to check validation loss throughout the training process, and to decrease the update frequency if the loss value has degraded, and increase it if it has improved. To start off, we will replicate the experiment, albeit with some notable changes:
+\paragraph{Setup} We will specifically perform a closer examination of \cite{dorkaDynamicUpdatetoDataRatio2023}. The approach taken by the authors is to check validation loss throughout the training process, and to decrease the update frequency if the loss value has degraded, and increase it if it has improved. To start off, we will replicate the experiment, albeit with some notable changes:
 
 \begin{enumerate}
   \item The authors propose using image reconstruction loss as the validation metric. We would rather have the method apply to models other than DreamerV2's specifically, however, so will use the total loss value.
   \item A validation set is constructed differently: $3 \times 10^3$ transitions are collected every $100 \times 10^3$ steps, which corresponds to the flat $12 \%$ of the transitions being reserved for the validation set, whereas we reserve $15 \%$ of the \emph{episodes} instead. Thus, the training set contains transitions which immediately precede or succeed the ones in the validation set - whether it represents a form of data contamination is unclear.
 \end{enumerate}
 
-The results can be found in \autoref{fig:adaptive_v1_0}, along with the baseline results for the sake of comparsion. It would appear that the strategy is, in general, effective, though not universal - for example, the scores on \env{Assault} do not quite reach the performance peak.
+\paragraph{Results} The validation scores can be found in \autoref{fig:adaptive_v1_0}, along with the baseline results (\autoref{sec:baseline}) for the sake of comparsion. It would appear that the strategy is, in general, effective, though not universal - for example, the scores on \env{Assault} do not quite reach the performance peak.
 
 \begin{figure}
   \centering
@@ -622,9 +654,13 @@ Given that the idea behind this approach is to minimize model overfitting by mon
   \label{fig:adaptive_v1_0_curves}
 \end{figure}
 
+It appears, then, that the theoretical underpinnings behind the effectiveness of this approach are not quite as clear as one would hope. Unfortunately the source paper \cite{dorkaDynamicUpdatetoDataRatio2023} does not supply any concrete analysis of the validation loss itself - only the agent performance and update ratio curves are provided - meaning it is impossible to ascertain whether the observations are an artifact of different experimental setup.
+
 \subsection{Decoupled adaptive ratio system}
 
-It appears, then, that the theoretical underpinnings behind the effectiveness of this approach are not quite as clear as one would hope. Despite this, we believe one can nevertheless improve upon this method in a principled fashion. Drawing on the results concerning the decoupling of the optimization rates for the model and the RL modules, we propose a similar decoupling in the adaptive regime. In particular, we will make only the model update ratio adaptive, and keep the RL update ratio fixed at a pre-defined value. The results (\autoref{fig:adaptive_wm_v1_0}) indicate, that the decoupling has a positive impact on the agent performance.
+Irrespective of the theoretical basis, the method of adapting update ratios has proven provisionally effective. We believe one further improve upon this method. Drawing on the results concerning the decoupling of the optimization rates for the model and the RL modules, we propose a similar decoupling in the adaptive regime. In particular, we will make only the model update ratio adaptive, and keep the RL update ratio fixed at a pre-defined value. Although an automatic method to select the RL update frequency would be welcome, we consider it out-of-scope for this thesis due to inherent complexity of the undertaking, arising from the nontrivial RL algorithm dynamics coupled with equally complex interaction between the model itself and the RL component.
+
+\paragraph{Results} The results (\autoref{fig:adaptive_wm_v1_0}) indicate, that the decoupling has an overall positive impact on the agent performance, consistent with the findings in \autoref{ssec:decoupled_ratio}. However, it must be noted, that the benefit depends on the environment in question, and the value of the RL update ratio $K_{\rm RL}$. For example, for the value of $K_{\rm RL} = 8$, the agent exhibits degraded performance relative to the coupled-ratio setting, making it a sensitive hyperparameter needing to be tuned.
 
 \begin{figure}
   \centering
@@ -635,11 +671,14 @@ It appears, then, that the theoretical underpinnings behind the effectiveness of
 
 \section{Data augmentation}
 
-Incorporating data augmentation into an RL framework can be done in non-trivial ways. DrQ, for example, combines transforming the input, averaging the Q functions across multiple augmented samples, and averaging the Q targets. In the context of model-based RL, one could develop similar schemes for both the world model and the RL modules, e.g. by averaging posterior state distributions over multiple image augmentations. This, however, would require changing the implementation of these modules, whereas our goal is to make the framework as modular as possible. Therefore, we opt to only augment the input, and forego the averaging of various quantities in question.
+Incorporating data augmentation into an RL framework can be done in non-trivial ways. DrQ, for example, combines transforming the input, averaging the $Q$ functions across multiple augmented samples, and averaging the $Q$ targets. In the context of model-based RL, one could develop similar schemes for both the world model and the RL modules, e.g. by averaging posterior state distributions over multiple image augmentations. This, however, would require changing the implementation of these modules, whereas our goal is to make the framework as modular as possible. Therefore, we opt to only augment the input, and forego the averaging of various quantities in question.
 
-We follow the original paper in choosing random shifts as the image transformation to apply. The augmentations will be applied to both images in the batch for the model optimization, and the batch used to generate the initial states for the imagined rollouts. As far as the training recipe is concerned, we will start with a fixed-ratio setup in order to compare the data-augmented recipe with a non-data-augmented baseline.
+\subsection{Random shifts test}
+\label{ssec:random_shift}
 
-\paragraph{Results} The comparison of the test episode returns for the two variants (\autoref{fig:data_aug}) shows, that, with the base settings, the addition of data augmentation \emph{degrades} performance, excepting perhaps \env{MsPacman}. As the main idea behind data augmentation is the reduction of model overfitting, we will next investigate the training and the validation loss curves for the model. The analysis of the final validation loss for each variant (\autoref{fig:data_aug_val_loss}) reveals, that not only is it significantly higher compared to the baseline variant, but it also does not improve as the update frequency increases (equivalently, $K$ decreases).
+\paragraph{Setup} We follow the original paper in choosing random shifts (of maximum value of $4$ pixels) as the image transformation to apply. The augmentations will be applied to both images in the batch for the model optimization, and the batch used to generate the initial states for the imagined rollouts. As far as the training recipe is concerned, we will start with a fixed-ratio setup (\autoref{sec:baseline}) in order to compare the data-augmented recipe with a non-data-augmented baseline. We perform the test for two values of model/RL update ratio, $K = 2$ and $K = 4$.
+
+\paragraph{Results} The comparison of the test episode returns for the two variants (\autoref{fig:data_aug}) shows, that, with the base settings, the addition of data augmentation \emph{degrades} performance, excepting perhaps \env{MsPacman}. As the main idea behind data augmentation is the reduction of model overfitting, we will next investigate the training and the validation loss curves for the model. The analysis of the model validation loss curves for each variant (\autoref{fig:data_aug_val_curves}) reveals, that not only is it significantly higher compared to the baseline variant, but it also does not improve as the update frequency increases (equivalently, $K$ decreases). In general, though, the validation loss curves follow the same overall trajectory, making it hard to discern why performance degrades on, say, \env{CrazyClimber}, and not on \env{MsPacman}.
 
 \begin{figure}
   \centering
@@ -650,12 +689,12 @@ We follow the original paper in choosing random shifts as the image transformati
 
 \begin{figure}
   \centering
-  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/data_aug.val_loss.pdf}
-  \caption{A comparison of the final model validation loss values for the data-augmented agent, and a non-data-augmented baseline. Each subplot represents the results for a single environment. In each subplot, results for different values of model/RL update ratio $K$ are grouped together. Each group contains a box, signifying the mean and the standard deviation evaluated across $5$ training runs, for the data-augmented and the non-data-augmented variants.}
-  \label{fig:data_aug_val_loss}
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/data_aug.val_curves.pdf}
+  \caption{A comparison of the model validation loss curves for the data-augmented agent, and a non-data-augmented baseline. Each column represents the results for a single environment. Each row corresponds to a different configuration - model/RL update ratio used. In each subplot, curves for the data-augmented and non-data-augmented variants are displayed. The curves have been smoothed by exponential moving average, to improve the clarity of the presentation.}
+  \label{fig:data_aug_val_curves}
 \end{figure}
 
-If we take a look at the model training loss curves (\autoref{fig:data_aug_train_curves}), we may observe a following phenomenon: for \env{Assault} and \env{CrazyClimber}, the addition of random shifts appears to slow down, or even stall out the training process, as shown by the slower rate of decrease (in log-space). For \env{MsPacman}, however, the reverse is true: in the original experiment, training loss stops improving at a certain point, whereas in the data-augmented scenario, we observe a consistent decrease. [What further conclusions to draw?]
+If we take a look at the model training loss curves (\autoref{fig:data_aug_train_curves}), we may observe a following phenomenon: for \env{Assault} and \env{CrazyClimber}, the addition of random shifts appears to slow down, or even stall out the training process, as shown by the slower rate of decrease (in log-space). For \env{MsPacman}, however, the reverse is true: in the original experiment, training loss stops improving at a certain point, whereas in the data-augmented scenario, we observe a consistent decrease. This may be indicative of data augmentation making the optimization process too difficult, rather than having it alleviate overfitting.
 
 \begin{figure}
   \centering
@@ -664,7 +703,11 @@ If we take a look at the model training loss curves (\autoref{fig:data_aug_train
   \label{fig:data_aug_train_curves}
 \end{figure}
 
-As suggested in (DrQ paper citation), the type of image augmentation used has a large impact on the effectiveness of the method. To this end, the next experiment will assess the impact of changing the kind of the augmentation. We mostly follow the source paper in the selection of the transforms to test:
+\subsection{Different image augmentation types}
+
+As suggested in \cite{kostrikovImageAugmentationAll2021}, the type of image augmentation used has a large impact on the effectiveness of the method. To this end, the next experiment will assess the impact of changing the kind of the augmentation.
+
+\paragraph{Setup} We mostly follow the source paper in the selection of the transforms to test:
 
 \begin{enumerate}
   \item {\tt none}: Baseline/No augmentations applied.
@@ -676,9 +719,9 @@ As suggested in (DrQ paper citation), the type of image augmentation used has a 
   \item {\tt vflip}: Flip the image vertically, with probability $p = 0.1$.
 \end{enumerate}
 
-where $x \sim \mathcal{U}[a, b]$ denotes a sample from the uniform distribution over $[a, b] \subset \mathbb{R}$.
+where $x \sim \mathcal{U}[a, b]$ denotes a sample from the uniform distribution over $[a, b] \subset \mathbb{R}$. Other than the data augmentation type, we follow experimental setup in \autoref{ssec:random_shift}, except that we check the configuration with update ratio $K = 8$ due to the number of augmentations to test, and attendant number of training runs to perform.
 
-The results (\autoref{fig:data_aug_sweep}) suggest, that no type of image augmentation has a consistent positive effect on the agent performance.
+\paragraph{Results} The analysis of the validation scores (\autoref{fig:data_aug_sweep}) suggests, that no type of image augmentation has a consistent positive effect on the agent performance.
 
 \begin{figure}
   \centering
@@ -689,13 +732,59 @@ The results (\autoref{fig:data_aug_sweep}) suggest, that no type of image augmen
 
 \section{Choice of the RL algorithm choice}
 
-So far, all the experiments have used the default RL module of DreamerV2, namely a variant of Advantage Actor-Critic (A2C). In this section, we shall investigate the effects of replacing it, whilst keeping the model component intact. Beyond hopefully achieving improvement in terms of agent performance, our objective is to elucidate the design choices when incorporating model-free RL algorithms into a model-based setting.
+So far, all the experiments have used the default RL module of DreamerV2, namely a variant of Advantage Actor-Critic (A2C). In this section, we shall investigate the effects of replacing it with Proximal Policy Optimization (PPO) and Soft Actor-Critic (SAC), whilst keeping the model component intact. Beyond hopefully achieving improvement in terms of agent performance, our objective is to elucidate the design choices when incorporating model-free RL algorithms into a model-based setting.
+
+\subsection{Algorithmic details}
+
+In order to be able to explain the design of the experiments, we need to briefly explain how SAC and PPO work. For detailed exposition, we refer the reader to \cite{haarnojaSoftActorCriticOffPolicy2018} and \cite{schulmanProximalPolicyOptimization2017} respectively.
+
+\subsubsection{Soft Actor-Critic}
+
+\begin{sloppypar}
+  Soft Actor-Critic follows a maximum-entropy RL formulation, where the objective, the expected sum of rewards $J = \mathbb{E}\left[\sum_t r_t\right]$, is augmented with an entropy term $J' = \mathbb{E}\left[\sum_t \left\{r_t + \alpha \mathcal{H}(\pi(\cdot \mid s_t))\right\}\right]$, where $\alpha$ is the temperature/reward scale. The $Q$ functions are optimized with a Bellman backup:
+\end{sloppypar}
+
+\begin{equation}
+  \label{eq:sac_q_loss}
+  \begin{aligned}
+    J_Q & = \mathbb{E}_{(s_t, a_t) \sim \mathcal{D}} \left[\frac{1}{2}\left(Q_\theta(s_t, a_t) - \square( y_t)\right)\right]                       \\
+    y_t & = r_t + \gamma V_{\bar{\theta}}(s_{t+1}) = r_t + \gamma(Q_{\bar{\theta}}(s_{t+1}, a_{t+1}) - \alpha \log \pi_\phi(a_{t+1} \mid s_{t+1}))
+  \end{aligned}
+\end{equation}
+
+where $\square$ denotes stop-gradient function, $y_t$ is the target $Q$ value, and bars denote target networks, with parameters either periodically copied from the main networks, or formed as an exponential moving average. We may note, that $y_t$ may be replaced by multi-step returns or Generalized Advantage Estimation (GAE) \cite{schulmanHighDimensionalContinuousControl2018}.
+
+The policy $\pi_\phi$ is optimized using the objective:
+
+\begin{align*}
+  J_\pi = \mathbb{E}_{s_t \sim \mathcal{D}} \left[\mathbb{E}_{a_t \sim \pi_\phi} \left[\alpha \log \pi_\phi(a_t \mid s_t) - Q_\theta(s_t, a_t) \right] \right]
+\end{align*}
+
+where we use reparametrization trick \cite{kingmaAutoEncodingVariationalBayes2022} to take the derivative over $\mathbb{E}_{a_t \sim \pi_\phi}$.
+
+\subsubsection{Proximal Policy Optimization}
+
+\begin{sloppypar}
+  Proximal Policy Optimization is an on-policy algorithm using a modified policy gradient objective along with GAE. The objective for the policy, given an on-policy sequence $(s_{1:T+1}, a_{1:T}, r_{1:T}, \gamma_{1:T+1})$, is:
+\end{sloppypar}
+
+\begin{align*}
+  L_\pi(\theta) = \mathbb{E}_t \left[\clip\left(\frac{\pi_\theta(a_t \mid s_t)}{\pi_{\theta_{\rm old}}(a_t \mid s_t)}, 1-\epsilon, 1+\epsilon\right) A_t \right]
+\end{align*}
+
+where $\pi_{\theta_{\rm old}}$ is the collection policy, $\pi_\theta$ is the current policy, $\epsilon$ is the clipping ratio, and $A_t$ are the advantage values, usually computed using GAE. Additional value function networks are required to compute it, and are optimized via a similar mechanism to SAC (\autoref{eq:sac_q_loss}), except for the $\alpha$ term.
+
+Crucially, the data can be reused. The action probabilities are computed once before optimization steps ($\pi_{\theta_{\rm old}}$), and off-policy correction is applied via the probability ratio. This can be done for a specified \emph{number of epochs} $N$. The data batch can also be split into $M$ \emph{minibatches} of size $\approx T/M$ each.
+
+\subsubsection{Advantage Actor-Critic}
+
+A2C behaves essentially like PPO with $N = M = 1$.
 
 \subsection{PPO Experiments}
 
-We will start with the experiments involving PPO. For the choice of the hyperparameters, we take the approach of replicating the default ones for A2C, whenever applicable. This includes the network architectures of the encoders for the actor and the critic functions, the value of the discount factor $\gamma$ and GAE discount $\lambda$, actor and critic optimizer learning rates, and the entropy penalty $\alpha$.
+\paragraph{Setup}  For the choice of the hyperparameters, we take the approach of replicating the default ones for A2C, whenever applicable. This includes the network architectures of the encoders for the actor and the critic functions, the value of the discount factor $\gamma$ and GAE discount $\lambda$, actor and critic optimizer learning rates, and the entropy penalty $\alpha$.
 
-There remain two hyperparameters to select: the number of update epochs $N$, meaning the amount of times each data batch item is used, and the number of minibatches for each update epoch $M$, being the number of splits of the data batch into minibatches used for each optimization step. Thus, the total number of parameter updates is $NM$. We may note that, for $N = M = 1$, the procedure is in fact equivalent to the original A2C algorithm.
+There remain two hyperparameters to select: the number of update epochs $N$, and the number of minibatches for each update epoch $M$. Thus, the total number of parameter updates is $NM$.
 
 Beyond that, we need to specify the training recipe. We leave the model update ratio fixed at $K_{\rm WM} = 4$, and finetune RL update ratio $K_{\rm RL}$, number of update epochs $N$ and number of minibatches $M$. As the baseline, we select a scenario with $K_{\rm WM} = K_{\rm RL} = 4$. We will examine following configurations:
 
@@ -726,7 +815,11 @@ In order for the comparison to be fair, we ought to make sure, that the total tr
 
 \subsection{SAC Experiments}
 
-Let us now conduct the experiments with SAC algorithm. In the first order, let us discuss the extent of the hyperparameter sweep to conduct. A complete grid search over network architectures, optimizer parameters etc. is clearly infeasible. We take the approach of reusing A2C's actor architecture and optimizer, and using A2C's encoder and optimizer settings for the value function as a proxy for SAC's $Q$ functions. As both algorithms use the target functions, we copy the target $Q$ function update schedule from A2C - a full copy every $100$ optimization steps, to be precise.
+Let us now conduct the experiments with SAC algorithm.
+
+\subsubsection{Random search over the $\alpha$ coefficient}
+
+\paragraph{Setup} A complete grid search over network architectures, optimizer parameters etc. is clearly infeasible, and the parameters are not as directly transferable as was the case with PPO. We take the approach of reusing A2C's actor architecture and optimizer, and using A2C's encoder and optimizer settings for the value function as a proxy for SAC's $Q$ functions. As both algorithms use the target functions, we copy the target $Q$ function update schedule from A2C - a full copy every $100$ optimization steps, to be precise.
 
 The most impactful hyperparameter left, then, is the choice of temperature/reward scale $\alpha$. As the first step, we perform a random search over the value of the parameter. Ideally, we would perform a grid search, testing each value of $\alpha$ on the set of three environments and five RNG seeds. However, such an experiment would be computationally onerous. What we do instead, rather, is the following: for each pair of the environment/task and the RNG seed, we select the value of $\alpha$ from a log-normal distribution: $\log{\alpha} \sim \mathcal{N}(\log{10^{-3}}, \log{10})$. In other words, we expect the first standard deviation to cover the interval $[10^{-4}, 10^{-2}]$. To increase the coverage, multiple $\alpha$ values can be tested for each pair. Then, we shall estimate the optimal value of $\alpha$.
 
@@ -746,9 +839,11 @@ The most impactful hyperparameter left, then, is the choice of temperature/rewar
   \label{fig:sac_alpha_ent}
 \end{figure}
 
-Another method, which can be used to derive the value of $\alpha$ temperature, is auto-tuning, as described in (SAC Alg. and App. citation). Briefly, the idea is to specify a schedule of the mean policy entropy, rather than the $\alpha$ parameter itself, and optimize the value of $\alpha$ so that the schedule is achieved. The optimization is achieved via minimization of loss function $L = \alpha (H - H_0)$, where $H_0$ denotes the current entropy target.
+\subsubsection{Auto-tuning $\alpha$ coefficient}
 
-In order to use it, we must specify the target entropy schedule. The recommendations for the model-free case suggest the use of a constant entropy target of $0.89 H_{\rm max}$ for the discrete action spaces, where $H_{\rm max}$ denotes the maximum possible entropy for a policy in a given action space. However, the entropy curves of the best-performing agents in the baseline scenario (\autoref{fig:baseline_ent}) imply, that we ought to specify a rapidly decaying entropy schedule, with the final mean entropy value of approximately $0.05 H_{\rm max}$.
+Another method, which can be used to derive the value of $\alpha$ temperature, is auto-tuning, as described in \cite{haarnojaSoftActorCriticAlgorithms2019}. Briefly, the idea is to specify a schedule of the mean policy entropy, rather than the $\alpha$ parameter itself, and optimize the value of $\alpha$ so that the schedule is achieved. The optimization is achieved via minimization of loss function $L = \alpha (H - H_0)$, where $H_0$ denotes the current entropy target.
+
+\paragraph{Setup} In order to use it, we must specify the target entropy schedule. The recommendations for the model-free case suggest the use of a constant entropy target of $0.89 H_{\rm max}$ for the discrete action spaces, where $H_{\rm max}$ denotes the maximum possible entropy for a policy in a given action space. However, the entropy curves of the best-performing agents in the baseline scenario (\autoref{fig:baseline_ent}) imply, that we ought to specify a rapidly decaying entropy schedule, with the final mean entropy value of approximately $0.05 H_{\rm max}$.
 
 \begin{figure}
   \centering
@@ -759,7 +854,7 @@ In order to use it, we must specify the target entropy schedule. The recommendat
 
 With this in mind, we will now proceed with an experiment, wherein we will set the entropy target to follow the dotted line on \autoref{fig:baseline_ent} - to be precise, we start at $0.99 H_{\rm max}$, descend to $0.1 H_{\rm max}$ by the environment step $50 \times 10^3$, and reach the target of $0.05 H_{\rm max}$ by the environment step $200 \times 10^3$. As for the optimizer for the $\alpha$ loss value, we choose Adam with learning rate $2.5 \times 10^{-3}$, $\epsilon = 10^{-5}$ and leave other parameters as default in Pytorch.
 
-The results (\autoref{fig:sac_ent_sched}) are inconclusive - performance on \env{MsPacman} is significantly improved, remains approximately the same on \env{Assault}, and is degraded on \env{CrazyClimber}.
+\paragraph{Results} The results (\autoref{fig:sac_ent_sched}) are inconclusive - performance on \env{MsPacman} is significantly improved, remains approximately the same on \env{Assault}, and is degraded on \env{CrazyClimber}.
 
 \begin{figure}
   \centering
@@ -776,11 +871,11 @@ Due to the requisite computational resources required to run the entire benchmar
 
 \subsection{Hyperparameter selection}
 
-In reference to the adaptive ratio system, the results suggest the use of a decoupled setup, wherein the RL update ratio is fixed. The performance gain is, however, dependent on the specific update ratio used. The validation scores obtained in the PPO experiment, on the other hand, indicate the use of either {\tt 16/8/1} or {\tt 8/8/1} configuration, the configuration name $K_{\rm RL}/N/M$ denoting the RL optimization ratio, number of PPO epochs and number of PPO minibatches respectively. We exclude the experiments with $M > 1$ due to excessive adverse effect on the training speed, despite possibly yielding improved results.
+\paragraph{Setup} In reference to the adaptive ratio system, the results suggest the use of a decoupled setup, wherein the RL update ratio is fixed. The performance gain is, however, dependent on the specific update ratio used. The validation scores obtained in the PPO experiment, on the other hand, indicate the use of either {\tt 16/8/1} or {\tt 8/8/1} configuration, the configuration name $K_{\rm RL}/N/M$ denoting the RL optimization ratio, number of PPO epochs and number of PPO minibatches respectively. We exclude the experiments with $M > 1$ due to excessive adverse effect on the training speed, despite possibly yielding improved results.
 
 These findings suggest a following setup: we will set the RL update ratio fixed, making the model update frequency alone adaptive, and focus on the hyperparameters for the PPO. We will test a slightly wider range of presets: {\tt 8/8/1}, {\tt 16/8/1}, {\tt 4/8/1} and {\tt 8/4/1}.
 
-The scores obtained by the agents (\autoref{fig:final_prelim}) appears inconclusive. None of the tested presets consistently outperforms the other ones - for example, {\tt 4/8} is the best on \env{MsPacman}, {\tt 8/4} on \env{Assault} and {\tt 16/8} on \env{CrazyClimber}. Another question that arises is whether the combination of the two improvements has yielded even better results, or, in other words, whether there has been any synergy between them. To this end, let us compare the results for the adaptive ratio, PPO and their combination side by side. As we can see (\autoref{fig:final_prelim_comp}), the integrated agent does \emph{not} necessarily outperform the individual modifications. For example, on \env{MsPacman}, the PPO-only set of agents seem to achieve higher validation scores than the agents also utilizing the adaptive model ratios. It does, on the other hand, appear to slightly improve the overall results for the \env{Assault} and \env{CrazyClimber} Atari environments.
+\paragraph{Results} The scores obtained by the agents (\autoref{fig:final_prelim}) appear inconclusive. None of the tested presets consistently outperforms the other ones - for example, {\tt 4/8} is the best on \env{MsPacman}, {\tt 8/4} on \env{Assault} and {\tt 16/8} on \env{CrazyClimber}. Another question that arises is whether the combination of the two improvements has yielded even better results, or, in other words, whether there has been any synergy between them. To this end, let us compare the results for the adaptive ratio, PPO and their combination side by side. As we can see (\autoref{fig:final_prelim_comp}), the integrated agent does \emph{not} necessarily outperform the individual modifications. For example, on \env{MsPacman}, the PPO-only set of agents seem to achieve higher validation scores than the agents also utilizing the adaptive model ratios. It does, on the other hand, appear to slightly improve the overall results for the \env{Assault} and \env{CrazyClimber} Atari environments.
 
 \begin{figure}
   \centering
@@ -811,9 +906,9 @@ Now, we are in the position to perform the complete Atari-100k benchmark, consis
 
 \paragraph{Setup} We follow standard environment settings described in \cite{kaiserModelBasedReinforcementLearning2024}. The main difference between the regular configuration is that for $200\times 10^6$ environment steps, \emph{sticky actions} are used, meaning an action is repeated with probability $p=0.25$, whereas for Atari-100k benchmark, they are disabled. For each of the 26 Atari games, we perform $5$ training runs, with different RNG seeds.
 
-\paragraph{Results} The complete results can be found in \autoref{tab:atari_100k_scores}. We compare our agent's performance with a selection of sample-efficient architectures, both model-based (SimPLe, TWM, IRIS, DreamerV3), model-free (SR-SPR, BBF) and utilizing look-ahead search (EfficientZero). The per-environment and aggregate human-normalized median and mean scores have been taken from \cite{hafnerMasteringDiverseDomains2024} and \cite{schwarzerBiggerBetterFaster2023}.
+\paragraph{Results} The comparison  can be found in \autoref{tab:atari_100k_scores}. We compare our agent's performance with a selection of sample-efficient architectures, both model-based (SimPLe, TWM, IRIS, DreamerV3), model-free (SR-SPR, BBF) and utilizing look-ahead search (EfficientZero). The per-environment and aggregate human-normalized median and mean scores have been taken from \cite{hafnerMasteringDiverseDomains2024} and \cite{schwarzerBiggerBetterFaster2023}.
 
-Overall, the agent does not attain state-of-the-art performance, but, we argue, it performs better than might perhaps be expected. If we look at the human-normalized mean scores, we can see, that our method reaches performance comparable with the best model-based approach, DreamerV3. We also improve upon IRIS in the same metric. The human-normalized \emph{median} performance, however, lags significantly behind DreamerV3 or BBF.
+Overall, the agent does not attain state-of-the-art performance, but, we argue, it performs better than might perhaps be expected. If we look at the human-normalized mean scores, we can see, that our method reaches performance comparable with Transformer-based IRIS model, and exceeding TWM. The human-normalized \emph{median} performance, however, lags significantly behind DreamerV3 or BBF.
 
 \begin{table}
   \centering
@@ -824,7 +919,7 @@ Overall, the agent does not attain state-of-the-art performance, but, we argue, 
   \label{tab:atari_100k_scores}
 \end{table}
 
-If we take a look at the validation score curves (\autoref{fig:atari_100k_curves}) (...)
+We also publish the validation score curves (\autoref{fig:atari_100k_curves}). On some tasks, such as \env{ChopperCommand}, \env{DemonAttack}, \env{PrivateEye} or \env{UpNDown}, the agent appears to act almost randomly. In fact, for \env{PrivateEye}, the normalized performance is \emph{negative}. For this environment and \env{ChopperCommand}, the cause appears to be overall inferior performance of base DreamerV2 world model on these. In most cases, though, the agents do not necessarily collapse - the progress is steady, but merely slow, as evidenced by the median normalized score.
 
 \begin{figure}
   \centering
@@ -833,9 +928,27 @@ If we take a look at the validation score curves (\autoref{fig:atari_100k_curves
   \label{fig:atari_100k_curves}
 \end{figure}
 
-Our solution is also more compute-efficient than the alternatives. A single training run takes approximately $3.5$ hours running on half an A100 accelerator, compared with $0.1$ A100-days for DreamerV3, $8$ A100-hours for BBF, or $3.5$ A100-days for IRIS.
-
 \chapter{Discussion}
+
+We have presented an exploration of the idea of incorporating various improvements and tweaks into a model-based RL architecture in order to make it more data-efficient. Through an extensive survey of the field, and careful agent design, we have identified the most relevant developments, and proposed an unified RL framework for combining them into a single agent.
+
+Due to a marked lack of existing extensible and fully configurable model-based RL solutions, we have implemented a novel, open-source PyTorch-based solution, and provided a detailed analysis of the different components and software design choices, which facilitate the execution of the experiments.
+
+In our experiments, we have demonstrated the effects of applying the ideas presented in other works in a model-based context. We have found, that some of them, such as tuning the update ratios, or experimenting with different underlying RL algorithms, have a positive effect on the agent performance, whereas others, such as the use of data augmentations, can, perhaps counterintuitively, even degrade the performance in the model-based setting. Through an in-depth analysis of the training dynamics, we have shed light on some of the phenomena at play, including the unexpected behavior of the model validation loss values.
+
+Finally, we have examined the effects of combining the improvements, identifying a modest further performance boost, and verified the efficacy of the approach on the standard Atari-100k benchmark, finding it to be competitive with some of the current state-of-the-art approaches, despite the overall simplicity and compute efficiency of the final agent architecture. It must, however, be noted, that there remains a significant gap between algorithms using ``true'' world models without lookahead, and the algorithms either using value-equivalent models, or without their use altogether, prompting further research.
+
+Our solution is also more compute-efficient than the alternatives. A single training run takes approximately $3.5$ hours running on half an A100 accelerator, compared with $2.4$ A100-hours for DreamerV3, $8$ A100-hours for BBF, or $3.5$ A100-\emph{days} for IRIS. Thus, the approach presented in our work makes work on data-efficient RL algorithms more accessible to researchers without access to massive compute resources.
+
+An interesting avenue for future work would be to perform a more complete investigation of the plasticity loss, and to develop an automatic schema for alleviating it. Our preliminary findings suggest, that the loss of the ability to learn from recent experience in neural networks can possibly impact the performance of the model-based RL algorithms. Further network regularization via the use of weight decay or normalization layers, parameter resetting based on neuron-level staleness metrics, or architectural changes could potentially be used to automatically prevent or detect the primacy bias from occuring.
+
+We could also attempt to better incorporate data augmentation techniques into the model-based framework. Although, in aggregate, the ablations were found to degrade the performance, we have also detected a tentative qualitative measure, the stalling of the training process, which could be utilized to adjust the strength of the augmentations, or enable/disable them altogether. One could also consider an augmentation schedule, whereby the training process would begin without any image transformations applied, and gradually start applying them as the run nears completion.
+
+We believe, that the results presented in this thesis, as well as developed RL framework, can help further research on sample-efficient RL methods, and ultimately lead to a broader use and deployment of RL algorithms in real-world scenarios.
+
+\section{Acknowledgements}
+
+We would like to thank dr Cyranka for his continued support and valuable insight throughout the period of completing this thesis. This work was supported by the access to the \href{https://entropy-doc.mimuw.edu.pl/}{Entropy compute cluster}.
 
 \printbibliography
 
