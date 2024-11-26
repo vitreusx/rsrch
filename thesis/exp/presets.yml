@@ -437,3 +437,27 @@ thesis:
         type: atari
         atari:
           repeat_action_probability: 0.0
+
+    dreamerv2:
+      $extends: [dreamer.atari, atari.base]
+      env:
+        type: atari
+        atari:
+          repeat_action_probability: 0.0
+      stages:
+        - prefill:
+            until: 20e3
+        - train_loop:
+            until: 400e3
+            tasks:
+              - do_val_epoch: ~
+                every: 20e3
+              - do_opt_step: ~
+                every:
+                  n: 64
+                  accumulate: true
+              - do_env_step
+        - do_val_epoch
+        - save_ckpt:
+            full: false
+            tag: final
