@@ -559,42 +559,28 @@ So far, the experiments suggest that achieving optimal or near-optimal performan
 
 Since model learning is a supervised learning task, the clearest indicator of under- or overfitting ought to be the validation loss. We compute it as follows: throughout the training process (to be precise, every $16$ model optimization steps), we load a batch of data using the validation episodes only, and compute the mean model loss for these items.
 
-\paragraph{Results} We will start with the aggregate results - the relationship between the final validation loss and the final agent performance, for the equal-ratio experiment described in \autoref{sec:baseline}. As we can see in \autoref{fig:model_val_loss}, it would appear, somewhat surprisingly, that the value, for individual training runs, is not meaningfully correlated with the final score achieved by the agent. A closer inspection of the validation loss curves (\autoref{fig:model_val_curves}) reveals, that the agents do not, in general, exhibit classical overfitting behavior, in the sense that the validation loss curves plateau at worst, and in general the loss value keeps decreasing. The learning process nevertheless degrades, as the final values of the validation loss keep increasing as the ratio of the optimization and environment steps increases. The ratio values, for which the final loss value is the smallest, do not correspond to the ones which achieve the highest performance.
+\paragraph{Results} We will start with the aggregate results - the relationship between the final validation loss and the final agent performance, for the equal-ratio experiment described in \autoref{sec:baseline}. As we can see in \autoref{fig:val_v_perf}, it would appear, somewhat surprisingly, that the value, for individual training runs, is not meaningfully correlated with the final score achieved by the agent. We can also see, that the agents do not, in general, exhibit classical overfitting behavior, in the sense that the validation loss curves plateau at worst, and in general the loss value keeps decreasing. The learning process nevertheless degrades, as the final values of the validation loss keep increasing as the ratio of the optimization and environment steps increases. The ratio values, for which the final loss value is the smallest, do not correspond to the ones which achieve the highest performance.
 
 \paragraph{Conclusions} The relationship between the model validation loss and the agent performance is nontrivial.
 
 \begin{figure}
   \centering
-  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/model_val_loss.pdf}
-  \caption{Relationship between final validation score and final model validation loss. Each point represents a single training run. The x-axis represents the agent performance. The y-axis represents the value of the model validation loss at the end of the training.}
-  \label{fig:model_val_loss}
-\end{figure}
-
-\begin{figure}
-  \centering
-  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/model_val_curves.pdf}
-  \caption{Averaged model validation loss curves for each configuration of the environment and the update ratio used. Rows represent different environments, and the columns the different update ratios used. The $x$-axis corresponds to the number of environment steps taken, and the $y$-axes represent loss values.}
-  \label{fig:model_val_curves}
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/val_loss_v_perf.pdf}
+  \caption{Relationship between model validation loss and validation score curves. Each row represents a different Atari game, and each columns a different model/RL update ratio used. On each subplot, curves of two metrics are displayed: model validation loss (decreasing) and validation scores (increasing), averaged over 5 RNG seeds.}
+  \label{fig:val_v_perf}
 \end{figure}
 
 \subsubsection{Model training loss}
 
-To further examine the behavior of the agent throughout the optimization process, let us take a look at the \emph{training} loss curves. An aggregate comparison (\autoref{fig:model_train_loss}) reveals a modest degree of correlation between the agent performance scores and the training loss values. The loss curves (\autoref{fig:model_train_curves}) are of altogether different nature, compared to the validation loss curves. We can see a clear monotonic relationship between the final loss value achieved and the update frequency, though, as before, the better values do not lead to improvements in terms of the quality of the agents. Perhaps more interestingly, at very high update frequencies (i.e. small data-to-update ratios), the optimization process seems to stall out completely. For the value of $K = 1$, for example, in all three environments tested, near-``optimal'' value is reached after the first $100 \times 10^3$ environment steps, whereafter it either improves marginally, or even increases.
+To further examine the behavior of the agent throughout the optimization process, let us take a look at the \emph{training} loss curves (\autoref{fig:train_v_perf}). We can see a clear monotonic relationship between the final loss value achieved and the update frequency, though, as before, the better values do not lead to improvements in terms of the quality of the agents. Perhaps more interestingly, at very high update frequencies (i.e. small data-to-update ratios), the optimization process seems to stall out completely. For the value of $K = 1$, for example, in all three environments tested, near-``optimal'' value is reached after the first $100 \times 10^3$ environment steps, whereafter it either improves marginally, or even increases.
 
 \paragraph{Conclusions} The relationship between the model training loss and the agent performance is nontrivial as well.
 
 \begin{figure}
   \centering
-  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/model_train_loss.pdf}
-  \caption{Relationship between final validation score and final model training loss. Each point represents a single training run. The x-axis represents the agent performance. The y-axis represents the value of the model training loss at the end of the training.}
-  \label{fig:model_train_loss}
-\end{figure}
-
-\begin{figure}
-  \centering
-  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/model_train_curves.pdf}
-  \caption{Averaged model training loss curves for each configuration of the environment and the update ratio used. Rows represent different environments, and the columns the different update ratios used. The x-axis corresponds to the number of environment steps taken, and the y-axes represent loss values. The ranges of the y-axes are different for each environment, and are {\bf logarithmic} due to the wide range of values.}
-  \label{fig:model_train_curves}
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/train_loss_v_perf.pdf}
+  \caption{Relationship between model training loss and validation score curves. Each row represents a different Atari game, and each columns a different model/RL update ratio used. On each subplot, curves of two metrics are displayed: model training loss (decreasing) and validation scores (increasing), averaged over 5 RNG seeds.}
+  \label{fig:train_v_perf}
 \end{figure}
 
 \subsection{Plasticity analysis}
@@ -944,7 +930,7 @@ Overall, the agent does not attain state-of-the-art performance, but, we argue, 
   \begin{adjustbox}{width=1.0\textwidth}
     \input{{assets/benchmark.tex}}
   \end{adjustbox}
-  \caption{A comparison of Atari-100k scores for different models.}
+  \caption{A comparison of Atari-100k scores for different RL agent architectures.}
   \label{tab:atari_100k_scores}
 \end{table}
 
@@ -953,7 +939,7 @@ We also publish the validation score curves (\autoref{fig:atari_100k_curves}). O
 \begin{figure}
   \centering
   \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/atari_100k.curves.pdf}
-  \caption{Atari-100k validation score curves.}
+  \caption{Atari-100k validation score curves for our algorithm. Each subplot represents a different game from the Atari-100k benchmark. The $x$-axis denotes the environment step, and the $y$-axis the scores. The curves depict the mean and the standard deviation measured over 5 RNG seeds.}
   \label{fig:atari_100k_curves}
 \end{figure}
 
