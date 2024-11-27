@@ -314,3 +314,7 @@ class Tensorlike:
     @property
     def shape(self):
         return self.as_tensor.shape
+
+
+def is_discrete(space):
+    return isinstance(space, (OneHot, Discrete))
