@@ -15,8 +15,7 @@ class Actor:
     obs_space: Any
     act_space: Any
 
-    def __call__(self, state: Tensor) -> D.Distribution:
-        ...
+    def __call__(self, state: Tensor) -> D.Distribution: ...
 
 
 class Agent(gym.vector.agents.Markov):

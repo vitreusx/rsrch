@@ -5,7 +5,7 @@ from typing import Literal
 from rsrch import rl
 
 from .common.config import *
-from .rl import a2c, ppo, sac
+from .rl import a2c, ppo, sac, cem
 from .wm import dreamer
 
 
@@ -86,11 +86,12 @@ class Config:
 
     @dataclass
     class RL:
-        type: Literal["a2c", "ppo", "sac"]
+        type: Literal["a2c", "ppo", "sac", "cem"]
         loader: Literal["real_rl", "dreamer_rl", "on_policy"] | None
         a2c: a2c.Config | None
         ppo: ppo.Config | None
         sac: sac.Config | None
+        cem: cem.Config | None
 
     rl: RL
 

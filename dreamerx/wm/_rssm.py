@@ -297,6 +297,15 @@ class OptRSSM(nn.Module):
         h_0: State,
         sample: bool = True,
     ):
+        return self.observe(input, h_0, sample)
+
+    @torch.jit.ignore
+    def observe(
+        self,
+        input: tuple[Tensor, Tensor],
+        h_0: State,
+        sample: bool = True,
+    ):
         assert sample
         obs, act = input
         obs = over_seq(self._obs_out_o)(obs)
@@ -307,6 +316,35 @@ class OptRSSM(nn.Module):
         priors = StateDist(deter=deters, stoch=D.Discrete(logits=priors))
         posts = StateDist(deter=deters, stoch=D.Discrete(logits=posts))
         return Output(states, posts, priors), states[-1]
+
+    @torch.jit.ignore
+    def imagine(
+        self,
+        act: Tensor,
+        h_0: State,
+        sample: bool = True,
+    ):
+        assert sample
+        act = over_seq(self._img_in_a)(act)
+        deters, stochs, priors = self._imagine(act, h_0.deter, h_0.stoch)
+        states = State(deters, stochs)
+        priors = StateDist(deter=deters, stoch=D.Discrete(logits=priors))
+        return Output(states, None, priors), states[-1]
+
+    @torch.jit.ignore
+    def obs_step(self, state: State, act: Tensor, next_obs: Tensor):
+        next_obs = self._obs_out_o(next_obs)
+        act = self._img_in_a(act)
+        deter, logits = self._obs_step(state.deter, state.stoch, act, next_obs)
+        stoch = D.Discrete(logits=logits)
+        return StateDist(deter=deter, stoch=stoch)
+
+    @torch.jit.ignore
+    def img_step(self, state: State, act: Tensor):
+        act = self._img_in_a(act)
+        deter, logits = self._img_step(state.deter, state.stoch, act)
+        stoch = D.Discrete(logits=logits)
+        return StateDist(deter=deter, stoch=stoch)
 
     @torch.jit.export
     def _observe(self, obs, act, deter, stoch):
@@ -329,26 +367,28 @@ class OptRSSM(nn.Module):
             torch.stack(posts),
         )
 
-    @torch.jit.ignore
-    def obs_step(self, state: State, act: Tensor, next_obs: Tensor):
-        next_obs = self._obs_out_o(next_obs)
-        act = self._img_in_a(act)
-        deter, logits = self._obs_step(state.deter, state.stoch, act, next_obs)
-        stoch = D.Discrete(logits=logits)
-        return StateDist(deter=deter, stoch=stoch)
+    @torch.jit.export
+    def _imagine(self, act, deter, stoch):
+        deters: List[Tensor] = []
+        stochs: List[Tensor] = []
+        priors: List[Tensor] = []
+
+        act_ = act.unbind(0)
+        for t in range(len(act)):
+            deter = self._img_cell(deter, stoch, act_[t])
+            prior = self._img_dist(deter)
+            stoch = self._discrete_sample(prior)
+            deters.append(deter)
+            stochs.append(stoch)
+            priors.append(prior)
+
+        return torch.stack(deters), torch.stack(stochs), torch.stack(priors)
 
     @torch.jit.export
     def _obs_step(self, deter, stoch, act, next_obs):
         deter = self._img_cell(deter, stoch, act)
         dist = self._obs_dist(deter, next_obs)
         return deter, dist
-
-    @torch.jit.ignore
-    def img_step(self, state: State, act: Tensor):
-        act = self._img_in_a(act)
-        deter, logits = self._img_step(state.deter, state.stoch, act)
-        stoch = D.Discrete(logits=logits)
-        return StateDist(deter=deter, stoch=stoch)
 
     @torch.jit.export
     def _img_step(self, deter, stoch, act):

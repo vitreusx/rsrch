@@ -183,6 +183,7 @@ rl:
       eps: 1e-8
   ppo: ~
   sac: ~
+  cem: ~
 
 stages:
   - prefill:

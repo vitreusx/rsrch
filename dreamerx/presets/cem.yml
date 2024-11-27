@@ -1,0 +1,29 @@
+cem:
+  base:
+    $extends: [atari.base]
+    wm:
+      type: dreamer
+      loader: dreamer_wm
+    rl:
+      type: cem
+      loader: ~
+      cem:
+        lookahead: 10
+        num_samples: 128
+        num_elites: 16
+        num_iters: 8
+    stages:
+      - prefill:
+          until: 20e3
+      - train_loop:
+          until: 400e3
+          tasks:
+            - do_wm_opt_step: ~
+              every: 4
+            - do_wm_val_step: ~
+              every: { n: 16, of: wm_opt_step }
+            - do_env_step
+      - do_val_epoch
+      - save_ckpt:
+          full: false
+          tag: final

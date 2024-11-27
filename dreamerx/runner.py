@@ -34,7 +34,7 @@ from . import adaptive, agent, config, data
 from . import rl as rl_
 from . import wm
 from .config import Config
-from .rl import a2c, ppo, sac
+from .rl import a2c, ppo, sac, cem
 from .wm import dreamer
 
 P = ParamSpec("P")
@@ -268,6 +268,9 @@ class Runner:
             )
             self.rl_iter = iter(self.rl_loader)
 
+        elif self.cfg.rl.loader is None:
+            self.rl_loader = None
+
     def _setup_wm(self):
         wm_type = self.cfg.wm.type
         if wm_type == "dreamer":
@@ -282,8 +285,12 @@ class Runner:
             self.wm = self.wm.to(self.device)
 
     def _setup_rl(self):
-        self.rl_obs_space = getattr(self.rl_loader, "obs_space", self.sdk.obs_space)
-        self.rl_act_space = getattr(self.rl_loader, "act_space", self.sdk.act_space)
+        if self.rl_loader is None:
+            self.rl_obs_space = self.sdk.obs_space
+            self.rl_act_space = self.sdk.act_space
+        else:
+            self.rl_obs_space = getattr(self.rl_loader, "obs_space", self.sdk.obs_space)
+            self.rl_act_space = getattr(self.rl_loader, "act_space", self.sdk.act_space)
 
         rl_type = self.cfg.rl.type
         if rl_type == "a2c":
@@ -295,28 +302,46 @@ class Runner:
         elif rl_type == "ppo":
             rl_cfg = self.cfg.rl.ppo
             self.actor = ppo.Actor(rl_cfg.actor, self.rl_obs_space, self.rl_act_space)
+        elif rl_type == "cem":
+            self.actor = None
         else:
             raise ValueError(rl_type)
 
-        self.actor = self.actor.to(self.device)
+        if self.actor is not None:
+            self.actor = self.actor.to(self.device)
 
         if self.cfg.rl.loader == "dreamer_rl":
             self.rl_loader.set_actor(self.actor)
             self.rl_val_loader.set_actor(self.actor)
 
     def _make_agent(self, mode: Literal["train", "val"]):
-        agent_ = rl_.Agent(
-            self.actor,
-            sample=(mode == "train"),
-            compute_dtype=self.compute_dtype,
-        )
-
-        if self.cfg.rl.loader == "dreamer_rl":
+        if self.cfg.rl.type == "cem":
+            agent_ = cem.Agent(
+                self.cfg.rl.cem,
+                self.wm,
+                self.compute_dtype,
+            )
             agent_ = wm.Agent(
                 agent_,
                 wm=self.wm,
                 compute_dtype=self.compute_dtype,
+                pass_tensors=False,
             )
+
+        else:
+            agent_ = rl_.Agent(
+                self.actor,
+                sample=(mode == "train"),
+                compute_dtype=self.compute_dtype,
+            )
+            if self.cfg.rl.loader == "dreamer_rl":
+                self.rl_loader: data.DreamerRLLoader
+                agent_ = wm.Agent(
+                    agent_,
+                    wm=self.wm,
+                    compute_dtype=self.compute_dtype,
+                    pass_tensors=self.rl_loader.return_tensors,
+                )
 
         noise = getattr(self.cfg, mode).agent_noise
         agent_ = agent.Agent(agent_, noise=noise, mode=mode)
@@ -427,6 +452,9 @@ class Runner:
                 compute_dtype=self.compute_dtype,
             )
 
+        elif rl_type == "cem":
+            self.rl_trainer = None
+
         else:
             raise ValueError(rl_type)
 
@@ -506,9 +534,12 @@ class Runner:
         tag: str | None = None,
     ):
         state = {}
+
         if self.wm is not None:
             state["wm"] = self.wm.state_dict()
-        state["actor"] = self.actor.state_dict()
+
+        if self.actor is not None:
+            state["actor"] = self.actor.state_dict()
 
         if full:
             if self.wm_trainer is not None:
@@ -547,13 +578,13 @@ class Runner:
         if should_load("wm") and self.wm is not None:
             self.wm.load_state_dict(state["wm"])
 
-        if should_load("actor"):
+        if should_load("actor") and self.actor is not None:
             self.actor.load_state_dict(state["actor"])
 
         if should_load("wm_trainer") and self.wm_trainer is not None:
             self.wm_trainer.load(state["wm_trainer"])
 
-        if should_load("rl_trainer"):
+        if should_load("rl_trainer") and self.rl_trainer is not None:
             self.rl_trainer.load(state["rl_trainer"])
 
         if should_load("repro"):
@@ -787,10 +818,11 @@ class Runner:
         )
         self.wm_trainer.opt_step(wm_output.loss)
 
-        self.rl_loader.to_recycle = (
-            wm_output.states.flatten(),
-            wm_batch.seq.term.flatten(),
-        )
+        if isinstance(self.rl_loader, data.DreamerRLLoader):
+            self.rl_loader.to_recycle = (
+                wm_output.states.flatten(),
+                wm_batch.seq.term.flatten(),
+            )
 
         if wm_batch.end_pos is not None:
             # Record final state values as the future h_0 values.
@@ -863,7 +895,7 @@ class Runner:
         pass
 
     def check_plasticity(self):
-        if hasattr(self.wm_trainer, "check_plasticity"):
+        if self.wm_trainer is not None and hasattr(self.wm_trainer, "check_plasticity"):
             with self.buf_mtx:
                 wm_batch = next(self.wm_val_iter)
 
@@ -879,7 +911,7 @@ class Runner:
             for k, v in wm_mets.items():
                 self.exp.add_scalar(f"plas/wm/{k}", v, step="wm_opt_step")
 
-        if hasattr(self.rl_trainer, "check_plasticity"):
+        if self.rl_trainer is not None and hasattr(self.rl_trainer, "check_plasticity"):
             with self.buf_mtx:
                 rl_batch = next(self.rl_val_iter)
 

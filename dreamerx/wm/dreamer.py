@@ -107,25 +107,25 @@ class WorldModel(nn.Module):
             nets.make_decoder(self.state_size, space, **kwargs),
         )
 
-    def reset(self, obs):
+    def reset(self, obs: Tensor):
         state = self.rssm.initial()
         state = state[None].expand(obs.shape[0], *state.shape)
         obs = self.obs_enc(obs.to(state.device))
         act = torch.zeros((obs.shape[0], self.act_size)).type_as(obs)
         return self.rssm.obs_step(state, act, obs)
 
-    def obs_step(self, state, act, next_obs):
+    def obs_step(self, state: rssm.State, act: Tensor, next_obs: Tensor):
         act = self.act_enc(act)
         next_obs = self.obs_enc(next_obs)
         return self.rssm.obs_step(state, act, next_obs)
 
-    def img_step(self, state, act):
+    def img_step(self, state: rssm.State, act: Tensor):
         return self.rssm.img_step(state, act)
 
     def observe(
         self,
         input: tuple[Tensor, Tensor],
-        h_0: list[Tensor | None],
+        h_0: list[rssm.State | None],
     ):
         obs_seq, act_seq = input
         enc_obs: Tensor = over_seq(self.obs_enc)(obs_seq)
@@ -133,9 +133,26 @@ class WorldModel(nn.Module):
 
         is_first = np.array([x is None for x in h_0])
         enc_act[0, is_first].zero_()
-        h_0 = torch.stack([self.rssm.initial() if x is None else x for x in h_0])
+        h_0 = torch.stack(
+            [self.rssm.initial() if x is None else x for x in h_0],
+        )
 
         return self.rssm((enc_obs, enc_act), h_0)
+
+    def imagine(
+        self,
+        act_seq: Tensor,
+        h_0: list[rssm.State | None],
+    ):
+        enc_act: Tensor = over_seq(self.act_enc)(act_seq)
+
+        is_first = np.array([x is None for x in h_0])
+        enc_act[0, is_first].zero_()
+        h_0 = torch.stack(
+            [self.rssm.initial() if x is None else x for x in h_0],
+        )
+
+        return self.rssm.imagine(enc_act, h_0)
 
     def as_tensor(self, state: rssm.State):
         return state.as_tensor()

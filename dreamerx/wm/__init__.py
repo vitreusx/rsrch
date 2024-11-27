@@ -43,6 +43,12 @@ class WorldModel(nn.Module):
         h_0: list[Tensor | None],
     ) -> tuple[Any, Tensor]: ...
 
+    def imagine(
+        self,
+        act_seq: Tensor,
+        h_0: list[Tensor | None],
+    ) -> tuple[Any, Tensor]: ...
+
 
 class Agent(gym.VecAgentWrapper):
     def __init__(
