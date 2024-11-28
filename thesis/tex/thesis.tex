@@ -84,7 +84,7 @@ There have, however, been efforts conducted to render learning the policy sample
 
 All these have resulted in significant improvements in terms of sample efficiency. Many of these innovations have been developed independent of each other, however, and in many cases are orthogonal, meaning it is possible to envision a single RL agent combining many such strategies and modifications, possibly capable of reaching even higher performance than standalone algorithms. A similar feat has been achieved by the Rainbow agent \autocite{hesselRainbowCombiningImprovements2017}, which augments a base RL architecture DQN \autocite{mnihHumanlevelControlDeep2015} with an array of small modifications, which turn out to provide significant boost to the base agent in terms of final performance. Works such as BBF \autocite{schwarzerBiggerBetterFaster2023} have shown, that such an approach can also be used to increase sample efficiency of the agents, in the model-free scenario.
 
-The goal of this thesis is to investigate whether this can be achieved for sample-efficient model-based RL. To be precise, our goal is to take a model-based architecture, originally not designed with data efficiency in mind, and use the ideas developed in other works, mostly in the context of model-free RL, to see whether one can achieve significant performance benefits without any major architectural interventions. Specifically, we base our work on DreamerV2 \autocite{hafnerMasteringAtariDiscrete2022}, which has been developed for the Atari-200m benchmark \cite{bellemareArcadeLearningEnvironment2013}, with a set of 55 Atari games and a time limit of $200 \times 10^6$ environment steps. So far, it has not been studied, whether recently proposed SOTA improvements in sample efficiency are suitable in a model-based setting.
+The goal of this thesis is to investigate whether this can be achieved for sample-efficient model-based RL. To be precise, our goal is to take a model-based architecture, originally not designed with data efficiency in mind, and use the ideas developed in other works, mostly in the context of model-free RL, to see whether one can achieve significant performance benefits without any major architectural interventions. Specifically, we base our work on DreamerV2 \autocite{hafnerMasteringAtariDiscrete2022}, which has been developed for the Atari-200m benchmark \cite{bellemareArcadeLearningEnvironment2013}, with a set of 55 Atari games and a time limit of $200 \times 10^6$ environment steps. So far, it has not been studied, whether recently proposed SOTA improvements in sample efficiency are suitable in a model-based setting. Compared with the next iteration DreamerV3, which achieves sample efficiency through scaling the world model and applying robustness techniques based on e.g. reward normalization, we attempt to develop a more general approach for creating sample-efficient agents, with plug-and-play features that can be used across different world model designs.
 
 In summary, our principal contributions are:
 
@@ -587,46 +587,6 @@ To further examine the behavior of the agent throughout the optimization process
   \label{fig:train_v_perf}
 \end{figure}
 
-\subsection{Plasticity analysis}
-
-A number of works have identified the phenomenon of plasticity loss, meaning the inability of neural networks to learn from more recent data samples in the continual learning setting, as a possible culprit in the degradation of the RL agent performance \autocite{julianiStudyPlasticityLoss2024,nikishinPrimacyBiasDeep2022,lyleUnderstandingPlasticityNeural2023}. It might prove fruitful to investigate, whether something similar happens in the case of model-based RL, and specifically the agents based on Dreamer algorithm.
-
-\subsubsection{Plasticity loss check}
-
-In the first order, we would like to perform a ``post hoc'' test of plasticity loss - the results will not allow us to monitor the occurence of the phenomenon \emph{during} training, but will show whether the degradation has occured.
-
-\paragraph{Setup} We follow the strategy of \autocite{julianiStudyPlasticityLoss2024}, wherein an agent is trained \emph{warm-started}, i.e. starting from the neural network parameters of a previously trained agent. In that study, the process is repeated $10$ times. Due to computational constraints, we only perform a single repetition. Also, the environments under investigation there were drawn from the Coinrun suite of randomized environment. As we are interested in Atari tasks, and there is no standard way to randomize the environment - the idea of changing the Atari game does not work due to different action spaces, meaning different agent architectures are required - we devise a custom randomization scheme for Atari. At the start of the training run, we choose (1) a particular permutation $\sigma$ of actions, meaning an action $a \in \{0, \ldots, A - 1\} =: \mathcal{A}$ is mapped to $\sigma(a) \in \mathcal{A}$; (2) with probability $50\%$, whether to flip horizontally all the video frames; (3) with probability $50\%$, whether to flip vertically all the video frames. These randomizations have been selected in order to ensure, that the warm-started agent approximately achieves the performance of a random agent, and that the observation and action statistics, e.g. the mean and standard deviation of the pixel values, remain the same.
-
-The training recipe follows the reference test with the default DreamerV2 settings and an environment step budget of $6 \times 10^6$, also used to compare the Pytorch and Tensorflow implementations (\autoref{fig:torch_v_ref}). The choice is motivated by the smaller variance of the results compared to the time horizon of $400 \times 10^3$ used for the other experiments, making the interpretation of the results easier. We load a checkpoint from a baseline test (\autoref{sec:baseline}) with the update ratio value of $K = 1$, representing the checkpoints most affected by the primary bias. The environment used during the training run corresponding to the checkpoint is the same, but it is randomized, and we change the RNG seeds to introduce further randomization.
-
-\paragraph{Results} The comparison of the warm-started and randomly-initialized agents (\autoref{fig:plas_check}) reveals, that, at least in some instances, the agents experience plasticity loss. To be specific, for \env{Assault} and \env{CrazyClimber}, we see either negligible or small impairment in terms of performance, whereas the effect is far more substantial for \env{MsPacman}. These findings are consistent with the analysis of the loss curves, since we have observed the stalling of the training process to be most pronounced for \env{MsPacman}. Since the degradation cannot realistically be caused by increased difficulty of the setting, having merely applied action permutations and random flips, we can only conclude that the underlying cause is primary bias.
-
-\paragraph{Conclusions} Heavily overoptimized agents can be affected by plasticity loss. The effect is, however, not consistent.
-
-\begin{figure}
-  \centering
-  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/plas_check.pdf}
-  \caption{A comparison of the validation scores for the warm-started agents, and the ones with parameters initialized randomly. The lines show the mean and the standard deviation of agent validation scores, measured across 5 RNG seeds.}
-  \label{fig:plas_check}
-\end{figure}
-
-\subsubsection{Metrics related to plasticity loss}
-
-A number of factors have been recognized as being potentially indicative of plasticity loss. We follow suggestion of \autocite{julianiStudyPlasticityLoss2024} to test weight magnitude increase and the number of dead activation units, the latter being the number of activation units which have saturated, e.g. never produce non-negative outputs for ReLU units.
-
-We will specifically look at the relationship between these values at the end of training run for the source checkpoint, and the performance in the randomized setting. We find (\autoref{fig:plas_check_metrics}) no clear correlation between these metrics and the performance achieved in the warm-started training run. This appears consistent with prior work \autocite{lyleUnderstandingPlasticityNeural2023}, in which various plausible explanations of why neural networks may lose the ability to fit new targets over time have been found to lack explanatory power.
-
-\begin{figure}
-  \centering
-  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/plas_check.metrics.pdf}
-  \caption{Relationship between plasticity-related metrics and agent performance. Rows represent metrics used, while the columns represent the different components (neural networks) measured. The $x$-axis represents agent performance normalized by the mean score achieved in a non-warm-started setting. The $y$-axis represents values of the particular metrics.}
-  \label{fig:plas_check_metrics}
-\end{figure}
-
-\subsubsection{A comment on the possible interventions}
-
-In works such as \autocite{doroSampleEfficientReinforcementLearning2022,schwarzerBiggerBetterFaster2023}, periodic resets of the parameters have been used with great effect to counteract the plasticity loss. Although an auto-reset scheme may perhaps be possible to construct, we consider such an investigation to be out-of-scope for this thesis, due to aforementioned lack of clear indicators of it occuring. Thus, due to the extent of required hyperparameter optimization and the inability to reduce it through automated methods, we decide not to pursue adding periodic resets to the developed agent.
-
 \section{Auto-tuning update frequencies}
 
 The findings in \autoref{ssec:wm_analysis} suggest, that model validation loss cannot be directly used for the purposes of guiding the optimization process. There exist, however, works doing precisely that, which demands a further inquiry.
@@ -896,6 +856,46 @@ With this in mind, we will now proceed with an experiment, wherein we will set t
   \caption{A comparison of the final validation scores for the agent using CEM-based planner, and the baseline using A2C. Each subplot represents the results for a single environment. In each subplot, results for different values of model/RL update ratio $K$ are grouped together. Each group contains a box, signifying the mean and the standard deviation evaluated across $5$ training runs, for the CEM-based and A2C-based variants.}
   \label{fig:cem_base}
 \end{figure}
+
+\section{Plasticity analysis}
+
+A number of works have identified the phenomenon of plasticity loss, meaning the inability of neural networks to learn from more recent data samples in the continual learning setting, as a possible culprit in the degradation of the RL agent performance \autocite{julianiStudyPlasticityLoss2024,nikishinPrimacyBiasDeep2022,lyleUnderstandingPlasticityNeural2023}. It might prove fruitful to investigate, whether something similar happens in the case of model-based RL, and specifically the agents based on Dreamer algorithm.
+
+\subsection{Plasticity loss check}
+
+In the first order, we would like to perform a ``post hoc'' test of plasticity loss - the results will not allow us to monitor the occurence of the phenomenon \emph{during} training, but will show whether the degradation has occured.
+
+\paragraph{Setup} We follow the strategy of \autocite{julianiStudyPlasticityLoss2024}, wherein an agent is trained \emph{warm-started}, i.e. starting from the neural network parameters of a previously trained agent. In that study, the process is repeated $10$ times. Due to computational constraints, we only perform a single repetition. Also, the environments under investigation there were drawn from the Coinrun suite of randomized environment. As we are interested in Atari tasks, and there is no standard way to randomize the environment - the idea of changing the Atari game does not work due to different action spaces, meaning different agent architectures are required - we devise a custom randomization scheme for Atari. At the start of the training run, we choose (1) a particular permutation $\sigma$ of actions, meaning an action $a \in \{0, \ldots, A - 1\} =: \mathcal{A}$ is mapped to $\sigma(a) \in \mathcal{A}$; (2) with probability $50\%$, whether to flip horizontally all the video frames; (3) with probability $50\%$, whether to flip vertically all the video frames. These randomizations have been selected in order to ensure, that the warm-started agent approximately achieves the performance of a random agent, and that the observation and action statistics, e.g. the mean and standard deviation of the pixel values, remain the same.
+
+The training recipe follows the reference test with the default DreamerV2 settings and an environment step budget of $6 \times 10^6$, also used to compare the Pytorch and Tensorflow implementations (\autoref{fig:torch_v_ref}). The choice is motivated by the smaller variance of the results compared to the time horizon of $400 \times 10^3$ used for the other experiments, making the interpretation of the results easier. We load a checkpoint from a baseline test (\autoref{sec:baseline}) with the update ratio value of $K = 1$, representing the checkpoints most affected by the primary bias. The environment used during the training run corresponding to the checkpoint is the same, but it is randomized, and we change the RNG seeds to introduce further randomization.
+
+\paragraph{Results} The comparison of the warm-started and randomly-initialized agents (\autoref{fig:plas_check}) reveals, that, at least in some instances, the agents experience plasticity loss. To be specific, for \env{Assault} and \env{CrazyClimber}, we see either negligible or small impairment in terms of performance, whereas the effect is far more substantial for \env{MsPacman}. These findings are consistent with the analysis of the loss curves, since we have observed the stalling of the training process to be most pronounced for \env{MsPacman}. Since the degradation cannot realistically be caused by increased difficulty of the setting, having merely applied action permutations and random flips, we can only conclude that the underlying cause is primary bias.
+
+\paragraph{Conclusions} Heavily overoptimized agents can be affected by plasticity loss. The effect is, however, not consistent.
+
+\begin{figure}
+  \centering
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/plas_check.pdf}
+  \caption{A comparison of the validation scores for the warm-started agents, and the ones with parameters initialized randomly. The lines show the mean and the standard deviation of agent validation scores, measured across 5 RNG seeds.}
+  \label{fig:plas_check}
+\end{figure}
+
+\subsection{Metrics related to plasticity loss}
+
+A number of factors have been recognized as being potentially indicative of plasticity loss. We follow suggestion of \autocite{julianiStudyPlasticityLoss2024} to test weight magnitude increase and the number of dead activation units, the latter being the number of activation units which have saturated, e.g. never produce non-negative outputs for ReLU units.
+
+We will specifically look at the relationship between these values at the end of training run for the source checkpoint, and the performance in the randomized setting. We find (\autoref{fig:plas_check_metrics}) no clear correlation between these metrics and the performance achieved in the warm-started training run. This appears consistent with prior work \autocite{lyleUnderstandingPlasticityNeural2023}, in which various plausible explanations of why neural networks may lose the ability to fit new targets over time have been found to lack explanatory power.
+
+\begin{figure}
+  \centering
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/plas_check.metrics.pdf}
+  \caption{Relationship between plasticity-related metrics and agent performance. Rows represent metrics used, while the columns represent the different components (neural networks) measured. The $x$-axis represents agent performance normalized by the mean score achieved in a non-warm-started setting. The $y$-axis represents values of the particular metrics.}
+  \label{fig:plas_check_metrics}
+\end{figure}
+
+\subsection{A comment on the possible interventions}
+
+In works such as \autocite{doroSampleEfficientReinforcementLearning2022,schwarzerBiggerBetterFaster2023}, periodic resets of the parameters have been used with great effect to counteract the plasticity loss. Although an auto-reset scheme may perhaps be possible to construct, we consider such an investigation to be out-of-scope for this thesis, due to aforementioned lack of clear indicators of it occuring. Thus, due to the extent of required hyperparameter optimization and the inability to reduce it through automated methods, we decide not to pursue adding periodic resets to the developed agent. It is, however, an interesting avenue for further improvements in terms of sample efficiency of MBRL agents.
 
 \section{Combining the improvements}
 
