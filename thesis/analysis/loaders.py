@@ -488,3 +488,25 @@ def final_dreamerv2_loader():
     res_df = pd.DataFrame.from_records(res_df)
 
     return res_df, scalars
+
+
+def mpc_base_loader():
+    results_dir = Path("../results/mpc/base")
+    scalars = TBScalars(".cache/mpc/base")
+
+    res_df = []
+    for test in tqdm([*results_dir.iterdir()]):
+        params = test.name.split("-")
+        test_r = {}
+        test_r["env"] = params[0]
+        types = {"ratio": int, "seed": int}
+        for (name, typ), value in zip(types.items(), params[1:]):
+            test_r[name] = typ(value.removeprefix(f"{name}="))
+        df = scalars.read(test)
+        final_val = df[df["tag"] == "val/mean_ep_ret"].iloc[-1]
+        if final_val["step"] >= 400e3:
+            test_r["score"] = final_val["value"]
+            res_df.append({"path": test, **test_r})
+    res_df = pd.DataFrame.from_records(res_df)
+
+    return res_df, scalars

@@ -222,11 +222,12 @@ Aside from the world model itself, the other major component of the architecture
 
 Thus, ideally there needs to be an option for the RL module to use the world model actively, in order to support planning-based methods. It also needs to be possible to take any model-free RL algorithm, and be able to use it in the framework, possibly with some small modifications to account for the model-based setting.
 
-In our tests, we will start with the RL algorithm supplied in the DreamerV2, namely a variant of Advantage Actor-Critic (A2C). Thus, our starting point will be an agent analogous to DreamerV2, with the same world model and RL algorithm. We shall examine the effect of replacing aforementioned module with two model-free algorithms: Soft Actor-Critic (SAC) and Proximal Policy Optimization (PPO). The choice is motivated by following factors:
+In our tests, we will start with the RL algorithm supplied in the DreamerV2, namely a variant of Advantage Actor-Critic (A2C). Thus, our starting point will be an agent analogous to DreamerV2, with the same world model and RL algorithm. We shall examine the effect of replacing aforementioned module with three model-free algorithms: Soft Actor-Critic (SAC), Proximal Policy Optimization (PPO) and Cross-Entropy Method (CEM). The choice is motivated by following factors:
 
 \begin{enumerate}
   \item Since the original RL algorithm in DreamerV2 uses, for Atari environments, vanilla policy gradients with Generalized Advantage Estimation, the most straightforward way to improve upon it is to replace it with an improved policy-gradient-based algorithm. We select PPO due to high performance and the ability to reuse simulated data, possibly increasing the overall computational performance.
-  \item Beyond that, we would like to investigate the behavior of $Q$-learning algorithms in a model-based setting. We select SAC as a strong baseline.
+  \item We would like to investigate the behavior of $Q$-learning algorithms in a model-based setting. We select SAC as a strong baseline.
+  \item To assess the performance of Model Predictive Control in the Atari setting, we opt to test CEM, being the algorithm used by \autocite{hafnerLearningLatentDynamics2019} for continous control from image input in the DeepMind Control environments.
 \end{enumerate}
 
 \subsection{Training recipes}
@@ -402,7 +403,7 @@ We provide implementations of DreamerV2's world model and RL algorithm - a varia
 
 As none of the considered options proved either usable as a Python package, or clear enough to ``copy-paste'' into the framework in the form of a standalone module, as described above, we have decided it would be better to reimplement it ourselves. Beyond merely replicating the Tensorflow code, we have added the ability to specify and change the encoder and decoder architectures for observations, rewards and termination signals. During development process, we have also found, that the eager-evaluation nature of Pytorch hurts the performance, compared to Tensorflow implementation, which uses JIT. Thus, we have also implemented a {\tt torch.jit.script} version of the Recurrent State Space Module in PyTorch, which has increased the number of iterations per second by $25 \%$.
 
-Also, we provide implementations of two model-free algorithms: Proximal Policy Optimization (PPO) and Soft Actor-Critic (SAC). We base our implementations on the ones found in \href{https://github.com/vwxyzjn/cleanrl}{\tt vwxyzjn/cleanrl}, with a number of changes made to make them usable in the model-based context:
+Also, we provide implementations of three model-free algorithms: Proximal Policy Optimization (PPO) \autocite{schulmanProximalPolicyOptimization2017}, Soft Actor-Critic (SAC) \autocite{haarnojaSoftActorCriticOffPolicy2018} and Cross-Entropy Method (CEM) \autocite{deboerTutorialCrossEntropyMethod2005}. We base our implementations of the first two on the ones found in \href{https://github.com/vwxyzjn/cleanrl}{\tt vwxyzjn/cleanrl}, with a number of changes made to make them usable in the model-based context:
 
 \begin{enumerate}
   \item The implementation of SAC used a one-step TD target $y = r + \gamma V(s')$. In order to bring it in line with PPO and A2C, we change it to Generalized Advantage Estimation (GAE) \autocite{schulmanHighDimensionalContinuousControl2018}.
@@ -748,7 +749,7 @@ So far, all the experiments have used the default RL module of DreamerV2, namely
 
 \subsection{Algorithmic details}
 
-In order to be able to explain the design of the experiments, we need to briefly explain how SAC and PPO work. For detailed exposition, we refer the reader to \autocite{haarnojaSoftActorCriticOffPolicy2018} and \autocite{schulmanProximalPolicyOptimization2017} respectively.
+In order to be able to explain the design of the experiments, we need to briefly explain how SAC, PPO and CEM work. For detailed exposition of SAC and PPO, we refer the reader to \autocite{haarnojaSoftActorCriticOffPolicy2018} and \autocite{schulmanProximalPolicyOptimization2017} respectively.
 
 \subsubsection{Soft Actor-Critic}
 
@@ -791,6 +792,10 @@ Crucially, the data can be reused. The action probabilities are computed once be
 \subsubsection{Advantage Actor-Critic}
 
 A2C behaves essentially like PPO with $N = M = 1$.
+
+\subsubsection{Cross-Entropy Method}
+
+Cross-Entropy Method, in the context of optimization, iteratively refines a distribution of possible actions by (1) sampling $J$ action sequences $a_{t+1:T+H}$ of length $H$ from current distribution, (2) evaluating them by computing $\sum_k r_{t+k}$ with the world model, (3) selecting $K$ best-scoring action sequences (also known as \emph{elites}), and (4) adjusting action sequence distribution to  maximize data probability $\prod p(x)$ of observing the elites. This process is repeated a number of iterations $I$ times. Then, the agent acts according to the final action distribution of the first action $a_{t+1}$. At validation time, most likely action is taken.
 
 \subsection{PPO Experiments}
 
@@ -879,6 +884,19 @@ With this in mind, we will now proceed with an experiment, wherein we will set t
   \label{fig:sac_ent_sched}
 \end{figure}
 
+\subsection{CEM Experiments}
+
+\paragraph{Setup} We base the experiment off of the baseline setup (\autoref{sec:baseline}), and replace the RL module with CEM-based planning module. Thus, the training of the RL module is unnecessary, and the agent performs a planning phase for every interaction. The configuration is fixed, with horizon length $H = 12$, optimization iterations of $I = 10$, candidate sample count of $J = 128$ and elite population of $K = 16$. We perform two sets of tests, with different values of the model/RL update ratio: $K_{\rm WM} = K_{\rm RL} = 4$ and $K_{\rm WM} = K_{\rm RL} = 8$.
+
+\paragraph{Results} The comparison of the final validation scores (\autoref{fig:cem_base}) reveals, that the substition of the RL module by a CEM planner significantly degrades the performance of the agents on the three Atari games tested.
+
+\begin{figure}
+  \centering
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/cem_base.pdf}
+  \caption{A comparison of the final validation scores for the agent using CEM-based planner, and the baseline using A2C. Each subplot represents the results for a single environment. In each subplot, results for different values of model/RL update ratio $K$ are grouped together. Each group contains a box, signifying the mean and the standard deviation evaluated across $5$ training runs, for the CEM-based and A2C-based variants.}
+  \label{fig:cem_base}
+\end{figure}
+
 \section{Combining the improvements}
 
 Our experiments have singled out two major avenues for improvement, insofar as the agent performance is concerned: the adaptive update ratio schema, and the use of PPO instead of the default A2C. We have, however, tested them in isolation. It remains for us to see what happens if we employ them all at once. We shall also see the effect of these ablations on the 23 unseen environments.
@@ -926,7 +944,9 @@ Now, we are in the position to perform the complete Atari-100k benchmark, consis
 
 \paragraph{Results} The comparison  can be found in \autoref{tab:atari_100k_scores}. We compare our agent's performance with a selection of sample-efficient architectures, both model-based (SimPLe, TWM, IRIS, DreamerV3), model-free (SR-SPR, BBF) and utilizing look-ahead search (EfficientZero). The per-environment and aggregate human-normalized median and mean scores have been taken from \autocite{hafnerMasteringDiverseDomains2024} and \autocite{schwarzerBiggerBetterFaster2023}.
 
-Overall, the agent does not attain state-of-the-art performance, but, we argue, it performs better than might perhaps be expected. If we look at the human-normalized mean scores, we can see, that our method reaches performance comparable with Transformer-based IRIS model, and exceeding TWM. The human-normalized \emph{median} performance, however, lags significantly behind DreamerV3 or BBF.
+Overall, the agent does not attain state-of-the-art performance, but, we argue, it performs better than might perhaps be expected. If we look at the human-normalized mean scores, we can see, that our method reaches performance comparable with Transformer-based IRIS model, and exceeding TWM, significantly smaller compute requirements. We also attain highest performance of all the games tested on two environments (\env{Freeway} and \env{Krull}).
+
+Compared with the base DreamerV2, with a time budget of $200 \times 10^6$ frames (\autoref{fig:dreamerv2_curves}), we reach the performance of the original agent at $3 \times 10^6$ environment steps, indicating an overall speedup of $7.5 \times$. Notably, the speedup factor is the same for both human-normalized mean and median scores, which helps explain the disparity between the mean and the median performance - even with a budget of $200 \times 10^6$, being $500\times$ higher than is the case for Atari-100k, the human-normalized median performance is only $\approx 1.8$, and the median performance of BBF is reached at $\approx 23 \times 10^6$ environment steps. With a different underlying world model, the median performance could be improved; our framework makes such ablations easy to conduct.
 
 \begin{table}
   \centering
@@ -937,7 +957,14 @@ Overall, the agent does not attain state-of-the-art performance, but, we argue, 
   \label{tab:atari_100k_scores}
 \end{table}
 
-We also publish the validation score curves (\autoref{fig:atari_100k_curves}). On some tasks, such as \env{ChopperCommand}, \env{DemonAttack}, \env{PrivateEye} or \env{UpNDown}, the agent appears to act almost randomly. In fact, for \env{PrivateEye}, the normalized performance is \emph{negative}. For this environment and \env{ChopperCommand}, the cause appears to be overall inferior performance of base DreamerV2 world model on these. In most cases, though, the agents do not necessarily collapse - the progress is steady, but merely slow, as evidenced by the median normalized score.
+\begin{figure}
+  \centering
+  \includegraphics[width=\figurewidth,height=\figureheight,keepaspectratio]{assets/dreamerv2_curves.pdf}
+  \caption{Validation score curves for base DreamerV2 agent, with a time budget of $200 \times 10^6$ frames. Two subplots are present: for human-normalized mean performance, and human-normalized median performance. \emph{Note:} The $x$-axis is logarithmic}
+  \label{fig:dreamerv2_curves}
+\end{figure}
+
+We also publish the validation score curves (\autoref{fig:atari_100k_curves}). On some tasks, such as \env{ChopperCommand}, \env{DemonAttack}, \env{PrivateEye} or \env{UpNDown}, the agent appears to act almost randomly. In fact, for \env{PrivateEye}, the normalized performance is \emph{negative}. For this environment and \env{ChopperCommand}, the cause appears to be overall inferior performance of base DreamerV2 world model on these. In most cases, though, the agents do not necessarily collapse - the progress is steady, but merely slow, as indicated by the low median normalized score.
 
 \begin{figure}
   \centering
