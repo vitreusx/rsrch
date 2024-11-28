@@ -495,6 +495,10 @@ Since the original implementation of DreamerV2 is written in Tensorflow, we have
   \label{fig:torch_v_ref}
 \end{figure}
 
+\subsection{Evaluation protocols in Atari-100k benchmark}
+
+A significant part of the setup is the agent evaluation protocol. To date, there is no standardized way to assess agent's performance in Atari-100k benchmark. Of the recent state-of-the-art architectures, DreamerV3 does not appear to use any post-training evaluation episodes, BBF and SimPLe do not specify the evaluation setup used, and IRIS, along with SR-SPR, use 100 evaluation trajectories, following \autocite{agarwalDeepReinforcementLearning2022}. Because we also measure validation performance throughout training, to avoid excessive impact of performing evaluation on training time, we choose the number of 32 evaluation episodes for measuring agent's performance.
+
 \section{Training recipe optimization}
 
 In the first order, we will investigate the training recipe-level optimizations, specifically tuning the data-to-update ratio. The rationale is to find the optimal update-to-data regime, and to establish a baseline for further analysis.
