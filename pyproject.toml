@@ -35,7 +35,7 @@ optax = { version = "^0.2.2", optional = true }
 jmp = { git = "https://github.com/google-deepmind/jmp", optional = true }
 opencv-python = "^4.9.0.80"
 torch = "^2.3"
-torchvision = "^0.18"
+torchvision = ">=0.15.0"
 lpips = "^0.1.4"
 fast-pytorch-kmeans = "^0.2.0.1"
 fvcore = "^0.1.5.post20221221"
