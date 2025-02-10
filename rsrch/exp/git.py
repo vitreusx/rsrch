@@ -10,7 +10,7 @@ yaml = YAML(typ="safe", pure=True)
 
 def create_exp_commit(run: str) -> str:
     """Create a commit for an experiment in a separate branch named
-    `exp/{branch}`, where {branch} is the current branch name."""
+    `exp/{branch}`, where `branch` is the current branch name."""
 
     repo = git.Repo(Path(__file__).parent, search_parent_directories=True)
 
@@ -50,6 +50,7 @@ def create_exp_commit(run: str) -> str:
 
 
 def head_commit() -> str | None:
+    """Get a SHA for the current HEAD, if the repo is not dirty. Otherwise, return `None`."""
     repo = git.Repo(Path(__file__).parent, search_parent_directories=True)
     if not repo.is_dirty():
         return repo.head.object.hexsha
@@ -58,7 +59,9 @@ def head_commit() -> str | None:
 def main():
     import argparse
 
-    p = argparse.ArgumentParser()
+    p = argparse.ArgumentParser(
+        description="A script with exp-branch-related utilities.",
+    )
     p.add_argument(
         "--reset",
         action="store_true",

@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
 from typing import Callable, ParamSpec, TypeVar
@@ -5,15 +6,27 @@ from typing import Callable, ParamSpec, TypeVar
 import torch
 from torch.profiler import ProfilerActivity, profile, schedule
 
-P, R = ParamSpec("P"), TypeVar("R")
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+@dataclass
+class Schedule:
+    wait: int
+    warmup: int
+    active: int
+    repeat: int = 0
+    skip_first: int = 0
 
 
 class Profiler:
+    """A profiler for Torch. Basically a (hopefully) easy-to-use wrapper around `torch.profiler` stuff."""
+
     def __init__(
         self,
         device: torch.device,
         traces_dir: str | Path,
-        schedule: dict,
+        schedule: Schedule,
         options: dict | None = None,
         enabled: bool = True,
     ):
@@ -61,7 +74,7 @@ class Profiler:
 
             with profile(
                 activities=self._activities,
-                schedule=schedule(**self.schedule),
+                schedule=schedule(**vars(self.schedule)),
                 on_trace_ready=on_trace_ready,
                 **self.options,
             ) as prof:

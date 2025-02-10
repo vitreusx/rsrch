@@ -4,10 +4,6 @@ import torch.nn.functional as F
 from fast_pytorch_kmeans import KMeans
 from torch import Tensor, nn
 
-import rsrch.distributions as D
-
-from .utils import pass_gradient
-
 
 class VQLayer(nn.Module):
     def __init__(

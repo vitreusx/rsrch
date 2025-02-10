@@ -8,6 +8,8 @@ from .rewrite import rewrite_module_
 
 
 class NoisyLinear(nn.Module):
+    """A noisy-linear layer, introduced in [Noisy Networks for Exploration](http://arxiv.org/abs/1706.10295) by Fortunato et al."""
+
     def __init__(
         self,
         in_features: int,

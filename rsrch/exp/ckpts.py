@@ -1,29 +1,7 @@
-import copyreg
 import os
 import pickle
-import shutil
 import tempfile
 import zipfile
-
-import numpy as np
-
-
-def _from_reduce(ctor, args, state=None, items=None, kvpairs=None, setstate=None):
-    x = ctor(*args)
-    if state is not None:
-        if setstate is None:
-            setstate = type(x).__setstate__
-        setstate(x, state)
-    if items is not None:
-        if hasattr(x, "extend"):
-            x.extend(items)
-        else:
-            for item in items:
-                x.append(item)
-    if kvpairs is not None:
-        for k, v in kvpairs:
-            x[k] = v
-    return x
 
 
 def reduce(x):

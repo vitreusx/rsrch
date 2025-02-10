@@ -10,107 +10,174 @@ T = TypeVar("T")
 
 
 def cast(x: Any, t: Type[T]) -> T:
+    """Cast a value into a given type."""
+
+    orig_t = t
     t_args = get_args(t)
     t = get_origin(t) or t
 
     if t == Any:
         return x
 
+    elif t in (int, float, str):
+        return x if isinstance(x, t) else t(x)
+
     elif t in (None, type(None)):
-        if x is not None:
-            raise ValueError(f"Value is not None")
-        return None
-
-    elif is_dataclass(t):
-        if not isinstance(x, dict):
-            raise ValueError(f"Cannot convert non-dict to a dataclass.")
-
-        provided = set(x)
-        allowed = {field.name for field in fields(t)}
-        required = {
-            field.name
-            for field in fields(t)
-            if field.default == MISSING and field.default_factory == MISSING
-        }
-
-        extraneous = provided.difference(allowed)
-        if len(extraneous) > 0:
-            raise ValueError(f"Provided extraneous parameters: {extraneous}")
-
-        missing = required.difference(provided)
-        if len(missing) > 0:
-            raise ValueError(f"Missing parameters: {missing}")
-
-        args = {}
-        field_map = {field.name: field for field in fields(t)}
-
-        for name in x:
-            field = field_map[name]
-            field_t = field.type
-            if isinstance(field_t, str):
-                field_t = eval(field_t)
-
-            try:
-                args[field.name] = cast(x[field.name], field_t)
-            except Exception as e:
-                raise ValueError(
-                    f"Cannot cast value for {name}. Error:\n" + indent(str(e), " " * 2)
-                )
-
-        return t(**args)
+        raise ValueError("Value is not None") from None
 
     elif t in (typing.Union, typing.Optional, types.UnionType):
-        for ti in t_args:
-            ti_ = get_origin(ti) or ti
-            if isinstance(ti_, type) and isinstance(x, ti_):
+        for var_t in t_args:
+            var_t = get_origin(var_t) or var_t
+            if isinstance(var_t, type) and isinstance(x, var_t):
                 return x
 
         errors = []
-        for ti in t_args:
+        for var_t in t_args:
             try:
-                return cast(x, ti)
+                return cast(x, var_t)
             except Exception as e:
                 errors.append(e)
                 pass
 
-        lines = [f"Value cannot be cast into any of the variant types. Errors:"]
-        for ti, err in zip(t_args, errors):
-            lines.append(f"- for {ti}:")
-            lines.append(indent(f"{err}", " " * 4))
+        lines = ["Cannot convert value to any of the following types:"]
+        for idx, (ti, err) in enumerate(zip(t_args, errors)):
+            lines.append(f"(#{idx}) as {ti}:")
+            lines.append(indent(str(err), " " * 2))
 
-        raise ValueError("\n".join(lines))
+        raise ValueError("\n".join(lines)) from None
 
     elif t in (typing.Tuple, tuple):
-        return tuple([cast(xi, ti) for xi, ti in zip(x, t_args)])
+        x_len, t_len = len(x), len(t_args)
+        if t_args[-1] == ...:
+            t_args = [*t_args[:-2], *(t_args[-2] for _ in x_len - (t_len - 2))]
+            t_len = len(t_args)
+
+        if len(x) != len(t_args):
+            raise ValueError(f"Tuple length is incorrect") from None
+
+        values = []
+        for idx, (xi, ti) in enumerate(zip(x, t_args)):
+            try:
+                values.append(cast(xi, ti))
+            except Exception as e:
+                lines = [
+                    f"Casting element #{idx} to {ti} raised error:",
+                    indent(str(e), " " * 2),
+                ]
+                raise ValueError("\n".join(lines)) from None
+
+        return tuple(values)
 
     elif t in (typing.List, typing.Set, list, set):
         elem_t = t_args[0] if len(t_args) > 0 else Any
-        return t([cast(xi, elem_t) for xi in x])
+        values = []
+        for idx, xi in enumerate(x):
+            try:
+                values.append(cast(xi, elem_t))
+            except Exception as e:
+                lines = [
+                    f"Casting element #{idx} to {elem_t} raised error:",
+                    indent(str(e), " " * 2),
+                ]
+                raise ValueError("\n".join(lines)) from None
+
+        return values if t in (typing.List, list) else {*values}
 
     elif t in (typing.Dict, dict):
         if len(t_args) > 0:
             kt, vt = t_args
         else:
             kt, vt = Any, Any
-        return {cast(k, kt): cast(xi, vt) for k, xi in x.items()}
 
-    elif t in (typing.Literal,):
+        values = {}
+        for k, v in x.items():
+            try:
+                cast_k = cast(k, kt)
+            except Exception as e:
+                lines = [
+                    f"Casting key {k} to {kt} raised error:",
+                    indent(str(e), " " * 2),
+                ]
+                raise ValueError("\n".join(lines)) from None
+
+            try:
+                cast_v = cast(v, vt)
+            except Exception as e:
+                lines = [
+                    f"Casting value for '{k}' to {vt} raised error:",
+                    indent(str(e), " " * 2),
+                ]
+                raise ValueError("\n".join(lines)) from None
+
+            values[cast_k] = cast_v
+
+        return values
+
+    elif t == typing.Literal:
         # For Literals, check if the value is one of the allowed values.
         if x not in t_args:
-            raise ValueError(f"Value is not one of {t_args}")
+            raise ValueError(f"Value is not one of {t_args}") from None
         return x
 
-    elif t == bool and isinstance(x, str):
-        x = x.lower()
-        if x in ("0", "f", "false", "n", "no"):
-            return False
-        elif x in ("1", "t", "true", "y", "yes"):
-            return True
-        else:
-            raise ValueError(f"Value is not one of: 0/1, f/t, false/true, n/y, no/yes.")
+    elif isinstance(t, type) and isinstance(x, t):
+        return x
 
     else:
-        return x if isinstance(t, type) and isinstance(x, t) else t(x)
+        if not isinstance(x, dict):
+            raise ValueError(
+                "Casting to arbitrary types is supported only for dicts."
+            ) from None
+
+        sig = inspect.signature(t)
+        params = [*sig.parameters.values()]
+
+        if any(p.kind == p.POSITIONAL_ONLY for p in params):
+            raise ValueError(
+                f"Casting to {orig_t} is forbidden due to presence of positional-only parameters."
+            ) from None
+
+        required = set()
+        for name, param in sig.parameters.items():
+            if param.default == inspect._empty:
+                required.add(name)
+
+        missing = [k for k in required if k not in x]
+        if len(missing) > 0:
+            if len(missing) == 1:
+                missing_list = f"{missing[0]}"
+            else:
+                missing_list = ", ".join(missing[:-1]) + " and " + missing[-1]
+            raise ValueError(
+                f"Following parameters are missing: {missing_list}"
+            ) from None
+
+        allowed = {*sig.parameters}
+        extra = [k for k in x if k not in allowed]
+        if len(extra) > 0:
+            if len(extra) == 1:
+                extra_list = f"{extra[0]}"
+            else:
+                extra_list = ", ".join(extra[:-1]) + " and " + extra[-1]
+            raise ValueError(
+                f"Following parameters are superfluous: {extra_list}"
+            ) from None
+
+        values = {}
+        for name, param in sig.parameters.items():
+            if name in x:
+                param_type = param.annotation
+                if param_type == inspect._empty:
+                    param_type = Any
+                try:
+                    values[name] = cast(x[name], param_type)
+                except Exception as e:
+                    lines = [
+                        f"Casting value for '{name}' to {param_type} raised error:",
+                        indent(str(e), " " * 2),
+                    ]
+                    raise ValueError("\n".join(lines)) from None
+
+        return t(**values)
 
 
 P = ParamSpec("R")
@@ -154,8 +221,8 @@ def safe_bind(
             kwargs.update(value)
 
     @wraps(func)
-    def wrapped():
-        return_value = func(*args, **kwargs)
+    def wrapped(*args2, **kwargs2):
+        return_value = func(*args, *args2, **{**kwargs, **kwargs2})
         if sig.return_annotation != inspect._empty:
             return_value = cast(return_value, sig.return_annotation)
         return return_value

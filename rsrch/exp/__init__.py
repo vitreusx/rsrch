@@ -1,5 +1,4 @@
 import os
-import shutil
 import signal
 import subprocess
 import sys
@@ -17,7 +16,7 @@ from tqdm.auto import tqdm
 from rsrch.utils.path import sanitize
 
 from . import board, logging
-from .board import Board, StepMixin
+from .board import Board
 from .board.base import Image, Step, VideoClip
 from .git import create_exp_commit, head_commit
 
@@ -41,7 +40,8 @@ def timestamp2():
     return f"{now:%Y-%m-%d}", f"{now:%H-%M-%S}"
 
 
-P, R = ParamSpec("P"), TypeVar("R")
+P = ParamSpec("P")
+R = TypeVar("R")
 
 
 def partial_typed(f: Callable[P, R], *args, **kwargs) -> Callable[P, R]:
@@ -64,7 +64,15 @@ class ExpDirExists(RuntimeError):
     pass
 
 
-class Experiment(logging.LogMixin):
+class Experiment(logging.LogMixin, board.Board, board.StepMixin):
+    """An experiment manager.
+
+    Some of the features include:
+    - Creating an experiment directory, where logs, checkpoints etc. can be placed;
+    - Automatically creating a commit of the current source code, and saving the SHA in the experiment directory;
+    - An unified interface for dashboards for storing metrics. Currently, Tensorboard, Weights and Biases and an Sqlite-based dashboards are available.
+    """
+
     def __init__(
         self,
         *,
@@ -75,10 +83,19 @@ class Experiment(logging.LogMixin):
         create_commit: bool = True,
         interactive: bool = True,
     ):
+        """Create an experiment manager.
+
+        During the creation, following things happen:
+        - A directory for the experiment is created. If `run_dir` is provided, it's used as for the directory path. Otherwise, the run directory is `runs/{project}/{date:%Y-%m-%d}/{prefix}_{time:%H-%M-%S}`, i.e. the directories for a given project are all stored under `runs/{project}`, and they're grouped by current date to allow for comparing only the day's experiments.
+        - If `create_commit` is True, a commit on `exp/{branch}` branch is created with current version of the code, and the SHA is saved to the `exp_commit` field of the `info.yml` file in the exp directory.
+        - If `config` is provided, it is saved to `config.yml` file in the exp directory.
+        - If `interactive` is False, stdout and stderr are saved to `out.txt` and `err.txt` files, and the progress bars update only every 30 seconds.
+        """
+
         self.project = project
         self.interactive = interactive
 
-        self.boards: list[Board] = []
+        self._boards: list[Board] = []
 
         if run_dir is not None:
             self.dir = Path(run_dir)
@@ -110,6 +127,7 @@ class Experiment(logging.LogMixin):
             "argv": sys.argv,
         }
 
+        self._config = config
         if config is not None:
             with open(self.dir / "config.yml", "w") as f:
                 yaml.dump(config, f)
@@ -127,7 +145,9 @@ class Experiment(logging.LogMixin):
             yaml.dump(info, f)
             self.info(f"Saved extra info to: {self.dir / 'info.yml'}")
 
-    def pbar(self, iterable=None, **kwargs):
+    def make_pbar(self, iterable=None, **kwargs):
+        """Create a progress bar, based on `tqdm`. If `interactive` is False, update frequencies are adjusted to prevent spamming the output stream."""
+
         args = dict(
             dynamic_ncols=True,
             **kwargs,
@@ -140,31 +160,36 @@ class Experiment(logging.LogMixin):
 
         return tqdm(iterable, **args)
 
+    def add_board(self, board: Board):
+        if self._config is not None:
+            board.add_config(self._config)
+        self._boards.append(board)
+
     def register_step(self, name: str, value_fn, default=False):
-        for board in self.boards:
+        for board in self._boards:
             board.register_step(name, value_fn, default=default)
 
     def set_as_default(self, step: str):
-        for board in self.boards:
+        for board in self._boards:
             board.set_as_default(step)
 
     def log(self, level: int, message):
         self.logger.log(level, message)
-        for board in self.boards:
+        for board in self._boards:
             board.log(level, message)
 
     def add_scalar(self, tag: str, value: Number, *, step: Step = None):
-        for board in self.boards:
+        for board in self._boards:
             board.add_scalar(tag, value, step=step)
 
     def add_image(self, tag: str, image: Image.Image, *, step: Step = None):
-        for board in self.boards:
+        for board in self._boards:
             board.add_image(tag, image, step=step)
 
     def add_video(self, tag: str, vid: VideoClip, *, step: Step = None):
-        for board in self.boards:
+        for board in self._boards:
             board.add_video(tag, vid, step=step)
 
     def add_dict(self, tag: str, value: dict, *, step: Step = None):
-        for board in self.boards:
+        for board in self._boards:
             board.add_dict(tag, value, step=step)

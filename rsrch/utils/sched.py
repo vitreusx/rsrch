@@ -6,7 +6,7 @@ import numpy as np
 
 
 class Constant:
-    def __init__(self, value):
+    def __init__(self, value: float):
         self.value = value
 
     def __call__(self, t):
@@ -18,7 +18,7 @@ class Linear:
         points = np.array(points)
         self.ts, self.vs = points[:, 0], points[:, 1]
 
-    def __call__(self, t):
+    def __call__(self, t: float):
         return float(np.interp(t, self.ts, self.vs))
 
 
@@ -27,7 +27,7 @@ class LogLinear:
         points = np.array(points)
         self.ts, self.log_vs = points[:, 0], np.log(points[:, 1])
 
-    def __call__(self, t):
+    def __call__(self, t: float):
         log_v = np.interp(t, self.ts, self.log_vs)
         return math.exp(log_v)
 
@@ -45,7 +45,7 @@ class Exp:
         self.A = (self.v1 - self.v0) / (math.exp(self.lmbd * (self.t1 - self.t0)) - 1)
         self.b = self.v0 - self.A
 
-    def __call__(self, t):
+    def __call__(self, t: float):
         t = max(min(t, self.t1), self.t0)
         return self.A * math.exp(self.lmbd * (t - self.t0)) + self.b
 
@@ -63,7 +63,7 @@ class LogPoly:
 
 
 class Piecewise:
-    def __init__(self, *args):
+    def __init__(self, *args: float):
         self.values, self.pivots = [*args[::2]], np.asarray(args[1::2])
         for idx, val in enumerate(self.values):
             if isinstance(val, Number):
@@ -75,7 +75,11 @@ class Piecewise:
 
 
 class Auto:
-    def __init__(self, desc, step_fn):
+    def __init__(
+        self,
+        desc: str | float,
+        step_fn: Callable[[], float],
+    ):
         classes = [Constant, LogLinear, Linear, Exp, Piecewise]
         locals = {cls.__name__.lower(): cls for cls in classes}
 

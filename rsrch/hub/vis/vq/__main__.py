@@ -141,7 +141,7 @@ def main():
     repro.seed_all(seed=cfg.seed, deterministic=False)
 
     exp = Experiment(project="vq")
-    exp.boards.append(Tensorboard(exp.dir / "board"))
+    exp._boards.append(Tensorboard(exp.dir / "board"))
 
     device = torch.device(cfg.device)
 
@@ -179,7 +179,7 @@ def main():
     )
     preview_iter = iter(preview_loader)
 
-    pbar = exp.pbar(desc="VQ", initial=opt_step)
+    pbar = exp.make_pbar(desc="VQ", initial=opt_step)
     should_preview = cron.Every(lambda: opt_step, cfg.preview_every)
 
     while opt_step < cfg.opt_steps:

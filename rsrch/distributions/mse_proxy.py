@@ -8,8 +8,7 @@ from .utils import sum_rightmost
 
 
 class MSEProxy(Distribution, Tensorlike):
-    """A "proxy" distribution, which is always the same value and for which
-    log-prob is MSE. Useful if one wants to mix deterministic and stochastic code."""
+    """A "proxy for MSE" distribution. Like a Dirac distribution, except that the negative log-prob is equivalent to MSE loss. Useful if one wants to mix deterministic and stochastic code and uses NLL for loss function."""
 
     def __init__(self, value: Tensorlike, event_dims: int):
         pivot = len(value.shape) - event_dims

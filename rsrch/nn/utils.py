@@ -6,7 +6,7 @@ from typing import TypeVar
 import torch
 from torch import Tensor, nn
 
-from rsrch.types.tensorlike.core import Tensorlike
+from rsrch.types.tensorlike.tensor import Tensorlike
 
 
 def safe_mode(*nets: nn.Module, enabled: bool = True):

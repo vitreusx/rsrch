@@ -182,7 +182,7 @@ class SeqVQ(nn.Module):
             run=f"{env_id}__{exp.timestamp()}",
             config=cfg,
         )
-        self.exp.boards += [exp.board.Tensorboard(self.exp.dir / "board")]
+        self.exp._boards += [exp.board.Tensorboard(self.exp.dir / "board")]
         self.exp.register_step("opt_step", lambda: self.opt_step, default=True)
 
         self.wm = WorldModel().to(self.device)

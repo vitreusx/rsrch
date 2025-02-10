@@ -120,7 +120,7 @@ class Locals:
         self._pydevd[name] = value
 
 
-class Renderer:
+class TemplateEngine:
     EXPR = locatedExpr(pp.nestedExpr("${", "}"))
     EVAL_RE = r"^((?P<resolver>[\w]+):)?(?P<expr>.*)$"
     VAR_RE = r"^((?P<up>\.*)(?P<var>[a-zA-Z0-9_\.]+))$"
@@ -211,7 +211,7 @@ class Node(MutableMapping):
             return False
 
     def render(self, value):
-        return Renderer.render(value, Locals(self))
+        return TemplateEngine.render(value, Locals(self))
 
     def __setitem__(self, key, value):
         with py_mode():

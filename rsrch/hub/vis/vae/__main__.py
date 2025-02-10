@@ -221,7 +221,7 @@ class Runner:
         repro.seed_all(seed=cfg.seed, deterministic=False)
 
         self.exp = Experiment(project="vae")
-        self.exp.boards.append(Tensorboard(self.exp.dir / "board"))
+        self.exp._boards.append(Tensorboard(self.exp.dir / "board"))
 
         self.opt_step = 0
         self.exp.register_step("opt_step", lambda: self.opt_step, default=True)
@@ -258,7 +258,7 @@ class Runner:
         train_iter = iter(train_loader)
 
         should_sample = cron.Every(lambda: self.opt_step, cfg.sample_every)
-        pbar = self.exp.pbar(desc="VAE", initial=self.opt_step)
+        pbar = self.exp.make_pbar(desc="VAE", initial=self.opt_step)
 
         while self.opt_step < cfg.total_steps:
             if should_sample:

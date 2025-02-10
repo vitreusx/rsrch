@@ -4,11 +4,23 @@ from typing import Callable
 class Every:
     """A flag for running actions periodically.
 
-    `__bool__` returns `True` on first call, and whenever the step value (given by `step_fn()`) has increased by at least `every` since the last time `__bool__` returned `True`. When calling `__bool__` multiple times when the step value hasn't changed:
+    Formally, the flag itself doesn't perform actions, but rather provides a way to check (via bool conversion) if the action should be performed, and for how long.
 
-    - if `iters` is None, always return `True`;
-    - otherwise, if `accumulate`, return `True` for as long as the ratio of the total # of `True`s returned and the step value increase since first call to `__bool__` is lower than `iters`/`every`. So we accumulate unused iterations from the past (but only up to when the flag was first used).
-    - otherwise, if not `accumulate`, return `True` at most `iters` times - in other words, previous unused iterations are lost.
+    The flag is parametrized by:
+
+    - `step_fn`: a lambda used to get current time/step value;
+    - `period`: the value of the time period between firing the flag;
+    - `iters`: the number of times to run the action.
+
+    There are two modes of operation, controlled by `accumulate` parameter:
+
+    - `accumulate = True`: Every `period` steps, starting from the first call, `iters` number of actions are added to an accumulator. `bool(flag)` returns `True` as long as the number of leftover actions is greater than zero.
+    - `accumulate = False`: At the point of first check `bool(flag)`, it returns `True` at most `iters` number of times, as long as the step value remains the same. Thereafter, the flag activates once again only after at least `period` steps have elapsed since the last time it was active, and again remains active for `iters` number of steps for as long as the step value remains the same.
+
+    Usage and examples are motivated mostly by RL applications, where step values are nontrivial compared to supervised learning:
+
+    - If you want to perform optimization step every `K` environment steps on average, you want to use `accumulate = True`.
+    - If you want to write logs or save stats to the dashboard every so often, accumulation is unnecessary, so you'd rather use `accumulate = False` with `iters = 1`.
     """
 
     def __init__(
@@ -51,7 +63,13 @@ class Every:
 
 
 class Until:
-    def __init__(self, step_fn, max_value):
+    """A flag for performing action until a given step value."""
+
+    def __init__(
+        self,
+        step_fn: Callable[[], float],
+        max_value: float,
+    ):
         self.step_fn = step_fn
         self.max_value = max_value
 
@@ -60,5 +78,14 @@ class Until:
 
 
 class Never:
+    """A flag for never performing an action."""
+
     def __bool__(self):
         return False
+
+
+class Always:
+    """A flag for always performing an action."""
+
+    def __bool__(self):
+        return True

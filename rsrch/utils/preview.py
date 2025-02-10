@@ -4,77 +4,57 @@ import torchvision.transforms.functional as F
 from PIL import Image
 
 
-def make_grid(images, ncols=None, padding=2) -> Image.Image:
-    def _convert(img):
-        if not isinstance(img, Image.Image):
-            img = F.to_pil_image(img)
-        return img.convert("RGBA")
+def make_grid(
+    images: list[list[Image.Image]] | list[Image.Image],
+    ncols: int | None = None,
+    nrows: int | None = None,
+    gap_px: int = 2,
+) -> Image.Image:
+    """Create a grid of images. The list of images can be 1-d or 2-d, in the former case the number of columns or rows must be provided in order to determine the shape of the grid."""
 
-    def flat_to_2d():
-        assert ncols is not None
-        nrows = int(np.ceil(len(images) / ncols))
-        grid = []
-        for row_idx in range(nrows):
-            row = []
-            for col_idx in range(ncols):
-                idx = row_idx * ncols + col_idx
-                img = _convert(images[idx]) if idx < len(images) else None
-                row.append(img)
-            grid.append(row)
-        return grid
-
-    # Here we convert images to 2d grid
-    if isinstance(images, torch.Tensor):
-        grid = flat_to_2d()
-    elif isinstance(images, list):
-        if isinstance(images[0], list):
-            grid = [[_convert(img) for img in row] for row in images]
+    if not isinstance(images[0], list):
+        if nrows is not None:
+            ncols = (len(images) + nrows - 1) // nrows
+        elif ncols is not None:
+            nrows = (len(images) + ncols - 1) // ncols
         else:
-            grid = flat_to_2d()
+            raise ValueError("Either # of rows or columns must be provided.")
+        images = [*images, *(None for _ in (nrows * ncols - len(images)))]
+        grid = np.asarray(images, dtype=object)
+        grid = grid.reshape((nrows, ncols))
     else:
-        grid = [[_convert(images)]]
+        grid = np.asarray(images, dtype=object)
+        nrows, ncols = grid.shape
 
-    nrows, ncols = len(grid), len(grid[0])
-
-    heights = [None for _ in range(nrows)]
-    widths = [None for _ in range(ncols)]
-    for row_idx in range(nrows):
-        for col_idx in range(ncols):
-            img = grid[row_idx][col_idx]
-            if img is not None:
-                w, h = img.size
-                if widths[col_idx] is None:
-                    widths[col_idx] = w
-                else:
-                    assert widths[col_idx] == w
-                if heights[row_idx] is None:
-                    heights[row_idx] = h
-                else:
-                    assert heights[row_idx] == h
-
-    for row_idx in range(nrows):
-        if heights[row_idx] is None:
-            heights[row_idx] = 0
-
-    for col_idx in range(ncols):
-        if widths[col_idx] is None:
-            widths[col_idx] = 0
-
-    total_width = sum(widths) + padding * (len(widths) - 1)
-    total_height = sum(heights) + padding * (len(heights) - 1)
-    grid_img = Image.new("RGBA", (total_width, total_height))
-
-    offset_x = np.cumsum([0, *widths]) + padding * np.arange(len(widths) + 1)
-    offset_y = np.cumsum([0, *heights]) + padding * np.arange(len(heights) + 1)
-
-    for row_idx in range(nrows):
-        for col_idx in range(ncols):
-            img = grid[row_idx][col_idx]
+    heights = [0 for _ in range(nrows)]
+    widths = [0 for _ in range(ncols)]
+    for row in range(nrows):
+        for col in range(ncols):
+            img = grid[row][col]
             if img is None:
-                w, h = widths[col_idx], heights[row_idx]
-                img = Image.new("RGBA", (w, h), 0)
+                continue
 
-            off_x, off_y = offset_x[col_idx], offset_y[row_idx]
+            heights[row] = max(heights[row], img.height)
+            widths[col] = max(widths[col], img.width)
+
+    offset_x = np.cumsum(widths) - np.array(widths)
+    offset_x += gap_px * np.arange(ncols)
+    grid_w = offset_x[-1] + widths[-1]
+
+    offset_y = np.cumsum(heights) - np.array(heights)
+    offset_y += gap_px * np.arange(nrows)
+    grid_h = offset_y[-1] + heights[-1]
+
+    grid_img = Image.new("RGBA", (grid_w, grid_h))
+
+    for row in range(nrows):
+        for col in range(ncols):
+            img = grid[row][col]
+            if img is None:
+                continue
+
+            off_x = offset_x[col] + (widths[col] - img.width) // 2
+            off_y = offset_y[row] + (heights[row] - img.height) // 2
             grid_img.paste(img, (off_x, off_y))
 
     return grid_img

@@ -279,7 +279,7 @@ class Runner:
         repro.seed_all(seed=cfg.seed)
 
         self.exp = Experiment(project="seq_vae")
-        self.exp.boards.append(Tensorboard(self.exp.dir / "board"))
+        self.exp._boards.append(Tensorboard(self.exp.dir / "board"))
 
         self.opt_step = 0
         self.exp.register_step("opt_step", lambda: self.opt_step, default=True)
@@ -327,7 +327,7 @@ class Runner:
         preview_iter = iter(preview_loader)
 
         should_preview = cron.Every(lambda: self.opt_step, cfg.preview_every)
-        pbar = self.exp.pbar(desc="SeqVAE", initial=self.opt_step)
+        pbar = self.exp.make_pbar(desc="SeqVAE", initial=self.opt_step)
 
         if cfg.resume_from is not None:
             with open(cfg.resume_from, "rb") as f:

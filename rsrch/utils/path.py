@@ -1,7 +1,6 @@
 import re
-from pathlib import Path
 
 
-def sanitize(s: str):
-    """Sanitizes a string for use in file paths, replacing prohibited characters by dashes."""
-    return re.sub(r"[/\\?%*:|\"<>\x7F\x00-\x1F]", "-", s)
+def sanitize(s: str, repl: str = "-"):
+    """Sanitizes a string for use in file paths, replacing prohibited characters by `repl` (dashes by default.)"""
+    return re.sub(r"[/\\?%*:|\"<>\x7F\x00-\x1F]", repl, s)

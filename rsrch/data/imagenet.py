@@ -1,10 +1,9 @@
-from typing import Literal
-from torch.utils import data
 from pathlib import Path
+from typing import Literal
+
 import pandas as pd
 from PIL import Image
-import pickle
-from hashlib import sha256
+from torch.utils import data
 
 
 class ImageNet(data.Dataset):
@@ -12,17 +11,15 @@ class ImageNet(data.Dataset):
         self,
         root: str | Path,
         split: Literal["train", "val", "test"] = "train",
-        img_transform=None,
     ):
         super().__init__()
         self.root = Path(root)
         self.img_root = self.root / "ILSVRC/Data/CLS-LOC" / split
-        self.img_transform = img_transform
 
         cls_lists = {"train": "train_cls.txt", "val": "val.txt", "test": "test.txt"}
         cls_list = self.root / f"ILSVRC/ImageSets/CLS-LOC" / cls_lists[split]
 
-        self._paths = []
+        self._paths: list[Path] = []
         with open(cls_list, "r") as f:
             for line in f.readlines():
                 self._paths.append(Path(line.split(" ")[0]))
@@ -57,8 +54,6 @@ class ImageNet(data.Dataset):
         path = self._paths[idx]
         img_path = (self.img_root / path).with_suffix(".JPEG")
         r["image"] = Image.open(img_path).convert("RGB")
-        if self.img_transform is not None:
-            r["image"] = self.img_transform(r["image"])
         if self._labels is not None:
             r["label"] = self._labels[img_path.stem]
         return r

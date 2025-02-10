@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
-from functools import cached_property
+from functools import cache, cached_property
 from numbers import Number
 from threading import RLock
 from typing import Callable, Sequence, Tuple, TypeVar, overload
@@ -16,17 +16,41 @@ _TORCH_FUNCTIONS = {}
 T = TypeVar("T")
 
 
+@cache
+def _expand_index(index, shape: tuple[int, ...]):
+    """Expand an index if it contains ellipses (`...` objects)."""
+
+    if not isinstance(index, tuple):
+        index = (index,)
+
+    num_e = sum(x == ... for x in index)
+    if num_e > 1:
+        raise IndexError("An index can only have a single ellipsis `...`.")
+
+    if num_e > 0:
+        expanded = []
+        for v in index:
+            if v == ...:
+                remaining = len(shape) - (len(index) - 1)
+                expanded.extend(slice(None) for _ in range(remaining))
+            else:
+                expanded.append(v)
+        index = tuple(expanded)
+
+    return index
+
+
 class Tensorlike:
     """A class for representing complex tensor-like objects.
 
     Features:
 
-    - Exposes an interface much like torch.Tensor. One can use torch functions such as `torch.cat`, `torch.stack` etc. on tensor-likes, and the output shall be a tensor-like of the same type.
+    - Exposes an interface much like `torch.Tensor`. One can use Torch functions such as `torch.cat`, `torch.stack` etc. on tensor-likes, and the output shall be a tensor-like of the same type.
 
     - User can register tensor fields via `register`. When using operations such as slicing, stacking, concatenating etc., the output is a tensor-like, with
     operations being executed over the tensor fields.
 
-    - When a "child" tensorlike is created, non-Tensor fields are simply copied, *except* for cached properties (see `functools.cached_property`.)
+    - When a "child" tensorlike is created, non-Tensor fields are simply (shallow-)copied, *except* for cached properties (see `functools.cached_property`.)
     """
 
     def __init__(self, shape: torch.Size):
@@ -248,25 +272,9 @@ class Tensorlike:
                 fields[name] = new
             return repr._new(new_shape, fields)
 
-    def __getitem__(self, idx):
-        if not isinstance(idx, tuple):
-            idx = (idx,)
-
-        num_e = sum(isinstance(x, type(Ellipsis)) for x in idx)
-        if num_e > 1:
-            raise IndexError("an index can only have a single ellipsis ('...')")
-
-        if num_e > 0:
-            new_idx = []
-            for x in idx:
-                if isinstance(x, type(Ellipsis)):
-                    rem = len(self.shape) - (len(idx) - 1)
-                    new_idx.extend(slice(None) for _ in range(rem))
-                else:
-                    new_idx.append(x)
-            idx = tuple(new_idx)
-
-        return self._getitem(idx)
+    def __getitem__(self, index):
+        index = _expand_index(index, self.shape)
+        return self._getitem(index)
 
     def _getitem(self, idx):
         fields = {}
@@ -286,25 +294,9 @@ class Tensorlike:
 
         return self._new(shape, fields)
 
-    def __setitem__(self, idx, value):
-        if not isinstance(idx, tuple):
-            idx = (idx,)
-
-        num_e = sum(isinstance(x, type(Ellipsis)) for x in idx)
-        if num_e > 1:
-            raise IndexError("an index can only have a single ellipsis ('...')")
-
-        if num_e > 0:
-            new_idx = []
-            for x in idx:
-                if isinstance(x, type(Ellipsis)):
-                    rem = len(self.shape) - (len(idx) - 1)
-                    new_idx.extend(slice(None) for _ in range(rem))
-                else:
-                    new_idx.append(x)
-            idx = tuple(new_idx)
-
-        return self._setitem(idx, value)
+    def __setitem__(self, index, value):
+        index = _expand_index(index, self.shape)
+        return self._setitem(index, value)
 
     def _setitem(self, idx, value):
         for name in self._batched:
@@ -377,14 +369,6 @@ class Tensorlike:
     @classmethod
     def _torch_unsqueeze(cls, tensor, dim):
         return tensor.unsqueeze(dim)
-
-    # def where(self, cond, value):
-    #     fields = {}
-    #     for name in self._batched:
-    #         tensor: Tensorlike = getattr(self, name)
-    #         new = tensor.where(cond, value)
-    #         fields[name] = new
-    #     return self._new(self.shape, fields)
 
     @overload
     def to(
@@ -487,16 +471,20 @@ class Tensorlike:
             fields[name] = tensor.pin_memory(device)
         return self._new(self.shape, fields)
 
-    def __repr__(self):
-        fields = {"shape": self.shape}
+    def __str__(self):
+        lines = [f"<{self.__class__.__name__} shape={self.shape}"]
         for name in self._tensors:
             tensor = getattr(self, name)
             if isinstance(tensor, torch.Tensor):
-                tensor = f"Tensor(shape={tensor.shape})"
-
-        cls = type(self.__class__.__name__, (), fields)
-        cls = dataclass(cls)
-        return repr(cls)
+                lines.append(
+                    f"  {name}: <Tensor shape={tuple(tensor.shape)} dtype={tensor.dtype}>"
+                )
+            else:
+                tensor_lines = str(tensor).splitlines()
+                lines.append(f"  {name}: {tensor_lines[0]}")
+                lines.extend(f"  {line}" for line in tensor_lines[1:])
+        lines[-1] = lines[-1] + ">"
+        return "\n".join(lines)
 
 
 __all__ = ["Tensorlike"]

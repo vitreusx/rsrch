@@ -26,7 +26,7 @@ def worker_init_fn(worker_id):
 
 
 class RandomState:
-    """Random state manager for Python, Numpy and Pytorch."""
+    """Random state object for Python, Numpy and Pytorch."""
 
     @staticmethod
     def save():

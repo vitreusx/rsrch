@@ -15,7 +15,7 @@ from rsrch import rl
 from rsrch.exp import Experiment
 from rsrch.exp.board.tensorboard import Tensorboard
 from rsrch.rl import gym
-from rsrch.types.tensorlike.core import Tensorlike
+from rsrch.types.tensorlike.tensor import Tensorlike
 from rsrch.utils import cron, repro
 
 from . import config
@@ -134,7 +134,7 @@ def main():
         project="ppo",
         run_dir=f"runs/ppo/{date}/{sdk.id}__{time}",
     )
-    exp.boards.append(Tensorboard(exp.dir / "board"))
+    exp._boards.append(Tensorboard(exp.dir / "board"))
 
     env_step = 0
     exp.register_step("env_step", lambda: env_step, default=True)

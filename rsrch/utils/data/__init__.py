@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable, Generic, Sequence, Sized, Tuple, TypeVar, Union
+from typing import Callable, Sequence, Tuple, TypeVar, Union
 
 import numpy as np
 import torch
@@ -10,7 +10,9 @@ from torch.utils.data.dataloader import _collate_fn_t, _worker_init_fn_t
 
 from .samplers import *
 
-X, Y, Idx = TypeVar("X"), TypeVar("Y"), TypeVar("Idx")
+X = TypeVar("X")
+Y = TypeVar("Y")
+Idx = TypeVar("Idx")
 
 
 class Dataset(data.Dataset[X]):
@@ -74,7 +76,8 @@ class Indexed(Dataset[Tuple[Idx, X]]):
 
 
 def random_split(
-    ds: Dataset[X], lengths: Sequence[Union[int, float]]
+    ds: Dataset[X],
+    lengths: Sequence[Union[int, float]],
 ) -> Sequence[Dataset[X]]:
     if isinstance(lengths[0], float):
         n = len(ds)
@@ -88,15 +91,15 @@ def random_split(
 
 
 class Pipeline:
-    def __init__(self, *stages):
-        self.ds = stages[0]
-        self.transforms = stages[1:]
+    def __init__(self, dataset, *transforms):
+        self.dataset = dataset
+        self.transforms = transforms
 
     def __len__(self):
-        return len(self.ds)
+        return len(self.dataset)
 
     def __getitem__(self, idx):
-        return self.apply(self.ds[idx])
+        return self.apply(self.dataset[idx])
 
     def apply(self, x):
         for func in self.transforms:
@@ -104,5 +107,19 @@ class Pipeline:
         return x
 
     def __iter__(self):
-        for x in self.ds:
+        for x in self.dataset:
             yield self.apply(x)
+
+
+class Over:
+    def __init__(self, key: str, *transforms, in_place=True):
+        self.key = key
+        self.transforms = transforms
+        self.in_place = in_place
+
+    def __call__(self, item: dict):
+        if not self.in_place:
+            item = {**item}
+        for t in self.transforms:
+            item[self.key] = t(item[self.key])
+        return item

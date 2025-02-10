@@ -148,7 +148,7 @@ class Runner:
             prefix=self.sdk.id,
             config=asdict(self.cfg),
         )
-        self.exp.boards.append(exp.board.Tensorboard(self.exp.dir))
+        self.exp._boards.append(exp.board.Tensorboard(self.exp.dir))
 
         self.device = torch.device(self.cfg.device)
 
@@ -269,7 +269,7 @@ class Runner:
         return sched.Auto(desc, lambda: getattr(self, unit))
 
     def _make_pbar(self, until: cron.Until, *args, **kwargs):
-        return self.exp.pbar(
+        return self.exp.make_pbar(
             *args,
             **kwargs,
             total=until.max_value,
@@ -303,7 +303,7 @@ class Runner:
                 self.take_env_step()
 
     def _val_epoch(self):
-        val_iter = self.exp.pbar(
+        val_iter = self.exp.make_pbar(
             islice(self._val_ret_iter(), 0, self.cfg.val.episodes),
             desc="Val",
             total=self.cfg.val.episodes,

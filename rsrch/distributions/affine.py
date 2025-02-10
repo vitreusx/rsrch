@@ -12,6 +12,10 @@ from .utils import sum_rightmost
 
 
 class Affine(Distribution, Tensorlike):
+    """An "affine" distribution.
+
+    If x ~ X, then scale * x + loc ~ Affine(X, loc, scale)."""
+
     def __init__(
         self,
         base: Distribution,
@@ -19,6 +23,10 @@ class Affine(Distribution, Tensorlike):
         scale: Number | Tensor,
         batched: bool = False,
     ):
+        """Create an affine distribution.
+
+        :param batched: If true, `loc` and `scale` parameters follow rules for batched tensors (see `Tensorlike` for more details.)
+        """
         Tensorlike.__init__(self, base.batch_shape)
         self.event_shape = base.event_shape
         self.event_dims = len(self.event_shape)

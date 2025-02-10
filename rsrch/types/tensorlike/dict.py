@@ -1,6 +1,6 @@
 from typing import Mapping
 
-from .core import Tensorlike
+from .tensor import Tensorlike
 
 PREFIX = "td_"
 

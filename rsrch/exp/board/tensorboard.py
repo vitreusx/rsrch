@@ -8,22 +8,8 @@ import torch
 import torchvision.transforms.functional as tv_F
 from torch.utils import tensorboard
 
+from ._utils import flatten
 from .base import *
-
-
-def _flatten(x, prefix=[]):
-    if isinstance(x, dict):
-        flat = {}
-        for k, v in x.items():
-            flat.update(_flatten(v, [*prefix, k]))
-        return flat
-    elif isinstance(x, list):
-        flat = {}
-        for i, v in enumerate(x):
-            flat.update(_flatten(v, [*prefix, str(i)]))
-        return flat
-    else:
-        return {".".join(prefix): x}
 
 
 class Tensorboard(StepMixin, Board):
@@ -33,13 +19,13 @@ class Tensorboard(StepMixin, Board):
         self._writer = tensorboard.SummaryWriter(log_dir=str(self.dir))
 
     def add_config(self, config: dict):
-        self._writer.add_hparams(hparam_dict=_flatten(config))
+        self._writer.add_hparams(hparam_dict=flatten(config))
 
     def add_scalar(self, tag: str, value: Number, *, step: Step = None):
         step = self._get_step(step)
         self._writer.add_scalar(tag, float(value), global_step=step)
 
-    def add_image(self, tag: str, image: Image, *, step: Step = None):
+    def add_image(self, tag: str, image: Image.Image, *, step: Step = None):
         step = self._get_step(step)
         pic_arr = tv_F.to_tensor(image)
         self._writer.add_image(tag, pic_arr, global_step=step)

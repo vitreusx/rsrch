@@ -13,8 +13,8 @@ from .utils import sum_rightmost
 
 
 class ClipNormal(Distribution, Tensorlike):
-    """Normal distribution clamped to a given space. log_prob and entropy
-    functions are NOT mathematically correct."""
+    """Normal distribution clamped to a given space. NOTE: log_prob and entropy
+    functions are *not* mathematically correct."""
 
     def __init__(self, base: Normal, space: spaces.torch.Box):
         Tensorlike.__init__(self, base.shape)

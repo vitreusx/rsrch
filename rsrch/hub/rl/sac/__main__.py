@@ -66,7 +66,7 @@ def main():
     act_dim = int(np.prod(sdk.act_space.shape))
 
     exp = Experiment(project="sac", prefix=sdk.id)
-    exp.boards.append(Tensorboard(exp.dir / "board"))
+    exp._boards.append(Tensorboard(exp.dir / "board"))
 
     env_step, opt_step, agent_step = 0, 0, 0
     exp.register_step("env_step", lambda: env_step, default=True)
