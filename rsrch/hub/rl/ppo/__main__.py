@@ -4,7 +4,6 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
-from itertools import islice
 from pathlib import Path
 
 import torch
@@ -12,8 +11,8 @@ import torch.nn.functional as F
 from tqdm.auto import tqdm
 
 from rsrch import rl
-from rsrch.exp import Experiment
-from rsrch.exp.board.tensorboard import Tensorboard
+from rsrch.exp import Experiment, board
+from rsrch.nn.optim import ScaledOptimizer
 from rsrch.rl import gym
 from rsrch.types.tensorlike.tensor import Tensorlike
 from rsrch.utils import cron, repro
@@ -47,45 +46,6 @@ class Slices:
         )
 
 
-class ScaledOptimizer:
-    def __init__(self, opt: torch.optim.Optimizer):
-        self.opt = opt
-
-    @cached_property
-    def parameters(self) -> list[nn.Parameter]:
-        params = []
-        for group in self.opt.param_groups:
-            params.extend(group["params"])
-        return params
-
-    @cached_property
-    def device(self) -> torch.device:
-        return self.parameters[0].device
-
-    @cached_property
-    def scaler(self) -> torch.cuda.amp.GradScaler:
-        return getattr(torch, self.device.type).amp.GradScaler()
-
-    def step(self, loss: Tensor, clip_grad: float | None = None):
-        self.opt.zero_grad(set_to_none=True)
-        self.scaler.scale(loss).backward()
-        self.scaler.unscale_(self.opt)
-        if clip_grad is not None:
-            nn.utils.clip_grad_norm_(self.parameters, max_norm=clip_grad)
-        self.scaler.step(self.opt)
-        self.scaler.update()
-
-    def state_dict(self):
-        return {
-            "opt": self.opt.state_dict(),
-            "scaler": self.scaler.state_dict(),
-        }
-
-    def load_state_dict(self, state):
-        self.opt.load_state_dict(state["opt"])
-        self.scaler.load_state_dict(state["scaler"])
-
-
 def main():
     cfg = config.open(Path(__file__).parent / "config.yml")
     cfg = config.cast(cfg, config.Config)
@@ -101,6 +61,7 @@ def main():
     sdk = rl.sdk.make(cfg.env)
 
     train_envs = sdk.make_envs(cfg.train_envs, mode="train")
+    val_envs = sdk.make_envs(1, mode="val", record=True)
 
     ac = ActorCritic(
         obs_space=sdk.obs_space,
@@ -127,14 +88,11 @@ def main():
     ep_ids = defaultdict(lambda: None)
     env_iter = iter(sdk.rollout(train_envs, train_agent))
 
-    dt = datetime.now()
-    date, time = f"{dt:%Y-%m-%d}", f"{dt:%H-%M-%S}"
-
     exp = Experiment(
         project="ppo",
-        run_dir=f"runs/ppo/{date}/{sdk.id}__{time}",
+        prefix=sdk.id,
     )
-    exp._boards.append(Tensorboard(exp.dir / "board"))
+    exp.add_board(board.Tensorboard(exp.dir / "board"))
 
     env_step = 0
     exp.register_step("env_step", lambda: env_step, default=True)

@@ -16,7 +16,6 @@ _TORCH_FUNCTIONS = {}
 T = TypeVar("T")
 
 
-@cache
 def _expand_index(index, shape: tuple[int, ...]):
     """Expand an index if it contains ellipses (`...` objects)."""
 

@@ -4,6 +4,8 @@ from typing import Callable
 
 import numpy as np
 
+Func = Callable[[float], float]
+
 
 class Constant:
     def __init__(self, value: float):
@@ -69,25 +71,27 @@ class Piecewise:
             if isinstance(val, Number):
                 self.values[idx] = Constant(val)
 
-    def __call__(self, t):
+    def __call__(self, t: float):
         idx = np.searchsorted(self.pivots, t)
         return self.values[idx](t)
 
 
+Spec = str | float
+
+
+def make(spec: Spec):
+    classes = [Constant, LogLinear, Linear, Exp, Piecewise]
+    locals = {cls.__name__.lower(): cls for cls in classes}
+
+    if isinstance(spec, str):
+        return eval(spec, globals(), locals)
+    else:
+        return Constant(spec)
+
+
 class Auto:
-    def __init__(
-        self,
-        desc: str | float,
-        step_fn: Callable[[], float],
-    ):
-        classes = [Constant, LogLinear, Linear, Exp, Piecewise]
-        locals = {cls.__name__.lower(): cls for cls in classes}
-
-        if isinstance(desc, str):
-            self._sched = eval(desc, globals(), locals)
-        else:
-            self._sched = Constant(desc)
-
+    def __init__(self, spec: Spec, step_fn: Callable[[], float]):
+        self._sched = make(spec)
         self.step_fn = step_fn
 
     def __call__(self):

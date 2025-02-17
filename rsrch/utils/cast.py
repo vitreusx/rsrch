@@ -188,8 +188,11 @@ def safe_bind(
     func: Callable[P, R],
     *args: P.args,
     **kwargs: P.kwargs,
-) -> Callable[[], R]:
-    """Bind a function with args and kwargs in a type-safe manner - `args` and `kwargs` are converted to types as indicated by the parameter annotations."""
+) -> Callable[P, R]:
+    """Bind a function with args and kwargs in a type-safe manner - `args` and `kwargs` are converted to types as indicated by the parameter annotations.
+
+    A function with the same signature is returned. Positional and keyword arguments provided override the ones given during the binding, and are *not* converted to proper types.
+    """
 
     sig = inspect.signature(func)
 

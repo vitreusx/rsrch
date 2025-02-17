@@ -111,15 +111,23 @@ class Pipeline:
             yield self.apply(x)
 
 
-class Over:
-    def __init__(self, key: str, *transforms, in_place=True):
-        self.key = key
-        self.transforms = transforms
-        self.in_place = in_place
+class MapDict:
+    def __init__(self, transforms: dict = {}, **kwargs):
+        self.transforms = {**transforms, **kwargs}
 
     def __call__(self, item: dict):
-        if not self.in_place:
-            item = {**item}
-        for t in self.transforms:
-            item[self.key] = t(item[self.key])
+        item = {**item}
+        for k, t in self.transforms.items():
+            if k in item:
+                item[k] = t(item[k])
         return item
+
+
+class Compose:
+    def __init__(self, *transforms):
+        self.transforms = transforms
+
+    def __call__(self, x):
+        for t in self.transforms:
+            x = t(x)
+        return x

@@ -1,18 +1,18 @@
+import logging
 from abc import ABC, abstractmethod
-from logging import *
-from typing import Literal
+from textwrap import shorten
 
 from colorama import Fore, Style, just_fix_windows_console
 
 
-class ColorFormatter(Formatter):
+class ColorFormatter(logging.Formatter):
     STYLES = {
-        FATAL: Style.BRIGHT + Fore.CYAN,
-        CRITICAL: Style.BRIGHT + Fore.MAGENTA,
-        ERROR: Style.BRIGHT + Fore.RED,
-        WARNING: Style.BRIGHT + Fore.YELLOW,
-        INFO: Style.RESET_ALL + Fore.WHITE,
-        DEBUG: Style.BRIGHT + Fore.BLACK,
+        logging.FATAL: Style.BRIGHT + Fore.CYAN,
+        logging.CRITICAL: Style.BRIGHT + Fore.MAGENTA,
+        logging.ERROR: Style.BRIGHT + Fore.RED,
+        logging.WARNING: Style.BRIGHT + Fore.YELLOW,
+        logging.INFO: Style.RESET_ALL + Fore.WHITE,
+        logging.DEBUG: Style.BRIGHT + Fore.BLACK,
     }
 
     RESET = Style.RESET_ALL
@@ -21,30 +21,23 @@ class ColorFormatter(Formatter):
         just_fix_windows_console()
         super().__init__(*args, **kwargs)
 
-    def format(self, record: LogRecord) -> str:
+    def format(self, record: logging.LogRecord) -> str:
         record.color_on = self.STYLES[record.levelno]
         record.color_off = self.RESET
-        if len(record.name) > 13:
-            record.name = f"{record.name[:6]}~{record.name[-6:]}"
+        record.name = shorten(record.name, 13, placeholder="~")
         return super().format(record)
 
 
-def setup(
-    level: int = INFO,
-    extra_handlers: list[tuple[Handler, int]] = [],
-    no_ansi: bool = False,
+def add_handlers(
+    logger: logging.Logger,
+    handlers: list[tuple[logging.Handler, int]],
 ):
-    logger = getLogger()
-    logger.setLevel(DEBUG)
-
-    # Default handler is a StreamHandler to stderr
-    err_handler = logger.handlers[0]
-    err_handler.setLevel(level)
-
-    for handler, level in extra_handlers:
+    for handler, level in handlers:
         handler.setLevel(level)
         logger.addHandler(handler)
 
+
+def setup_fmt(logger: logging.Logger, no_ansi: bool = False):
     for handler in logger.handlers:
         interactive = hasattr(handler, "stream") and handler.stream.isatty()
         if interactive and not no_ansi:
@@ -52,7 +45,7 @@ def setup(
             formatter = ColorFormatter(fmt)
         else:
             fmt = "%(asctime)s - %(name)-13s - %(levelname)-8s - %(message)s"
-            formatter = Formatter(fmt)
+            formatter = logging.Formatter(fmt)
         handler.setFormatter(formatter)
 
 
@@ -62,19 +55,19 @@ class LogMixin(ABC):
         ...
 
     def fatal(self, msg):
-        return self.log(FATAL, msg)
+        return self.log(logging.FATAL, msg)
 
     def critical(self, msg):
-        return self.log(CRITICAL, msg)
+        return self.log(logging.CRITICAL, msg)
 
     def error(self, msg):
-        return self.log(ERROR, msg)
+        return self.log(logging.ERROR, msg)
 
     def warn(self, msg):
-        return self.log(WARN, msg)
+        return self.log(logging.WARN, msg)
 
     def info(self, msg):
-        return self.log(INFO, msg)
+        return self.log(logging.INFO, msg)
 
     def debug(self, msg):
-        return self.log(DEBUG, msg)
+        return self.log(logging.DEBUG, msg)

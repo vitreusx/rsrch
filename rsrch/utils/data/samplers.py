@@ -6,14 +6,23 @@ from rsrch.types.rq_tree import rq_tree
 
 
 class InfiniteSampler:
-    def __init__(self, ds: Sized, shuffle: bool = False):
+    def __init__(
+        self,
+        ds: Sized,
+        fixed_size: bool = True,
+        shuffle: bool = False,
+    ):
         self.ds = ds
         self.shuffle = shuffle
+        self.fixed_size = fixed_size
 
     def __iter__(self):
         if self.shuffle:
             while True:
-                yield np.random.randint(len(self.ds))
+                if self.fixed_size:
+                    yield from np.random.permutation(len(self.ds))
+                else:
+                    yield np.random.randint(len(self.ds))
         else:
             idx = 0
             while len(self.ds) > 0:

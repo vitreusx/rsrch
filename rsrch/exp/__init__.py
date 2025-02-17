@@ -1,3 +1,4 @@
+import logging
 import os
 import signal
 import subprocess
@@ -13,12 +14,14 @@ from ruamel.yaml import YAML
 from torch import Tensor
 from tqdm.auto import tqdm
 
+import rsrch.exp.log as log
 from rsrch.utils.path import sanitize
 
-from . import board, logging
+from . import board
 from .board import Board
 from .board.base import Image, Step, VideoClip
 from .git import create_exp_commit, head_commit
+from .log import LogMixin, add_handlers, setup_fmt
 
 yaml = YAML(typ="safe", pure=True)
 
@@ -64,7 +67,7 @@ class ExpDirExists(RuntimeError):
     pass
 
 
-class Experiment(logging.LogMixin, board.Board, board.StepMixin):
+class Experiment(LogMixin, board.Board, board.StepMixin):
     """An experiment manager.
 
     Some of the features include:
@@ -112,12 +115,18 @@ class Experiment(logging.LogMixin, board.Board, board.StepMixin):
             self.tee_out = Tee(sys.stdout, self.dir / "out.txt")
             self.tee_err = Tee(sys.stderr, self.dir / "err.txt")
 
-        logging.setup(
-            extra_handlers=[
+        add_handlers(
+            logger=logging.getLogger(),
+            handlers=[
                 (logging.FileHandler(self.dir / "log.txt"), logging.DEBUG),
             ],
+        )
+
+        setup_fmt(
+            logger=logging.getLogger(),
             no_ansi=not self.interactive,
         )
+
         self.logger = logging.getLogger(project)
 
         self.info(f"Exp dir: {self.dir}")

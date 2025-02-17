@@ -10,6 +10,7 @@ from .base import *
 
 class WeightsAndBiases(StepMixin, Board):
     def __init__(self, dir: str | Path, project: str):
+        super().__init__()
         wandb.init(project=project, dir=dir)
         self._wandb_steps = set()
 

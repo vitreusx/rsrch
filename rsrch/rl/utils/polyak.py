@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Literal
 
 import torch
@@ -19,6 +20,12 @@ def update(source: nn.Module, target: nn.Module, tau: float):
 @torch.no_grad()
 def sync(source: nn.Module, target: nn.Module):
     target.load_state_dict(source.state_dict())
+
+
+@dataclass
+class Config:
+    tau: float | Literal["sync"] = 0.0
+    every: int = 1
 
 
 class Polyak:

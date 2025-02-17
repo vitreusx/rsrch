@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import io
 import json
-import math
 import os
 import re
 import sys
@@ -17,7 +17,7 @@ import numpy as np
 import pyparsing as pp
 from ruamel.yaml import YAML
 
-from .cast import cast
+from .cast import cast, safe_bind
 
 yaml = YAML(typ="safe", pure=True)
 
@@ -42,7 +42,8 @@ in_js_mode, in_upsert_mode, do_eval_templates = False, False, True
 
 @contextmanager
 def js_mode():
-    """Enable accessing mapping items via attr access, kinda like JS."""
+    """Enable accessing `Node` children via attr access, kinda like in JS. Used when evaluating templates, since we want `${key1.key2.key3}` to resolve to `key1["key2"]["key3"]`."""
+
     global in_js_mode
     prev_mode = in_js_mode
     in_js_mode = True
@@ -54,7 +55,8 @@ def js_mode():
 
 @contextmanager
 def py_mode():
-    """Disable accessing mapping items via attr access."""
+    """Disable accessing `Node` children via attr access, like in Python by default. When handling "Python-internal" stuff during template evaluation, we must disable access by attr access to avoid unexpected behavior."""
+
     global in_js_mode
     prev_mode = in_js_mode
     in_js_mode = False
@@ -66,7 +68,7 @@ def py_mode():
 
 @contextmanager
 def upsert_mode(mode=True):
-    """Automatically create nodes on access, if not existent."""
+    """Automatically create a child `Node` on access, if it doesn't exist."""
     global in_upsert_mode
     prev_mode = in_upsert_mode
     in_upsert_mode = mode
@@ -88,20 +90,16 @@ def eval_templates(mode=True):
         do_eval_templates = prev_mode
 
 
-locator = pp.Empty().setParseAction(lambda s, l, t: l)
+class NodeLocals:
+    """A quasi-`locals()` mapping for config nodes."""
 
-
-def locatedExpr(expr):
-    return pp.Group(locator("start") + expr("value") + locator("end"))
-
-
-class Locals:
     def __init__(self, node: "Node"):
         self.node = node
+        # self._pydevd is necessary for python debugger to work
         self._pydevd = {}
 
     def up(self):
-        return Locals(self.node.parent)
+        return NodeLocals(self.node.parent)
 
     def __getitem__(self, var_name: str):
         if var_name in self._pydevd:
@@ -120,25 +118,34 @@ class Locals:
         self._pydevd[name] = value
 
 
+locator = pp.Empty().setParseAction(lambda s, l, t: l)
+
+
+def locatedExpr(expr):
+    return pp.Group(locator("start") + expr("value") + locator("end"))
+
+
 class TemplateEngine:
+    """An engine for evaluating `${...}` items."""
+
     EXPR = locatedExpr(pp.nestedExpr("${", "}"))
     EVAL_RE = r"^((?P<resolver>[\w]+):)?(?P<expr>.*)$"
     VAR_RE = r"^((?P<up>\.*)(?P<var>[a-zA-Z0-9_\.]+))$"
 
     @classmethod
-    def render(self, text: str, locals: Locals):
+    def render(self, text: str, locals: NodeLocals):
         exprs = []
         for m in self.EXPR.searchString(text).asList():
             beg, _, end = m[0]
             exprs.append((beg, end))
 
         if len(exprs) == 1 and exprs[0] == (0, len(text)):
-            return self.eval(text[2:-1], locals)
+            return self._eval(text[2:-1], locals)
 
         cur, res = 0, []
         for beg, end in exprs:
             res.append(text[cur:beg])
-            eval_r = self.eval(text[beg + 2 : end - 1], locals)
+            eval_r = self._eval(text[beg + 2 : end - 1], locals)
             if not isinstance(eval_r, str):
                 eval_r = str(eval_r)
             res.append(eval_r)
@@ -147,7 +154,7 @@ class TemplateEngine:
         return "".join(res)
 
     @classmethod
-    def eval(self, expr: str, locals: Locals):
+    def _eval(self, expr: str, locals: NodeLocals):
         m = re.match(self.VAR_RE, expr)
         if m is not None:
             up_count = max(len(m["up"]) - 1, 0)
@@ -171,6 +178,13 @@ class TemplateEngine:
 
 
 class Node(MutableMapping):
+    """A config node.
+
+    Represents a YAML node (dict, list or scalar). Due to the presence of templates, we can't just use native Python classes, for example due to having to keep track of "variables" accessible from a given node, and having to automatically evaluate templates on access, if neccessary.
+
+    The `value` passed to the constructor is modified in-place.
+    """
+
     def __init__(self, value: Any, parent: Node | None = None):
         self.value = value
         self.parent = parent
@@ -211,7 +225,7 @@ class Node(MutableMapping):
             return False
 
     def render(self, value):
-        return TemplateEngine.render(value, Locals(self))
+        return TemplateEngine.render(value, NodeLocals(self))
 
     def __setitem__(self, key, value):
         with py_mode():
@@ -294,6 +308,8 @@ def apply_preset(base: dict, preset: dict):
 
 
 def apply_presets(base: dict, all_presets: dict, presets: list[str]):
+    """Apply a set of presets to a config object."""
+
     base, all_presets = Node(base), Node(all_presets)
 
     for name in presets:
@@ -398,3 +414,32 @@ def cli(
         exit(0)
 
     return cfg
+
+
+class Dynamic:
+    """A config type for "dynamically typed" objects.
+
+    Typical use case is as follows: when you design a config file for your training procedure, and want to leave e.g. backbone or optimizer choice completely to the user, you can add them as `Dynamic` objects. A following example YAML config:
+
+    ```
+    optimizer:
+      $class: torch.optim.AdamW
+      lr: 3e-4
+      eps: 1e-5
+    ```
+
+    is converted to `optimizer: Dynamic`, and `optimizer.create()` returns an instance of `torch.optim.AdamW`.
+    """
+
+    def __init__(self, **kwargs):
+        cls: str = kwargs["$class"]
+        index = cls.rfind(".")
+        if index < 0:
+            raise RuntimeError(f"$class value `{cls}` needs to be fully qualified.")
+        module = importlib.import_module(cls[:index])
+        self.cls = getattr(module, cls[index + 1 :])
+        del kwargs["$class"]
+        self._ctor = safe_bind(self.cls, **kwargs)
+
+    def create(self, *args, **kwargs):
+        return self._ctor(*args, **kwargs)

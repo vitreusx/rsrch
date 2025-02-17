@@ -47,9 +47,11 @@ def extract_features_with_hook(module: nn.Module):
     """Extract intermediate features (i.e. outputs of module's submodules) from the forward calls of `module`.
 
     :param module: Torch module to be "hacked" to extract features.
-    :returns: A pair `(features, hook)`, where:
-    - `features` is a dictionary populated with the features;
-    - `hook` has a method `remove`, which can be used to stop retrieving the features.
+
+    :return: A pair `(features, hook)`, where:
+
+        - `features` is a dictionary populated with the features;
+        - `hook` object has a method `remove`, which can be used to stop retrieving the features.
     """
 
     hook = ExtractFeaturesHook(module)

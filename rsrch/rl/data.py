@@ -41,6 +41,7 @@ class Buffer(MutableMapping):
         del self.data[seq_id]
 
     def reset(self, obs: dict) -> int:
+        """Save a new episode to the buffer, passing the initial observation."""
         seq_id = self._next_id
         self._next_id += 1
         seq = [obs]
@@ -48,6 +49,7 @@ class Buffer(MutableMapping):
         return seq_id
 
     def step(self, seq_id: int, act, next_obs: dict):
+        """Save an environment step, passing the action and the subsequent observation."""
         seq = self.data[seq_id]
         seq.append({**next_obs, "act": act})
 
