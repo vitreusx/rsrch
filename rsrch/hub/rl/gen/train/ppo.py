@@ -6,8 +6,12 @@ import numpy as np
 import torch
 from torch import Tensor, nn
 
+from rsrch import spaces
 import rsrch.distributions as D
+from rsrch.nn.optim import ScaledOptimizer
+from rsrch.nn.utils import over_seq
 from rsrch.rl.utils import polyak
+from rsrch.utils.config import Dynamic
 
 from . import alpha
 
@@ -20,6 +24,14 @@ class Data(NamedTuple):
     ret: Tensor
     val: Tensor
     weight: Tensor
+
+
+@dataclass
+class Slices:
+    obs: Tensor
+    act: Tensor
+    reward: Tensor
+    term: Tensor
 
 
 @cache
@@ -48,14 +60,14 @@ def gen_adv_est(
 ):
     """Generalized Advantage Estimation (GAE).
 
-    :param reward: Tensor $r_{1:L}$ of shape (L, N) of rewards upon arriving at
+    :param reward: Tensor :math:`r_{1:L}` of shape (L, N) of rewards upon arriving at
         the state.
-    :param value: Tensor $v_{0:L}$ of shape (L+1, N) of value estimates for
+    :param value: Tensor :math:`v_{0:L}` of shape (L+1, N) of value estimates for
         each state.
-    :param gamma: Tensor $\gamma_{0:L}$ of shape (L+1, N) of $\gamma$ discounts
-        for each state. Usually, $\gamma_t = \gamma$ if state is non-terminal,
-        and $\gamma_t = 0$ for terminal and post-terminal states.
-    :param gae_lambda: GAE's $\lambda$ discount parameter.
+    :param gamma: Tensor :math:`\gamma_{0:L}` of shape (L+1, N) of
+    :math:`\gamma` discounts for each state. Usually, :math:`\gamma_t = \gamma`
+    if state is non-terminal, and :math:`\gamma_t = 0` for terminal and post-terminal states.
+    :param gae_lambda: GAE's :math:`\lambda` discount parameter.
     :return: A pair `(adv, ret)` of advantage and return estimates for all
         states except for the last one.
     """
@@ -84,16 +96,26 @@ class Config:
     vf_coef: float
     rew_fn: Literal["id", "sign", "tanh"]
     target_critic: polyak.Config | None
+    actor_opt: Dynamic[torch.optim.Optimizer]
+    critic_opt: Dynamic[torch.optim.Optimizer]
 
 
 class Actor(nn.Module):
-    def __call__(self, state: Tensor) -> D.Distribution:
-        ...
+    """PPO actor interface."""
+
+    act_space: spaces.torch.Space
+
+    def __call__(self, state: Tensor) -> D.Distribution: ...
+
+    def forward_features(self, features: Tensor) -> Tensor: ...
 
 
 class Critic(nn.Module):
-    def __call__(self, state: Tensor) -> Tensor:
-        ...
+    """PPO critic interface."""
+
+    encoder: nn.Module | None
+
+    def __call__(self, state: Tensor) -> Tensor: ...
 
 
 class Trainer:
@@ -109,43 +131,28 @@ class Trainer:
         self.actor = actor
         device = next(actor.parameters()).device
 
-        self.critic = make_critic(cfg.critic, actor).to(device)
+        self.critic = make_critic().to(device)
 
         if self.cfg.target_critic is not None:
-            self.critic_t = Critic(cfg.critic, actor).to(device)
+            self.critic_t = make_critic().to(device)
             polyak.sync(self.critic, self.critic_t)
             self.update_target = polyak.Polyak(
                 source=self.critic,
                 target=self.critic_t,
-                **self.cfg.target_critic,
+                **vars(self.cfg.target_critic),
             )
         else:
             self.critic_t = None
 
-        self.opt = self._make_opt(
-            [
-                {"params": self.actor.parameters(), "cfg": cfg.actor.opt},
-                {"params": self.critic.parameters(), "cfg": cfg.critic.opt},
-            ]
-        )
+        self.actor_opt = self.cfg.actor_opt.create(self.actor.parameters())
+        self.actor_opt = ScaledOptimizer(self.actor_opt)
+
+        self.critic_opt = self.cfg.critic_opt.create(self.critic.parameters())
+        self.critic_opt = ScaledOptimizer(self.critic_opt)
 
         self.alpha = alpha.Alpha(cfg.alpha, actor.act_space, device)
 
-    def _make_opt(self, groups):
-        types = [group["cfg"]["type"] for group in groups]
-        assert all(type == types[0] for type in types)
-        cls = find_class(torch.optim, types[0])
-
-        opt_groups = []
-        for group in groups:
-            cfg = {**group["cfg"]}
-            del cfg["type"]
-            opt_groups.append({"params": group["params"], **cfg})
-
-        opt = cls(opt_groups)
-        return ScaledOptimizer(opt)
-
-    def _forward_ac(self, obs: Tensor):
+    def _forward(self, obs: Tensor):
         if self.critic.encoder is None:
             policy, features = self.actor.forward_features(obs)
             val = self.critic(features)
@@ -175,7 +182,7 @@ class Trainer:
                 weight = data.weight[idxes]
 
                 with self.autocast():
-                    new_policy, new_value = self._forward_ac(data.obs[idxes])
+                    new_policy, new_value = self._forward(data.obs[idxes])
                     new_logp = new_policy.log_prob(data.act[idxes])
                     log_ratio = new_logp - data.logp[idxes]
                     ratio = log_ratio.exp()
@@ -193,6 +200,11 @@ class Trainer:
                     )
                     policy_loss = (weight * torch.max(t1, t2)).mean()
 
+                    new_ent = new_policy.entropy()
+                    ent_loss = self.alpha.value * (weight * -new_ent).mean()
+
+                    actor_loss = policy_loss + ent_loss
+
                     if self.cfg.clip_vloss:
                         clipped_v = data.val[idxes] + (
                             new_value - data.val[idxes]
@@ -204,12 +216,9 @@ class Trainer:
                         v_losses = (new_value - data.ret[idxes]).square()
                     v_loss = self.cfg.vf_coef * (weight * v_losses).mean()
 
-                    new_ent = new_policy.entropy()
-                    ent_loss = self.alpha.value * (weight * -new_ent).mean()
+                self.actor_opt.step(actor_loss, clip_grad=self.cfg.clip_grad)
+                self.critic_opt.step(v_loss, clip_grad=self.cfg.clip_grad)
 
-                    loss = policy_loss + ent_loss + v_loss
-
-                self.opt.step(loss, self.cfg.clip_grad)
                 if self.critic_t is not None:
                     self.update_target.step()
                 if self.alpha.adaptive:
@@ -219,9 +228,10 @@ class Trainer:
             mets = {
                 "ratio": ratio.mean(),
                 "adv": true_adv.mean(),
-                "policy_loss": policy_loss,
+                "policy_loss": policy_loss.detach(),
+                "actor_loss": actor_loss.detach(),
                 "entropy": new_ent.mean(),
-                "v_loss": v_loss,
+                "v_loss": v_loss.detach(),
                 "value": data.val.mean(),
             }
 
@@ -236,7 +246,7 @@ class Trainer:
         weight = torch.cat([torch.ones_like(cont[:1]), cont[:-1]])
         weight = torch.cumprod(weight, 0)[:-1]
 
-        policy, val = over_seq(self._forward_ac)(batch.obs)
+        policy, val = over_seq(self._forward)(batch.obs)
         logp = policy[:-1].log_prob(batch.act)
 
         if self.critic_t is None:
@@ -272,7 +282,7 @@ class Trainer:
         all_obs = torch.cat([seq.obs for seq in batch])
         act = torch.cat([seq.act for seq in batch])
 
-        policy, value = self._forward_ac(all_obs)
+        policy, value = self._forward(all_obs)
 
         if self.critic_t is None:
             value_t = value

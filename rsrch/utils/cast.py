@@ -123,68 +123,108 @@ def cast(x: Any, t: Type[T]) -> T:
         return x
 
     else:
-        if not isinstance(x, dict):
-            raise ValueError(
-                "Casting to arbitrary types is supported only for dicts."
-            ) from None
-
         sig = inspect.signature(t)
         params = [*sig.parameters.values()]
 
-        if any(p.kind == p.POSITIONAL_ONLY for p in params):
-            raise ValueError(
-                f"Casting to {orig_t} is forbidden due to presence of positional-only parameters."
-            ) from None
-
-        required = set()
-        for name, param in sig.parameters.items():
-            if param.default == inspect._empty:
-                required.add(name)
-
-        missing = [k for k in required if k not in x]
-        if len(missing) > 0:
-            if len(missing) == 1:
-                missing_list = f"{missing[0]}"
+        def get_type_from_ann(ann):
+            if ann == inspect._empty:
+                return Any
             else:
-                missing_list = ", ".join(missing[:-1]) + " and " + missing[-1]
-            raise ValueError(
-                f"Following parameters are missing: {missing_list}"
-            ) from None
+                return ann
 
-        allowed = {*sig.parameters}
-        extra = [k for k in x if k not in allowed]
-        if len(extra) > 0:
-            if len(extra) == 1:
-                extra_list = f"{extra[0]}"
-            else:
-                extra_list = ", ".join(extra[:-1]) + " and " + extra[-1]
-            raise ValueError(
-                f"Following parameters are superfluous: {extra_list}"
-            ) from None
+        if isinstance(x, list):
+            if any(p.kind == p.KEYWORD_ONLY or p.kind == p.VAR_KEYWORD for p in params):
+                raise ValueError(
+                    f"Casting to {orig_t} from a list is forbidden due to presence of keyword-only parameters."
+                ) from None
 
-        values = {}
-        for name, param in sig.parameters.items():
-            if name in x:
-                param_type = param.annotation
-                if param_type == inspect._empty:
-                    param_type = Any
-                try:
-                    values[name] = cast(x[name], param_type)
-                except Exception as e:
-                    lines = [
-                        f"Casting value for '{name}' to {param_type} raised error:",
-                        indent(str(e), " " * 2),
-                    ]
-                    raise ValueError("\n".join(lines)) from None
+            values = []
+            if len(params) > 0:
+                if params[-1].kind == params[1].VAR_KEYWORD:
+                    if len(x) < len(params) - 1:
+                        raise ValueError("Not enough arguments.") from None
+                    for v, p in zip(x, params[:-1]):
+                        v_type = get_type_from_ann(p.annotation)
+                        values.append(cast(v, v_type))
+                    if len(x) >= len(params):
+                        var_type = get_type_from_ann(params[-1].annotation)
+                        for v in x[len(params) - 1 :]:
+                            values.append(cast(v, var_type))
+                else:
+                    if len(x) != len(params):
+                        raise ValueError("Incorrect number of arguments.") from None
+                    for v, p in zip(x, params):
+                        v_type = get_type_from_ann(p.annotation)
+                        values.append(cast(v, v_type))
 
-        return t(**values)
+            return t(*values)
+
+        elif isinstance(x, dict):
+            if any(
+                p.kind == p.POSITIONAL_ONLY or p.kind == p.VAR_POSITIONAL
+                for p in params
+            ):
+                raise ValueError(
+                    f"Casting to {orig_t} from a dict is forbidden due to presence of positional-only parameters."
+                ) from None
+
+            required = set()
+            for name, param in sig.parameters.items():
+                if param.default == inspect._empty:
+                    required.add(name)
+
+            missing = [k for k in required if k not in x]
+            if len(missing) > 0:
+                if len(missing) == 1:
+                    missing_list = f"{missing[0]}"
+                else:
+                    missing_list = ", ".join(missing[:-1]) + " and " + missing[-1]
+                raise ValueError(
+                    f"Following parameters are missing: {missing_list}"
+                ) from None
+
+            allowed = {*sig.parameters}
+            extra = [k for k in x if k not in allowed]
+            if len(extra) > 0:
+                if len(extra) == 1:
+                    extra_list = f"{extra[0]}"
+                else:
+                    extra_list = ", ".join(extra[:-1]) + " and " + extra[-1]
+                raise ValueError(
+                    f"Following parameters are superfluous: {extra_list}"
+                ) from None
+
+            values = {}
+            for name, param in sig.parameters.items():
+                if name in x:
+                    param_type = param.annotation
+                    if param_type == inspect._empty:
+                        param_type = Any
+                    try:
+                        values[name] = cast(x[name], param_type)
+                    except Exception as e:
+                        lines = [
+                            f"Casting value for '{name}' to {param_type} raised error:",
+                            indent(str(e), " " * 2),
+                        ]
+                        raise ValueError("\n".join(lines)) from None
+
+            return t(**values)
+
+        else:
+            if len(params) != 1:
+                raise ValueError(
+                    f"Casting to {orig_t} from a scalar is only allowed, if the type is constructible from a single value."
+                )
+
+            return t(cast(x, get_type_from_ann(params[0].annotation)))
 
 
 P = ParamSpec("R")
 R = TypeVar("R")
 
 
-def safe_bind(
+def safe_partial(
     func: Callable[P, R],
     *args: P.args,
     **kwargs: P.kwargs,
@@ -238,6 +278,6 @@ def typesafe(func: Callable[P, R]) -> Callable[P, R]:
 
     @wraps(func)
     def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
-        return safe_bind(func, *args, **kwargs)()
+        return safe_partial(func, *args, **kwargs)()
 
     return wrapped

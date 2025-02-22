@@ -81,7 +81,13 @@ cast_action = CastActionF()
 class Envpool(VecEnv):
     """A vec env created via envpool."""
 
-    def __init__(self, task_id: str, obs_f=None, act_f=None, **kwargs):
+    def __init__(
+        self,
+        task_id: str,
+        obs_f: Callable[[np.ndarray], np.ndarray] | None = None,
+        act_f: Callable[[np.ndarray], np.ndarray] | None = None,
+        **kwargs,
+    ):
         self.pool = envpool.make(task_id, env_type="gymnasium", **kwargs)
         self.obs_f = obs_f
         self.act_f = act_f

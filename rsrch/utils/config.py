@@ -11,13 +11,13 @@ from collections.abc import MutableMapping
 from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, Generic, TypeVar
 
 import numpy as np
 import pyparsing as pp
 from ruamel.yaml import YAML
 
-from .cast import cast, safe_bind
+from .cast import cast, safe_partial
 
 yaml = YAML(typ="safe", pure=True)
 
@@ -416,7 +416,10 @@ def cli(
     return cfg
 
 
-class Dynamic:
+T = TypeVar("T")
+
+
+class Dynamic(Generic[T]):
     """A config type for "dynamically typed" objects.
 
     Typical use case is as follows: when you design a config file for your training procedure, and want to leave e.g. backbone or optimizer choice completely to the user, you can add them as `Dynamic` objects. A following example YAML config:
@@ -429,6 +432,8 @@ class Dynamic:
     ```
 
     is converted to `optimizer: Dynamic`, and `optimizer.create()` returns an instance of `torch.optim.AdamW`.
+
+    One can use a generic annotation (`Dynamic[T]`) to provide a hint, that the constructed value is of type `T`.
     """
 
     def __init__(self, **kwargs):
@@ -437,9 +442,9 @@ class Dynamic:
         if index < 0:
             raise RuntimeError(f"$class value `{cls}` needs to be fully qualified.")
         module = importlib.import_module(cls[:index])
-        self.cls = getattr(module, cls[index + 1 :])
+        self.cls: type = getattr(module, cls[index + 1 :])
         del kwargs["$class"]
-        self._ctor = safe_bind(self.cls, **kwargs)
+        self._ctor = safe_partial(self.cls, **kwargs)
 
-    def create(self, *args, **kwargs):
+    def create(self, *args, **kwargs) -> T:
         return self._ctor(*args, **kwargs)

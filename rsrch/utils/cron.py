@@ -1,7 +1,13 @@
 from typing import Callable
 
 
-class Every:
+class Flag:
+    """Flag class."""
+
+    def __bool__(self): ...
+
+
+class Every(Flag):
     """A flag for running actions periodically.
 
     Formally, the flag itself doesn't perform actions, but rather provides a way to check (via bool conversion) if the action should be performed, and for how long.
@@ -62,7 +68,7 @@ class Every:
         return False
 
 
-class Until:
+class Until(Flag):
     """A flag for performing action until a given step value."""
 
     def __init__(
@@ -77,14 +83,14 @@ class Until:
         return self.step_fn() <= self.max_value
 
 
-class Never:
+class Never(Flag):
     """A flag for never performing an action."""
 
     def __bool__(self):
         return False
 
 
-class Always:
+class Always(Flag):
     """A flag for always performing an action."""
 
     def __bool__(self):

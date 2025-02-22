@@ -19,7 +19,7 @@ class Config:
     min_value: float = 1e-8
     target: sched.Spec | None = None
     mode: Literal["abs", "rel", "eps"] = "rel"
-    opt: Dynamic | None = None
+    opt: Dynamic[torch.optim.Optimizer] | None = None
 
 
 class Alpha(nn.Module):
@@ -43,7 +43,7 @@ class Alpha(nn.Module):
             self.log_value = nn.Parameter(torch.tensor([log_value], device=device))
             self.min_log_value = math.log(self.cfg.min_value)
             self.value = math.exp(self.log_value.item())
-            self.opt: torch.optim.Optimizer = self.cfg.opt.create([self.log_value])
+            self.opt = self.cfg.opt.create([self.log_value])
             self._discrete = isinstance(
                 act_space,
                 (spaces.torch.Discrete, spaces.torch.OneHot),
@@ -62,7 +62,7 @@ class Alpha(nn.Module):
             # NOTE: For some continuous spaces, maximum entropy is negative.
             return value * self.max_ent
         elif self.cfg.mode == "eps":
-            # A rough proxy for an entropy of a mixture of an optimal (Dirac) and a random (uniform) distribution.
+            # A rough proxy for an entropy of a deterministic policy with noise added.
             if self._discrete:
                 # Discrete scale ~ normalized minimum probability for each action
                 n = self.act_space.n
@@ -93,7 +93,10 @@ class Alpha(nn.Module):
 
     def save(self):
         if self.adaptive:
-            return {"state": self.state_dict(), "opt": self.opt.state_dict()}
+            return {
+                "state": self.state_dict(),
+                "opt": self.opt.state_dict(),
+            }
         else:
             return {}
 
