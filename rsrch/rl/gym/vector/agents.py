@@ -91,10 +91,19 @@ class Markov(VecAgent, ABC):
 
 
 class RandomVecAgent(VecAgent):
-    def __init__(self, envs: VecEnv):
+    def __init__(
+        self,
+        envs: VecEnv | None = None,
+        obs_space: Any | None = None,
+        act_space: Any | None = None,
+    ):
         super().__init__()
-        self.obs_space = envs.obs_space
-        self.act_space = envs.act_space
+        if obs_space is None:
+            obs_space = envs.obs_space
+        self.obs_space = obs_space
+        if act_space is None:
+            act_space = envs.act_space
+        self.act_space = act_space
 
     def policy(self, idxes: np.ndarray):
         return self.act_space.sample((len(idxes),))

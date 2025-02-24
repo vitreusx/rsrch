@@ -1,19 +1,23 @@
+import os
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
 from typing import Literal, Sequence
 
+import ale_py
 import gymnasium
 import numpy as np
 import torch
-from scipy.stats import special_ortho_group
 
 from rsrch import spaces
 from rsrch.rl.gym.wrappers import VecRecordStats
 
 from .. import data, gym
 from .utils import GymnasiumRecordStats, MapSeq, StackSeq
+
+gymnasium.register_envs(ale_py)
+
 
 ObsType = Literal["rgb", "grayscale", "ram"]
 
@@ -152,6 +156,30 @@ class ToChannelFirst(gymnasium.ObservationWrapper):
         return np.transpose(x, (2, 0, 1))
 
 
+class FixRender(gymnasium.Wrapper):
+    def __init__(self, env: gymnasium.Env):
+        super().__init__(env)
+
+    def reset(self, *, seed=None, options=None):
+        result = super().reset(seed=seed, options=options)
+        self._save_frame(result)
+        return result
+
+    def _save_frame(self, result):
+        frame: np.ndarray = result[0]
+        if len(frame.shape) == 3 and frame.shape[-1] == 1:
+            frame = frame[..., -1]
+        self._cur_frame = frame
+
+    def step(self, action):
+        result = super().step(action)
+        self._save_frame(result)
+        return result
+
+    def render(self):
+        return self._cur_frame
+
+
 class TransformEnv(gym.EnvWrapper):
     def __init__(self, env: gym.Env, obs_f, act_f):
         super().__init__(env)
@@ -276,37 +304,40 @@ class BufferWrapper(data.Wrapper):
 
 
 class SDK:
+    """An env SDK for Atari Learning Environment (ALE).
+
+    ## Tensor format
+
+    The observations received by the (vec) agent are either:
+
+    - if `obs_type` is not `ram`: a batch of images, a tensor of shape `(N, C * S, H, W)`, of dtype `float32` with values in `[0.0, 1.0]`, where `C` is # of channels (3 if `obs_type` is `rgb`, 1 if `grayscale`), and `S` is the stack number (`stack_num`), or `1` if not used.
+    - if `obs_type` is `ram`: a batch of RAM states, a tensor of shape `(N, 128 * S)`, of dtype `long` with values in `[0, 255]`, and `S` is the stack number.
+
+    The actions produced must be a tensor of shape `(N, A)`, where `A` is the action space size, and be of dtype `long`.
+    """
+
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.randomize = False
-        self._derive_spec()
+
+        s = cfg.stack_num or 1
+        if cfg.obs_type == "ram":
+            self.obs_space = spaces.torch.Box((128 * s,), dtype=torch.long)
+        else:
+            if isinstance(cfg.screen_size, tuple):
+                h, w = cfg.screen_size
+            else:
+                h, w = cfg.screen_size, cfg.screen_size
+            c = {"grayscale": 1, "rgb": 3}[cfg.obs_type]
+            self.obs_space = spaces.torch.Image((c * s, h, w), dtype=torch.float32)
+
+        dummy_env = gymnasium.make(f"ALE/{cfg.env_id}-v5")
+        assert isinstance(dummy_env.action_space, gymnasium.spaces.Discrete)
+        self.act_space = spaces.torch.Discrete(dummy_env.action_space.n)
+
         self.id = self.cfg.env_id
         if self.cfg.randomize:
             self._setup_randomize()
-
-    def _derive_spec(self):
-        env = self._env(mode="val", seed=0, render=False)
-        buf = self.wrap_buffer(data.Buffer())
-
-        seq_id = buf.reset(env.reset())
-        act = env.act_space.sample()
-        next_obs, _ = env.step(act)
-        buf.step(seq_id, act, next_obs)
-
-        step = buf[seq_id][-1]
-
-        act = step["act"]
-        assert isinstance(act, torch.Tensor)
-        assert act.dtype == torch.long and len(act.shape) == 0
-        assert isinstance(env.act_space, spaces.np.Discrete)
-        self.act_space = spaces.torch.Discrete(env.act_space.n)
-
-        obs = step["obs"]
-        assert isinstance(obs, torch.Tensor)
-        if self.cfg.obs_type == "ram":
-            self.obs_space = spaces.torch.Tensor(obs.shape, dtype=obs.dtype)
-        else:
-            self.obs_space = spaces.torch.Image(obs.shape)
 
     def _setup_randomize(self):
         self.act_perm = np.random.permutation(self.act_space.n)
@@ -324,7 +355,12 @@ class SDK:
         mode: Literal["train", "val"] = "train",
         render: bool = False,
         seed: int | None = None,
+        **kwargs,
     ):
+        if len(kwargs) > 0:
+            param_list = ", ".join(f"'{kw}'" for kw in kwargs)
+            raise RuntimeError(f"Following parameters are unsupported: {param_list}")
+
         if seed is None:
             seed = np.random.randint(int(2**31))
 
@@ -442,6 +478,8 @@ class SDK:
                 grayscale_newaxis=True,
                 scale_obs=False,
             )
+            if render:
+                env = FixRender(env)
             env = ToChannelFirst(env)
         else:
             env = NoopResetEnv(env, self.cfg.noop_max)
@@ -474,6 +512,21 @@ class SDK:
         )
 
     def rollout(self, envs: gym.VecEnv, agent: gym.VecAgent):
+        """Perform a rollout of Atari vec env.
+
+        :return: A sequence of `(env_idx, (step, final))` pairs, where `step` dict has a following fields:
+
+        - `obs`: an image or RAM dump, as described in the tensor format section, except that (1) the tensors are Numpy arrays, (2) the values are unnormalized, of dtype `uint8` and values in `[0, 255]`, and (3) the stacking is bypassed, to improve memory usage.
+        - if step is non-initial:
+            - `act`: action perfomed to reach current state, as an `int`.
+            - `reward`: reward upon arriving at the current state, as a `float`.
+            - `term`, `trunc`: boolean termination/truncation values.
+        - `total_steps`: a global counter of (base) environment steps in the current rollout. Because of `frame_skip` and `noop_max`, it may be difficult to keep track of the actual number of environment steps performed, which may introduce mistakes in comparing different RL algorithms' performance. Thus, a "canonical" step value is provided.
+        - `ep_length`: length of the current (actual/ALE) episode, in terms of actions performed. If `term_on_life_loss` is true, MDP resets (`final` in `(step, final)`) do not necessarily correspond to actual/ALE environment resets, which are in turn used for comparison and evaluation purposes. Thus, a no-`term_on_life_loss` episode length is provided.
+        - `ep_returns`: total rewards in the current (actual/ALE) episode. See `ep_length` for explanation.
+        - `render`: if `envs` was created with `render=True`, a Pillow image with the current observation is attached.
+        """
+
         agent = VecAgentWrapper(
             agent,
             stack_num=self.cfg.stack_num,

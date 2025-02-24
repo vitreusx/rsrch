@@ -8,6 +8,7 @@ import cloudpickle
 import envpool
 import gymnasium as gym
 import numpy as np
+from PIL import Image
 
 from rsrch import spaces
 from rsrch.spaces.utils import from_gym
@@ -191,7 +192,7 @@ class GymEnv(Env):
         self.seed = None
         res = {"obs": obs, **info}
         if self.render:
-            res["render"] = self.env.render()
+            res["render"] = Image.fromarray(self.env.render())
         return res
 
     def step(self, act):
@@ -204,7 +205,7 @@ class GymEnv(Env):
             **info,
         }
         if self.render:
-            res["render"] = self.env.render()
+            res["render"] = Image.fromarray(self.env.render())
         final = term or trunc
         return res, final
 

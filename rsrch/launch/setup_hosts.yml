@@ -3,6 +3,7 @@
   vars:
     conda_prefix: ~/miniforge3
     conda: "{{ conda_prefix }}/bin/conda"
+    env_name: rsrch
     poetry: ~/.local/bin/poetry
     repo_url: https://github.com/vitreusx/rsrch
 
@@ -11,6 +12,11 @@
       ansible.builtin.fail:
         msg: User has not provided all variables necessary to run script.
       when: repo_dir is undefined or runs_dir is undefined
+
+    - name: Check if conda is installed
+      ansible.builtin.stat:
+        path: "{{ conda_prefix }}"
+      register: conda_stat
 
     - name: Install conda
       ansible.builtin.shell:
@@ -22,20 +28,34 @@
           chmod a+x /tmp/Miniforge3.sh
           /tmp/Miniforge3.sh -b -p "{{ conda_prefix }}"
           rm -f /tmp/Miniforge3.sh
+      when: not conda_stat.stat.exists
 
-    - name: Set up base conda env
+    - name: Check if conda env exists
       ansible.builtin.shell:
         cmd: |-
           eval "$({{ conda }} shell.bash hook)"
-          conda install -y python=3.10 tmux parallel git conda-forge::jq
+          conda list --name {{ env_name }}
+      register: env_check
+      changed_when: true
+
+    - name: Set up conda env for the repo
+      ansible.builtin.shell:
+        cmd: |-
+          eval "$({{ conda }} shell.bash hook)"
+          conda env create -n {{ env_name }} \
+            -y python=3.10 tmux parallel git conda-forge::jq
+          conda activate {{ env_name }}
           python3 -m pip install pipx keyring
           python3 -m pipx install poetry
+      when: env_check.rc != 0
+      changed_when: env_check.rc != 0
 
     - name: Fetch commit SHA for the repo
-      ansible.builtin.shell:
+      ansible.builtin.command:
         cmd: git rev-parse HEAD
       delegate_to: localhost
       register: commit_sha
+      changed_when: true
 
     - name: Set up clones of the repo on the remotes
       ansible.builtin.git:
@@ -49,6 +69,7 @@
         cmd: |-
           set -e
           eval "$({{ conda }} shell.bash hook)"
+          conda activate {{ env_name }}
           python -m keyring --disable 2>/dev/null || true
           POETRY_NO_INTERACTION=1 {{ poetry }} install --sync --without dev
         chdir: "{{ repo_dir }}"

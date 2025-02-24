@@ -4,7 +4,6 @@ from typing import Literal
 
 import cv2
 import gymnasium
-import gymnasium.wrappers.normalize
 import numpy as np
 import torch
 
@@ -200,6 +199,8 @@ class BufferWrapper(data.Wrapper):
 
 
 class SDK:
+    """An env SDK for `gymnasium` environments."""
+
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.id = cfg.env_id
@@ -217,7 +218,12 @@ class SDK:
         mode: Literal["train", "val"] = "train",
         render: bool = False,
         seed: int | None = None,
+        **kwargs,
     ):
+        if len(kwargs) > 0:
+            param_list = ", ".join(f"'{kw}'" for kw in kwargs)
+            raise RuntimeError(f"Following parameters are unsupported: {param_list}")
+
         if seed is None:
             seed = np.random.randint(int(2**31))
 
