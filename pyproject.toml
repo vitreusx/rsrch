@@ -45,6 +45,8 @@ numpy = "<2"
 dm-control = { version = "1.0.5", optional = true }
 kornia = "^0.7.3"
 datasets = "^3.2.0"
+torchmetrics = "^1.6.1"
+safetensors = "^0.5.2"
 
 
 [tool.poetry.extras]

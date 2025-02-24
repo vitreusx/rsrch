@@ -1,3 +1,4 @@
+from enum import Enum
 import inspect
 import types
 import typing
@@ -119,12 +120,17 @@ def cast(x: Any, t: Type[T]) -> T:
             raise ValueError(f"Value is not one of {t_args}") from None
         return x
 
+    elif issubclass(t, Enum):
+        if isinstance(x, str):
+            return getattr(t, x)
+        else:
+            return t(x)
+
     elif isinstance(t, type) and isinstance(x, t):
         return x
 
     else:
         sig = inspect.signature(t)
-        params = [*sig.parameters.values()]
 
         def get_type_from_ann(ann):
             if ann == inspect._empty:
@@ -133,91 +139,26 @@ def cast(x: Any, t: Type[T]) -> T:
                 return ann
 
         if isinstance(x, list):
-            if any(p.kind == p.KEYWORD_ONLY or p.kind == p.VAR_KEYWORD for p in params):
-                raise ValueError(
-                    f"Casting to {orig_t} from a list is forbidden due to presence of keyword-only parameters."
-                ) from None
-
-            values = []
-            if len(params) > 0:
-                if params[-1].kind == params[1].VAR_KEYWORD:
-                    if len(x) < len(params) - 1:
-                        raise ValueError("Not enough arguments.") from None
-                    for v, p in zip(x, params[:-1]):
-                        v_type = get_type_from_ann(p.annotation)
-                        values.append(cast(v, v_type))
-                    if len(x) >= len(params):
-                        var_type = get_type_from_ann(params[-1].annotation)
-                        for v in x[len(params) - 1 :]:
-                            values.append(cast(v, var_type))
-                else:
-                    if len(x) != len(params):
-                        raise ValueError("Incorrect number of arguments.") from None
-                    for v, p in zip(x, params):
-                        v_type = get_type_from_ann(p.annotation)
-                        values.append(cast(v, v_type))
-
-            return t(*values)
-
+            bound = sig.bind(*x)
         elif isinstance(x, dict):
-            if any(
-                p.kind == p.POSITIONAL_ONLY or p.kind == p.VAR_POSITIONAL
-                for p in params
-            ):
-                raise ValueError(
-                    f"Casting to {orig_t} from a dict is forbidden due to presence of positional-only parameters."
-                ) from None
-
-            required = set()
-            for name, param in sig.parameters.items():
-                if param.default == inspect._empty:
-                    required.add(name)
-
-            missing = [k for k in required if k not in x]
-            if len(missing) > 0:
-                if len(missing) == 1:
-                    missing_list = f"{missing[0]}"
-                else:
-                    missing_list = ", ".join(missing[:-1]) + " and " + missing[-1]
-                raise ValueError(
-                    f"Following parameters are missing: {missing_list}"
-                ) from None
-
-            allowed = {*sig.parameters}
-            extra = [k for k in x if k not in allowed]
-            if len(extra) > 0:
-                if len(extra) == 1:
-                    extra_list = f"{extra[0]}"
-                else:
-                    extra_list = ", ".join(extra[:-1]) + " and " + extra[-1]
-                raise ValueError(
-                    f"Following parameters are superfluous: {extra_list}"
-                ) from None
-
-            values = {}
-            for name, param in sig.parameters.items():
-                if name in x:
-                    param_type = param.annotation
-                    if param_type == inspect._empty:
-                        param_type = Any
-                    try:
-                        values[name] = cast(x[name], param_type)
-                    except Exception as e:
-                        lines = [
-                            f"Casting value for '{name}' to {param_type} raised error:",
-                            indent(str(e), " " * 2),
-                        ]
-                        raise ValueError("\n".join(lines)) from None
-
-            return t(**values)
-
+            bound = sig.bind(**x)
         else:
-            if len(params) != 1:
-                raise ValueError(
-                    f"Casting to {orig_t} from a scalar is only allowed, if the type is constructible from a single value."
-                )
+            bound = sig.bind(x)
 
-            return t(cast(x, get_type_from_ann(params[0].annotation)))
+        arguments = {}
+        for name, value in bound.arguments.items():
+            p = sig.parameters[name]
+            p_type = get_type_from_ann(p.annotation)
+            if p.kind == p.KEYWORD_ONLY:
+                value = {k: cast(v, p_type) for k, v in value.items()}
+            elif p.kind == p.POSITIONAL_ONLY:
+                value = tuple(cast(v, p_type) for v in value)
+            else:
+                value = cast(value, p_type)
+            arguments[name] = value
+
+        bound.arguments = arguments
+        return t(*bound.args, **bound.kwargs)
 
 
 P = ParamSpec("R")
@@ -249,7 +190,7 @@ def safe_partial(
 
         type_map[name] = arg_type
 
-    arg = sig.bind(*args, **kwargs)
+    arg = sig.bind_partial(*args, **kwargs)
     args, kwargs = [], {}
     for name, value in arg.arguments.items():
         value = cast(value, type_map[name])

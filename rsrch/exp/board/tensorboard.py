@@ -19,7 +19,7 @@ class Tensorboard(StepMixin, Board):
         self._writer = tensorboard.SummaryWriter(log_dir=str(self.dir))
 
     def add_config(self, config: dict):
-        self._writer.add_hparams(hparam_dict=flatten(config))
+        self._writer.add_hparams(hparam_dict=flatten(config), metric_dict={})
 
     def add_scalar(self, tag: str, value: Number, *, step: Step = None):
         step = self._get_step(step)
