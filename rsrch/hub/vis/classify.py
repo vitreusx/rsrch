@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Callable, Literal, TypedDict
+from typing import Callable, Iterable, Literal, TypedDict
 
 import torchmetrics
 from rsrch.nn.optim import ScaledOptimizer
@@ -12,6 +12,7 @@ from rsrch.exp import Experiment
 from rsrch.utils import cron
 import torch.nn.functional as F
 import safetensors.torch
+from PIL import Image
 
 
 @dataclass
@@ -23,48 +24,53 @@ class _Time:
 Time = float | _Time
 
 
-@dataclass
-class Config:
-    device: str
-    compute_dtype: Literal["float32", "float16", "bfloat16"]
-    train_until: Time
-    val_every: Time | None
-    save_every: Time | None
-    save_on_train_end: bool
-    batch_size: int
-
-
-class Item(TypedDict):
+class TrainItem(TypedDict):
     image: torch.FloatTensor
+    pil_image: Image.Image | None
     label: int
 
 
-class Batch(TypedDict):
+class TrainBatch(TypedDict):
     image: torch.FloatTensor
+    pil_image: list[Image.Image] | None
     label: torch.LongTensor
+
+
+def _collate_fn(batch: list[TrainItem]) -> TrainBatch:
+    return {
+        "image": torch.stack([x["image"] for x in batch]),
+        "pil_image": [x["pil_image"] for x in batch],
+        "label": torch.tensor([x["label"] for x in batch], dtype=torch.long),
+    }
 
 
 def train(
     exp: Experiment,
-    train_data: Dataset[Item],
-    val_data: Dataset[Item] | None,
+    train_data: Dataset[TrainItem],
+    val_data: Dataset[TrainItem] | None,
     model: nn.Module,
     make_opt: Callable[[list[nn.Parameter]], Optimizer],
-    cfg: Config,
+    device: str,
+    compute_dtype: Literal["float32", "float16", "bfloat16"],
+    train_until: Time,
+    val_every: Time | None,
+    save_every: Time | None,
+    save_on_train_end: bool,
+    batch_size: int,
 ):
     # "Infrastructure"
-    device = torch.device(cfg.device)
-    compute_dtype = getattr(torch, cfg.compute_dtype)
+    device = torch.device(device)
+    compute_dtype = getattr(torch, compute_dtype)
     autocast = lambda: torch.autocast(
         device.type,
         compute_dtype,
-        enabled=cfg.compute_dtype != "float32",
+        enabled=compute_dtype != "float32",
     )
 
     # Model and optimizer setup
     model.to(device)
     opt = make_opt([*model.parameters()])
-    if cfg.compute_dtype != "float32":
+    if compute_dtype != "float32":
         opt = ScaledOptimizer(opt)
 
     # Time units and should_* flags
@@ -81,7 +87,7 @@ def train(
             n, of = x, "step"
         return cron.Until(step_fns[of], n)
 
-    def make_every(x: Time | None, return_unit=False):
+    def make_every(x: Time | None):
         if x is None:
             flag = cron.Never()
             of = "step"
@@ -94,17 +100,19 @@ def train(
 
         return flag, of
 
-    should_train = make_until(cfg.train_until)
-    should_val, val_time_unit = make_every(cfg.val_every)
-    should_save, save_time_unit = make_every(cfg.save_every)
+    should_train = make_until(train_until)
+    should_val, val_time_unit = make_every(val_every)
+    should_save, save_time_unit = make_every(save_every)
+    should_save_samples = cron.Once()
 
     # Data
     train_loader = DataLoader(
         dataset=train_data,
-        batch_size=cfg.batch_size,
+        batch_size=batch_size,
         shuffle=True,
         num_workers=2,
         drop_last=True,
+        collate_fn=_collate_fn,
     )
 
     def make_train_iter():
@@ -118,19 +126,20 @@ def train(
     if val_data is not None:
         val_loader = DataLoader(
             dataset=val_data,
-            batch_size=cfg.batch_size,
+            batch_size=batch_size,
             shuffle=False,
             num_workers=2,
             drop_last=False,
+            collate_fn=_collate_fn,
         )
     else:
         val_loader = None
 
-    def move_to_device(item: Batch) -> Batch:
-        return {
-            "image": item["image"].to(device),
-            "label": item["label"].to(device=device, dtype=torch.long),
-        }
+    def move_to_device(item: TrainBatch) -> TrainBatch:
+        item = {**item}
+        item["image"] = item["image"].to(device)
+        item["label"] = item["label"].to(device)
+        return item
 
     # Training loop
 
@@ -143,7 +152,7 @@ def train(
             with torch.no_grad():
                 with autocast():
                     logits: Tensor = model(val_batch["image"])
-                    preds = F.softmax(logits, -1)
+                    probs = F.softmax(logits, -1)
 
                 if acc is None:
                     num_classes = logits.shape[-1]
@@ -153,7 +162,7 @@ def train(
                     )
                     acc.to(device)
 
-                acc.update(preds, val_batch["label"])
+                acc.update(probs, val_batch["label"])
 
         model.train()
 
@@ -181,6 +190,9 @@ def train(
 
         exp.add_scalar("train/loss", loss)
 
+        if should_save_samples:
+            ...
+
     pbar = exp.make_pbar()
 
     while should_train:
@@ -196,5 +208,66 @@ def train(
         pbar.update()
         step += 1
 
-    if cfg.save_on_train_end:
+    if save_on_train_end:
         save_model(tag="last")
+
+
+class TestItem(TypedDict):
+    image: Tensor
+
+
+class TestBatch(TypedDict):
+    image: Tensor
+
+
+class TestResult(TypedDict):
+    probs: Tensor
+    label: int
+
+
+def test(
+    test_data: Dataset[TestItem],
+    model: nn.Module,
+    device: str,
+    compute_dtype: Literal["float32", "float16", "bfloat16"],
+    batch_size: int,
+) -> Iterable[TestResult]:
+    # "Infrastructure"
+    device = torch.device(device)
+    compute_dtype = getattr(torch, compute_dtype)
+    autocast = lambda: torch.autocast(
+        device.type,
+        compute_dtype,
+        enabled=compute_dtype != "float32",
+    )
+
+    # Model and optimizer setup
+    model.to(device)
+
+    # Data
+    test_loader = DataLoader(
+        dataset=test_data,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=2,
+        drop_last=False,
+    )
+
+    def move_to_device(item: TestBatch) -> TestBatch:
+        item = {**item}
+        item["image"] = item["image"].to(device)
+        return item
+
+    # Inference loop
+    model.eval()
+    with torch.no_grad():
+        for batch in test_loader:
+            batch = move_to_device(batch)
+
+            with autocast():
+                logits: Tensor = model(batch["image"])
+                probs = F.softmax(logits, -1).cpu()
+                preds = logits.argmax(-1).cpu()
+
+            for idx in range(len(batch["image"])):
+                yield {"probs": probs[idx], "label": preds[idx].item()}

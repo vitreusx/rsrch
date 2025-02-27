@@ -95,3 +95,13 @@ class Always(Flag):
 
     def __bool__(self):
         return True
+
+
+class Once(Flag):
+    def __init__(self):
+        self._fired = False
+
+    def __bool__(self):
+        ret = not self._fired
+        self._fired = True
+        return ret
