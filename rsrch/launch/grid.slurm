@@ -4,8 +4,11 @@
 #SBATCH --requeue
 
 # Activate conda and poetry
-eval "$(~/miniforge3/bin/conda shell.bash hook)"
-source $(~/.local/bin/poetry env info --path)/bin/activate
+CONDA="${CONDA:-${HOME}/miniforge3/bin/conda}"
+eval "$("${CONDA}" shell.bash hook)"
+
+POETRY="${POETRY:-${HOME}/.local/bin/poetry}"
+source $("${POETRY}" env info --path)/bin/activate
 
 # Extract the command from the commands.txt file
 COMMAND="$(sed "${SLURM_ARRAY_TASK_ID}q;d" commands.txt)"

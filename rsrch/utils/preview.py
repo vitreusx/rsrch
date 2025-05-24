@@ -19,12 +19,12 @@ def make_grid(
             nrows = (len(images) + ncols - 1) // ncols
         else:
             raise ValueError("Either # of rows or columns must be provided.")
-        images = [*images, *(None for _ in (nrows * ncols - len(images)))]
-        grid = np.asarray(images, dtype=object)
-        grid = grid.reshape((nrows, ncols))
+        grid = [[None for _ in range(ncols)] for _ in range(nrows)]
+        for i in range(len(images)):
+            grid[i // ncols][i % ncols] = images[i]
     else:
-        grid = np.asarray(images, dtype=object)
-        nrows, ncols = grid.shape
+        grid = images
+        nrows, ncols = len(grid), len(grid[0])
 
     heights = [0 for _ in range(nrows)]
     widths = [0 for _ in range(ncols)]

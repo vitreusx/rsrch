@@ -1,6 +1,7 @@
 from functools import partial
 from numbers import Number
 
+import gymnasium
 import numpy as np
 
 
@@ -138,10 +139,17 @@ class Image(Box):
         super().__init__(shape, low=low, high=high, dtype=dtype)
 
         self.channel_last = channel_last
-        if channel_last:
-            self.height, self.width, self.num_channels = shape[-3:]
+        if len(shape) == 3:
+            if channel_last:
+                self.height, self.width, self.num_channels = shape
+            else:
+                self.num_channels, self.height, self.width = shape
+        elif len(shape) == 2:
+            self.num_channels = 1
+            self.height, self.width = shape
         else:
-            self.num_channels, self.height, self.width = shape[-3:]
+            raise RuntimeError(f"Invalid Image array shape {shape}")
+
         self.size = self.width, self.height
 
     def __repr__(self):
@@ -155,3 +163,69 @@ class Dict(dict):
         gen: np.random.Generator | None = None,
     ):
         return {key: value.sample(shape, gen) for key, value in self.items()}
+
+
+class Tuple(tuple):
+    def sample(
+        self,
+        shape: tuple[int, ...],
+        gen: np.random.Generator | None = None,
+    ):
+        return tuple(v.sample(shape, gen) for v in self)
+
+
+def from_gym(space: gymnasium.Space, guess_image: bool = True):
+    """Convert a space from OpenAI's gym to space from here."""
+    if isinstance(space, gymnasium.spaces.Dict):
+        return Dict({k: from_gym(v) for k, v in space.items()})
+    elif isinstance(space, gymnasium.spaces.Tuple):
+        return Tuple(tuple(from_gym(v) for v in space))
+    elif isinstance(space, gymnasium.spaces.Discrete):
+        return Discrete(
+            space.n,
+            dtype=space.dtype,
+        )
+    elif isinstance(space, gymnasium.spaces.Box):
+        if (
+            guess_image
+            and len(space.shape) in (2, 3)
+            and (
+                (
+                    space.dtype == np.uint8
+                    and space.low.min() == 0
+                    and space.high.max() == 255
+                )
+                or (
+                    space.dtype == np.float32
+                    and space.low.min() == 0.0
+                    and space.high.max() == 1.0
+                )
+            )
+        ):
+            return Image(space.shape, dtype=space.dtype)
+        else:
+            return Box(
+                space.shape,
+                low=space.low,
+                high=space.high,
+                dtype=space.dtype,
+            )
+    else:
+        return Array(
+            shape=space.shape,
+            dtype=space.dtype,
+        )
+
+
+def to_gym(space) -> gymnasium.Space:
+    """Convert a space from here to OpenAI gym's space format."""
+    if isinstance(space, Dict):
+        return gymnasium.spaces.Dict({k: to_gym(v) for k, v in space.items()})
+    elif isinstance(space, Tuple):
+        return gymnasium.spaces.Tuple(tuple(to_gym(v) for v in space))
+    elif isinstance(space, Discrete):
+        return gymnasium.spaces.Discrete(space.n)
+    elif isinstance(space, Box):
+        return gymnasium.spaces.Box(space.low, space.high, space.shape, space.dtype)
+    else:
+        return gymnasium.spaces.Space(shape=space.shape, dtype=space.dtype)

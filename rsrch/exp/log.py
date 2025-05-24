@@ -24,23 +24,15 @@ class ColorFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         record.color_on = self.STYLES[record.levelno]
         record.color_off = self.RESET
-        record.name = shorten(record.name, 13, placeholder="~")
+        if len(record.name) > 13:
+            record.name = record.name[:6] + "~" + record.name[-6:]
         return super().format(record)
 
 
-def add_handlers(
-    logger: logging.Logger,
-    handlers: list[tuple[logging.Handler, int]],
-):
-    for handler, level in handlers:
-        handler.setLevel(level)
-        logger.addHandler(handler)
-
-
-def setup_fmt(logger: logging.Logger, no_ansi: bool = False):
+def set_log_format(logger: logging.Logger):
     for handler in logger.handlers:
         interactive = hasattr(handler, "stream") and handler.stream.isatty()
-        if interactive and not no_ansi:
+        if interactive:
             fmt = "%(name)-13s: %(color_on)s%(levelname)-8s%(color_off)s %(message)s"
             formatter = ColorFormatter(fmt)
         else:

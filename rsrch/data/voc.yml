@@ -1,0 +1,23 @@
+classes:
+  0: background
+  1: person
+  2: bird
+  3: cat
+  4: cow
+  5: dog
+  6: horse
+  7: sheep
+  8: aeroplane
+  9: bicycle
+  10: boat
+  11: bus
+  12: cat
+  13: motorbike
+  14: train
+  15: bottle
+  16: chair
+  17: dining table
+  18: potted plant
+  19: sofa
+  20: tv/monitor
+ignore_index: 255

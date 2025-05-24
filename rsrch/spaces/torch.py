@@ -260,6 +260,15 @@ class Dict(dict):
         )
 
 
+class Tuple(tuple):
+    def sample(
+        self,
+        shape: tuple[int, ...],
+        gen: torch.Generator | None = None,
+    ):
+        return tuple(v.sample(shape, gen) for v in self)
+
+
 def np_to_torch_dtype(dtype):
     return torch.as_tensor(np.empty((), dtype=dtype)).dtype
 

@@ -1,0 +1,278 @@
+classes:
+  92:
+    name: banner
+    supercategory: textile
+  93:
+    name: blanket
+    supercategory: textile
+  94:
+    name: branch
+    supercategory: plant
+  95:
+    name: bridge
+    supercategory: building
+  96:
+    name: building-other
+    supercategory: building
+  97:
+    name: bush
+    supercategory: plant
+  98:
+    name: cabinet
+    supercategory: furniture-stuff
+  99:
+    name: cage
+    supercategory: structural
+  100:
+    name: cardboard
+    supercategory: raw-material
+  101:
+    name: carpet
+    supercategory: floor
+  102:
+    name: ceiling-other
+    supercategory: ceiling
+  103:
+    name: ceiling-tile
+    supercategory: ceiling
+  104:
+    name: cloth
+    supercategory: textile
+  105:
+    name: clothes
+    supercategory: textile
+  106:
+    name: clouds
+    supercategory: sky
+  107:
+    name: counter
+    supercategory: furniture-stuff
+  108:
+    name: cupboard
+    supercategory: furniture-stuff
+  109:
+    name: curtain
+    supercategory: textile
+  110:
+    name: desk-stuff
+    supercategory: furniture-stuff
+  111:
+    name: dirt
+    supercategory: ground
+  112:
+    name: door-stuff
+    supercategory: furniture-stuff
+  113:
+    name: fence
+    supercategory: structural
+  114:
+    name: floor-marble
+    supercategory: floor
+  115:
+    name: floor-other
+    supercategory: floor
+  116:
+    name: floor-stone
+    supercategory: floor
+  117:
+    name: floor-tile
+    supercategory: floor
+  118:
+    name: floor-wood
+    supercategory: floor
+  119:
+    name: flower
+    supercategory: plant
+  120:
+    name: fog
+    supercategory: water
+  121:
+    name: food-other
+    supercategory: food-stuff
+  122:
+    name: fruit
+    supercategory: food-stuff
+  123:
+    name: furniture-other
+    supercategory: furniture-stuff
+  124:
+    name: grass
+    supercategory: plant
+  125:
+    name: gravel
+    supercategory: ground
+  126:
+    name: ground-other
+    supercategory: ground
+  127:
+    name: hill
+    supercategory: solid
+  128:
+    name: house
+    supercategory: building
+  129:
+    name: leaves
+    supercategory: plant
+  130:
+    name: light
+    supercategory: furniture-stuff
+  131:
+    name: mat
+    supercategory: textile
+  132:
+    name: metal
+    supercategory: raw-material
+  133:
+    name: mirror-stuff
+    supercategory: furniture-stuff
+  134:
+    name: moss
+    supercategory: plant
+  135:
+    name: mountain
+    supercategory: solid
+  136:
+    name: mud
+    supercategory: ground
+  137:
+    name: napkin
+    supercategory: textile
+  138:
+    name: net
+    supercategory: structural
+  139:
+    name: paper
+    supercategory: raw-material
+  140:
+    name: pavement
+    supercategory: ground
+  141:
+    name: pillow
+    supercategory: textile
+  142:
+    name: plant-other
+    supercategory: plant
+  143:
+    name: plastic
+    supercategory: raw-material
+  144:
+    name: platform
+    supercategory: ground
+  145:
+    name: playingfield
+    supercategory: ground
+  146:
+    name: railing
+    supercategory: structural
+  147:
+    name: railroad
+    supercategory: ground
+  148:
+    name: river
+    supercategory: water
+  149:
+    name: road
+    supercategory: ground
+  150:
+    name: rock
+    supercategory: solid
+  151:
+    name: roof
+    supercategory: building
+  152:
+    name: rug
+    supercategory: textile
+  153:
+    name: salad
+    supercategory: food-stuff
+  154:
+    name: sand
+    supercategory: ground
+  155:
+    name: sea
+    supercategory: water
+  156:
+    name: shelf
+    supercategory: furniture-stuff
+  157:
+    name: sky-other
+    supercategory: sky
+  158:
+    name: skyscraper
+    supercategory: building
+  159:
+    name: snow
+    supercategory: ground
+  160:
+    name: solid-other
+    supercategory: solid
+  161:
+    name: stairs
+    supercategory: furniture-stuff
+  162:
+    name: stone
+    supercategory: solid
+  163:
+    name: straw
+    supercategory: plant
+  164:
+    name: structural-other
+    supercategory: structural
+  165:
+    name: table
+    supercategory: furniture-stuff
+  166:
+    name: tent
+    supercategory: building
+  167:
+    name: textile-other
+    supercategory: textile
+  168:
+    name: towel
+    supercategory: textile
+  169:
+    name: tree
+    supercategory: plant
+  170:
+    name: vegetable
+    supercategory: food-stuff
+  171:
+    name: wall-brick
+    supercategory: wall
+  172:
+    name: wall-concrete
+    supercategory: wall
+  173:
+    name: wall-other
+    supercategory: wall
+  174:
+    name: wall-panel
+    supercategory: wall
+  175:
+    name: wall-stone
+    supercategory: wall
+  176:
+    name: wall-tile
+    supercategory: wall
+  177:
+    name: wall-wood
+    supercategory: wall
+  178:
+    name: water-other
+    supercategory: water
+  179:
+    name: waterdrops
+    supercategory: water
+  180:
+    name: window-blind
+    supercategory: window
+  181:
+    name: window-other
+    supercategory: window
+  182:
+    name: wood
+    supercategory: solid
+  183:
+    name: other
+    supercategory: other
+ignore_index: 183

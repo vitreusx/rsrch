@@ -140,6 +140,8 @@ class SizeLimited(Wrapper):
 
 
 class Sampler:
+    """Uniform sampler."""
+
     def __init__(self):
         self._key_to_idx, self._next_idx = {}, 0
         self._idx_to_key = []
@@ -181,6 +183,8 @@ class Sampler:
 
 
 class PSampler:
+    """Prioritized sampler."""
+
     def __init__(self, init_size: int = 1024):
         self.prio_tree = rq_tree(init_size)
         self.max_tree = rq_tree(init_size, max)

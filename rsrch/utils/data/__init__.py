@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-from typing import Callable, Sequence, Tuple, TypeVar, Union
+from collections.abc import Sequence
+from typing import Callable, Tuple, TypeVar, Union
 
 import numpy as np
-import torch
-import torch.utils.data as data
-from torch.utils.data import *
-from torch.utils.data.dataloader import _collate_fn_t, _worker_init_fn_t
 
 from .samplers import *
 
@@ -15,42 +12,8 @@ Y = TypeVar("Y")
 Idx = TypeVar("Idx")
 
 
-class Dataset(data.Dataset[X]):
-    def map(self, f: Callable[[X], Y]) -> Dataset[Y]:
-        return MapDataset(self, f)
-
-
-class IterableDataset(data.IterableDataset[X]):
-    def map(self, f: Callable[[X], Y]) -> IterableDataset[Y]:
-        return MapIterableDs(self, f)
-
-
-class MapDataset(Dataset[Y]):
-    def __init__(self, ds: data.Dataset[X], f: Callable[[X], Y]):
-        super().__init__()
-        self._ds = ds
-        self._f = f
-
-    def __len__(self):
-        return len(self._ds)
-
-    def __getitem__(self, idx) -> Y:
-        return self._f(self._ds[idx])
-
-
-class MapIterableDs(IterableDataset[Y]):
-    def __init__(self, ds: data.Dataset[X], f: Callable[[X], Y]):
-        super().__init__()
-        self._ds = ds
-        self._f = f
-
-    def __iter__(self):
-        for x in self._ds:
-            yield self._f(x)
-
-
-class Subset(Dataset[X]):
-    def __init__(self, ds: Dataset[X], idxes: list[int]):
+class Subset(Sequence[X]):
+    def __init__(self, ds: Sequence[X], idxes: list[int]):
         super().__init__()
         self._ds = ds
         self._idxes = idxes
@@ -63,8 +26,8 @@ class Subset(Dataset[X]):
         return self._ds[idx]
 
 
-class Indexed(Dataset[Tuple[Idx, X]]):
-    def __init__(self, ds: Dataset[X]):
+class Indexed(Sequence[Tuple[Idx, X]]):
+    def __init__(self, ds: Sequence[X]):
         super().__init__()
         self._ds = ds
 
@@ -76,9 +39,10 @@ class Indexed(Dataset[Tuple[Idx, X]]):
 
 
 def random_split(
-    ds: Dataset[X],
+    ds: Sequence[X],
     lengths: Sequence[Union[int, float]],
-) -> Sequence[Dataset[X]]:
+    seed: int | np.random.Generator | None = None,
+) -> Sequence[Sequence[X]]:
     if isinstance(lengths[0], float):
         n = len(ds)
         pivots = np.array(lengths).cumsum()
@@ -86,29 +50,24 @@ def random_split(
         lengths = np.diff(pivots, prepend=0)
 
     pivots = np.hstack((0, lengths)).cumsum()
-    idxes = torch.randperm(n)
+    g = np.random.default_rng(seed=seed)
+    idxes = g.permutation(n)
     return [Subset(ds, idxes[start:end]) for start, end in zip(pivots[:-1], pivots[1:])]
 
 
-class Pipeline:
-    def __init__(self, dataset, *transforms):
-        self.dataset = dataset
+class Pipeline(Sequence):
+    def __init__(self, ds: Sequence, *transforms):
+        self.ds = ds
         self.transforms = transforms
 
     def __len__(self):
-        return len(self.dataset)
+        return len(self.ds)
 
     def __getitem__(self, idx):
-        return self.apply(self.dataset[idx])
-
-    def apply(self, x):
+        x = self.ds[idx]
         for func in self.transforms:
             x = func(x)
         return x
-
-    def __iter__(self):
-        for x in self.dataset:
-            yield self.apply(x)
 
 
 class MapDict:

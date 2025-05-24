@@ -19,14 +19,14 @@ def set_fully_deterministic(mode: bool):
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":16:8"
 
 
-def worker_init_fn(worker_id):
+def worker_init_fn(worker_id: int):
     worker_seed: int = (torch.initial_seed() + worker_id) % 2**32
     seed_all(worker_seed)
     set_fully_deterministic(not torch.backends.cudnn.benchmark)
 
 
 class RandomState:
-    """Random state object for Python, Numpy and Pytorch."""
+    """Random state proxy for Python, Numpy and Pytorch."""
 
     @staticmethod
     def save():

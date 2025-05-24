@@ -31,10 +31,10 @@ class SDK:
     """Environment identifier."""
 
     obs_space: Any
-    """Observation space, in target (tensor) format."""
+    """Observation space, in target format."""
 
     act_space: Any
-    """Action space, in target (tensor) format."""
+    """Action space, in target format."""
 
     def make_envs(self, num_envs: int, **kwargs) -> VecEnv:
         """Create a vector env.
@@ -44,7 +44,7 @@ class SDK:
         """
 
     def wrap_buffer(self, buffer: Buffer) -> Buffer:
-        """Wrap a regular buffer into an SDK-aware version. Episodes in the buffer are automatically converted to target format (usually Torch tensors) on retrieval."""
+        """Wrap a regular buffer into an SDK-aware version. Episodes in the buffer are automatically converted to target format (e.g. `torch` tensors) on retrieval."""
 
     def rollout(self, envs: VecEnv, agent: VecAgent):
         """Create a rollout with vector env `envs` and vector agent `agent`. The agent must operate in target format; the actions and observations in the env format are converted automatically."""

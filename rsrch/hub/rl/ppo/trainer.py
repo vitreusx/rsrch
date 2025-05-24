@@ -6,8 +6,8 @@ import numpy as np
 import torch
 from torch import Tensor, nn
 
-from rsrch import spaces
 import rsrch.distributions as D
+from rsrch import spaces
 from rsrch.nn.optim import ScaledOptimizer
 from rsrch.nn.utils import over_seq
 from rsrch.rl.utils import polyak
@@ -105,17 +105,22 @@ class Actor(nn.Module):
 
     act_space: spaces.torch.Space
 
-    def __call__(self, state: Tensor) -> D.Distribution: ...
-
-    def forward_features(self, features: Tensor) -> Tensor: ...
+    def __call__(
+        self,
+        state: Tensor,
+        return_features: bool = False,
+    ) -> D.Distribution | tuple[D.Distribution, Tensor]:
+        ...
 
 
 class Critic(nn.Module):
     """PPO critic interface."""
 
-    encoder: nn.Module | None
+    def __call__(self, state_or_features: Tensor) -> Tensor:
+        ...
 
-    def __call__(self, state: Tensor) -> Tensor: ...
+    def has_encoder(self) -> bool:
+        ...
 
 
 class Trainer:
@@ -153,8 +158,8 @@ class Trainer:
         self.alpha = alpha.Alpha(cfg.alpha, actor.act_space, device)
 
     def _forward_ac(self, obs: Tensor):
-        if self.critic.encoder is None:
-            policy, features = self.actor.forward_features(obs)
+        if not self.critic.has_encoder():
+            policy, features = self.actor(obs, return_features=True)
             val = self.critic(features)
         else:
             policy = self.actor(obs)

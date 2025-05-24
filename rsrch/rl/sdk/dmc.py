@@ -19,14 +19,14 @@ from .. import data, gym
 from . import gym as gym_api
 from .utils import GymnasiumFrameSkip, GymnasiumRecordStats
 
-ObsType = Literal["proprio", "proprio_flat", "visual"]
+ObsType = Literal["proprio_dict", "proprio_nd", "visual"]
 
 
 @dataclass
 class Config:
     domain: str
     task: str
-    obs_type: ObsType = "proprio"
+    obs_type: ObsType = "proprio_dict"
     frame_skip: int = 1
     render_size: int | tuple[int, int] = (320, 240)
     camera_id: int = -1
@@ -120,15 +120,15 @@ class FlattenF:
 class SDK:
     """An env SDK for `dm_control`.
 
-    ## Tensor format
+    ## Data format
 
     The observations received by the (vec) agent are either:
 
-    - if `obs_type` is `visual`: a batch of images, a tensor of shape `(N, 3, H, W)`, of dtype `float32` with values in `[0.0, 1.0]`
-    - if `obs_type` is `proprio`: a (possibly nested) dict of proprioceptive data, as tensors of shape `(N, D)`, of dtype `float32` with values in env-type-dependent range indicated by `obs_space`
-    - if `obs_type` is `proprio_flat`: a tensor of shape `(N, sum(D))` being a concatenation of all proprioceptive data tensors.
+    - if `obs_type` is `visual`: a batch of images, a `np.ndarray` of shape `(N, H, W, 3)`, of dtype `uint8` with values in `[0, 255]`
+    - if `obs_type` is `proprio_dict`: a (possibly nested) dict of proprioceptive data, as tensors of shape `(N, D)`, of dtype `float32` with values in env-type-dependent range indicated by `obs_space`
+    - if `obs_type` is `proprio_nd`: an array of shape `(N, sum(D))` being a concatenation of all proprioceptive data tensors.
 
-    The actions produced must be a tensor of shape `(N, *A)`, where `A` denotes the shape of the action space. Usually, the action space is a `Box`, so the actions must also be within range.
+    The actions produced must be an array of shape `(N, *A)`, where `A` denotes the shape of the action space. Usually, the action space is a `Box`, so the actions must also be within range.
     """
 
     def __init__(self, cfg: Config):
@@ -137,10 +137,9 @@ class SDK:
         self.id = f"{self.cfg.domain}_{self.cfg.task}"
         self.id = "".join(s.capitalize() for s in self.id.split("_")) + "-v1"
 
-        env = self._env(render=False, seed=0)
-        self._act_dtype = env.act_space.dtype
-        self.obs_space = gym_api.obs_f.codomain(env.obs_space["obs"])
-        self.act_space = gym_api.act_f.codomain(env.act_space)
+        env = self._env(seed=0, render=False)
+        self.obs_space = env.obs_space["obs"]
+        self.act_space = env.act_space
 
     def make_envs(
         self,
@@ -182,7 +181,7 @@ class SDK:
         task_id = "".join(s.capitalize() for s in task_id.split("_")) + "-v1"
 
         obs_f = None
-        if self.cfg.obs_type == "proprio_flat":
+        if self.cfg.obs_type == "proprio_nd":
             obs_f = FlattenF()
 
         try:
@@ -213,13 +212,14 @@ class SDK:
         )
         env = GymnasiumRecordStats(env)
         env = GymnasiumFrameSkip(env, self.cfg.frame_skip)
-        if self.cfg.obs_type == "proprio_flat":
+
+        if self.cfg.obs_type == "proprio_dict":
+            env = gym.envs.GymEnv(env, seed=seed, render=render)
+        elif self.cfg.obs_type == "proprio_nd":
             env = gymnasium.wrappers.FlattenObservation(env)
-
-        render |= self.cfg.obs_type == "visual"
-        env = gym.envs.GymEnv(env, seed=seed, render=render)
-
-        if self.cfg.obs_type == "visual":
+            env = gym.envs.GymEnv(env, seed=seed, render=render)
+        elif self.cfg.obs_type == "visual":
+            env = gym.envs.GymEnv(env, seed=seed, render=True)
             env = RenderEnv(env)
 
         return env
@@ -228,11 +228,11 @@ class SDK:
         return gym_api.BufferWrapper(buf)
 
     def rollout(self, envs: gym.VecEnv, agent: gym.VecAgent):
-        """Perform a rollout of Atari vec env.
+        """Perform a rollout of DMC vec env.
 
         :return: A sequence of `(env_idx, (step, final))` pairs, where `step` dict has a following fields:
 
-        - `obs`: an image or proprioceptive data, as described in the tensor format section, except that the tensors are Numpy arrays.
+        - `obs`: an image or proprioceptive data.
         - if step is non-initial:
             - `act`: action perfomed to reach current state, as a Numpy array.
             - `reward`: reward upon arriving at the current state, as a `float`.
@@ -240,8 +240,8 @@ class SDK:
         - `total_steps`: a global counter of (base) environment steps in the current rollout. Because of `frame_skip`, it may be difficult to keep track of the actual number of environment steps performed, which may introduce mistakes in comparing different RL algorithms' performance. Thus, a "canonical" step value is provided.
         - `ep_length`: length of the current episode.
         - `ep_returns`: total rewards in the current episode.
-        - `render`: if `envs` was created with `render=True`, a Pillow image with the current observation is attached.
+        - `render`: if `envs` was created with `render=True`, an image with the current observation is attached.
         """
 
-        agent = gym_api.VecAgentWrapper(agent, act_dtype=self._act_dtype)
+        agent = gym_api.VecAgentWrapper(agent)
         return envs.rollout(agent)

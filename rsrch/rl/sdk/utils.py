@@ -1,9 +1,14 @@
-from typing import Sequence
+from typing import Callable, Sequence, TypeVar
 
 import gymnasium
 
+X = TypeVar("X")
+Y = TypeVar("Y")
+
 
 class StackSeq(Sequence):
+    """An RL sequence transform, which stacks observations (`obs` field)."""
+
     def __init__(
         self,
         seq: Sequence,
@@ -38,8 +43,8 @@ class StackSeq(Sequence):
             return {**self.seq[idx], "obs": obs}
 
 
-class MapSeq(Sequence):
-    def __init__(self, seq: Sequence, f):
+class MapSeq(Sequence[Y]):
+    def __init__(self, seq: Sequence[X], f: Callable[[X], Y]):
         super().__init__()
         self.seq = seq
         self.f = f

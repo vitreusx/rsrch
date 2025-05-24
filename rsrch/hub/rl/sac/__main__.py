@@ -13,7 +13,7 @@ from tqdm.auto import tqdm
 import rsrch.distributions as D
 from rsrch import rl, spaces
 from rsrch.exp import Experiment
-from rsrch.exp.board.tensorboard import Tensorboard
+from rsrch.exp.boards.tensorboard import Tensorboard
 from rsrch.nn import dh, fc
 from rsrch.rl import gym
 from rsrch.rl.utils import polyak

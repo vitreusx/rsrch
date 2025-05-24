@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from tqdm.auto import tqdm
 
 from rsrch import rl
-from rsrch.exp import Experiment, board
+from rsrch.exp import Experiment, boards
 from rsrch.nn.optim import ScaledOptimizer
 from rsrch.rl import gym
 from rsrch.types.tensorlike.tensor import Tensorlike
@@ -92,7 +92,7 @@ def main():
         project="ppo",
         prefix=sdk.id,
     )
-    exp.add_board(board.Tensorboard(exp.dir / "board"))
+    exp.add_board(boards.Tensorboard(exp.dir / "board"))
 
     env_step = 0
     exp.register_step("env_step", lambda: env_step, default=True)

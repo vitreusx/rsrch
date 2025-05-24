@@ -7,7 +7,7 @@ from datetime import datetime
 from functools import partial, wraps
 from numbers import Number
 from pathlib import Path
-from typing import Callable, Literal, ParamSpec, TypeVar
+from typing import Callable, Iterable, Literal, ParamSpec, TypeVar
 
 import numpy as np
 from ruamel.yaml import YAML
@@ -17,11 +17,11 @@ from tqdm.auto import tqdm
 import rsrch.exp.log as log
 from rsrch.utils.path import sanitize
 
-from . import board
-from .board import Board
-from .board.base import Image, Step, VideoClip
+from . import boards
+from .boards import Board
+from .boards.base import Image, Step, VideoClip
 from .git import create_exp_commit, head_commit
-from .log import LogMixin, add_handlers, setup_fmt
+from .log import LogMixin, set_log_format
 
 yaml = YAML(typ="safe", pure=True)
 
@@ -51,23 +51,11 @@ def partial_typed(f: Callable[P, R], *args, **kwargs) -> Callable[P, R]:
     return partial(f, *args, **kwargs)
 
 
-class Tee:
-    def __init__(self, stream, path: str | Path):
-        self.path = Path(path)
-        self.stream = stream
-        self.tee = subprocess.Popen(
-            ["tee", str(self.path)],
-            stdin=subprocess.PIPE,
-            preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_IGN),
-        )
-        os.dup2(self.tee.stdin.fileno(), stream.fileno())
-
-
 class ExpDirExists(RuntimeError):
     pass
 
 
-class Experiment(LogMixin, board.Board, board.StepMixin):
+class Experiment(LogMixin, boards.Board, boards.StepMixin):
     """An experiment manager.
 
     Some of the features include:
@@ -89,7 +77,7 @@ class Experiment(LogMixin, board.Board, board.StepMixin):
         """Create an experiment manager.
 
         During the creation, following things happen:
-        - A directory for the experiment is created. If `run_dir` is provided, it's used as for the directory path. Otherwise, the run directory is `runs/{project}/{date:%Y-%m-%d}/{prefix}_{time:%H-%M-%S}`, i.e. the directories for a given project are all stored under `runs/{project}`, and they're grouped by current date to allow for comparing only the day's experiments.
+        - A directory for the experiment is created. If `run_dir` is provided, it's used for the directory path. Otherwise, the run directory is `runs/{project}/{date:%Y-%m-%d}/{prefix}_{time:%H-%M-%S}`, i.e. the directories for a given project are all stored under `runs/{project}`, and they're grouped by current date to allow for comparing only the day's experiments.
         - If `create_commit` is True, a commit on `exp/{branch}` branch is created with current version of the code, and the SHA is saved to the `exp_commit` field of the `info.yml` file in the exp directory.
         - If `config` is provided, it is saved to `config.yml` file in the exp directory.
         - If `interactive` is False, stdout and stderr are saved to `out.txt` and `err.txt` files, and the progress bars update only every 30 seconds.
@@ -111,30 +99,19 @@ class Experiment(LogMixin, board.Board, board.StepMixin):
             raise ExpDirExists(f"Directory {self.dir} already exists.")
         self.dir.mkdir(parents=True, exist_ok=False)
 
-        if not self.interactive:
-            self.tee_out = Tee(sys.stdout, self.dir / "out.txt")
-            self.tee_err = Tee(sys.stderr, self.dir / "err.txt")
+        logging.basicConfig(level=logging.INFO)
+        root_logger = logging.getLogger()
 
-        add_handlers(
-            logger=logging.getLogger(),
-            handlers=[
-                (logging.FileHandler(self.dir / "log.txt"), logging.DEBUG),
-            ],
-        )
-
-        setup_fmt(
-            logger=logging.getLogger(),
-            no_ansi=not self.interactive,
-        )
+        log_to_file = logging.FileHandler(self.dir / "log.txt")
+        log_to_file.setLevel(logging.DEBUG)
+        root_logger.addHandler(log_to_file)
+        set_log_format(root_logger)
 
         self.logger = logging.getLogger(project)
 
         self.info(f"Exp dir: {self.dir}")
 
-        info = {
-            "project": self.project,
-            "argv": sys.argv,
-        }
+        info = {"project": self.project, "argv": sys.argv}
 
         self._config = config
         if config is not None:
@@ -154,7 +131,7 @@ class Experiment(LogMixin, board.Board, board.StepMixin):
             yaml.dump(info, f)
             self.info(f"Saved extra info to: {self.dir / 'info.yml'}")
 
-    def make_pbar(self, iterable=None, **kwargs):
+    def make_pbar(self, iterable: Iterable | None = None, **kwargs):
         """Create a progress bar, based on `tqdm`. If `interactive` is False, update frequencies are adjusted to prevent spamming the output stream."""
 
         args = dict(

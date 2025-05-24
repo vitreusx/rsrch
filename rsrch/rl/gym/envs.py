@@ -11,7 +11,6 @@ import numpy as np
 from PIL import Image
 
 from rsrch import spaces
-from rsrch.spaces.utils import from_gym
 from rsrch.types.shared import shared_ndarray
 
 from ._api import *
@@ -96,12 +95,12 @@ class Envpool(VecEnv):
         self.num_envs = self.pool.config["num_envs"]
         self._batch_size = self.pool.config["batch_size"]
 
-        self.obs_space = from_gym(self.pool.observation_space)
+        self.obs_space = spaces.np.from_gym(self.pool.observation_space)
         if self.obs_f is not None and hasattr(self.obs_f, "codomain"):
             self.obs_space = self.obs_f.codomain(self.obs_space)
         self.obs_space = {"obs": self.obs_space}
 
-        self.act_space = from_gym(self.pool.action_space)
+        self.act_space = spaces.np.from_gym(self.pool.action_space)
         self.act_space = cast_action.codomain(self.act_space)
         self._actions = self.act_space.sample([self.num_envs])
 
@@ -184,8 +183,8 @@ class GymEnv(Env):
         self.env = env
         self.render = render
         self.seed = seed
-        self.obs_space = {"obs": from_gym(self.env.observation_space)}
-        self.act_space = from_gym(self.env.action_space)
+        self.obs_space = {"obs": spaces.np.from_gym(self.env.observation_space)}
+        self.act_space = spaces.np.from_gym(self.env.action_space)
 
     def reset(self):
         obs, info = self.env.reset(seed=self.seed)

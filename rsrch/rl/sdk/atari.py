@@ -1,4 +1,3 @@
-import os
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -14,7 +13,7 @@ from rsrch import spaces
 from rsrch.rl.gym.wrappers import VecRecordStats
 
 from .. import data, gym
-from .utils import GymnasiumRecordStats, MapSeq, StackSeq
+from .utils import GymnasiumRecordStats
 
 gymnasium.register_envs(ale_py)
 
@@ -144,18 +143,6 @@ class EpisodicLifeEnv(gymnasium.Wrapper):
         return obs, info
 
 
-class ToChannelFirst(gymnasium.ObservationWrapper):
-    def __init__(self, env: gymnasium.Env):
-        super().__init__(env)
-        obs_space = self.observation_space
-        low = self.observation(obs_space.low)
-        high = self.observation(obs_space.high)
-        self.observation_space = gymnasium.spaces.Box(low, high)
-
-    def observation(self, x):
-        return np.transpose(x, (2, 0, 1))
-
-
 class FixRender(gymnasium.Wrapper):
     def __init__(self, env: gymnasium.Env):
         super().__init__(env)
@@ -197,40 +184,7 @@ class TransformEnv(gym.EnvWrapper):
         return step, final
 
 
-class VecAgentWrapper(gym.VecAgentWrapper):
-    def __init__(
-        self,
-        agent: gym.VecAgent,
-        stack_num: int | None,
-        obs_type: ObsType,
-    ):
-        super().__init__(agent)
-        self.stack_num = stack_num
-        self.obs_type = obs_type
-
-    def reset(self, idxes, obs):
-        obs = torch.as_tensor(np.stack(obs))
-        if self.obs_type != "ram":
-            obs = obs / 255.0
-        else:
-            obs = obs.long()
-        super().reset(idxes, obs)
-
-    def policy(self, idxes):
-        act: torch.Tensor = super().policy(idxes)
-        return act.cpu().numpy()
-
-    def step(self, idxes, act, next_obs):
-        act = torch.as_tensor(np.stack(act), dtype=torch.long)
-        next_obs = torch.as_tensor(np.stack(next_obs))
-        if self.obs_type != "ram":
-            next_obs = next_obs / 255.0
-        else:
-            next_obs = next_obs.long()
-        super().step(idxes, act, next_obs)
-
-
-class AgentWrapper(gym.AgentWrapper):
+class StackAgentWrapper(gym.AgentWrapper):
     def __init__(self, agent: gym.Agent, stack_num: int | None):
         super().__init__(agent)
         self.stack_num = stack_num
@@ -243,15 +197,77 @@ class AgentWrapper(gym.AgentWrapper):
             self._stack.clear()
             for _ in range(self.stack_num):
                 self._stack.append(obs)
-            obs = np.concatenate(self._stack)
+            obs = np.concatenate(self._stack, axis=-1)
         super().reset(obs)
 
     def step(self, act, next_x):
         next_obs = next_x["obs"]
         if self.stack_num is not None:
             self._stack.append(next_obs)
-            next_obs = np.concatenate(self._stack)
+            next_obs = np.concatenate(self._stack, axis=-1)
         super().step(act, next_obs)
+
+
+class AtariSeq(Sequence):
+    def __init__(
+        self,
+        seq: list[dict],
+        idxes: range,
+        stack_num: int | None,
+    ):
+        self.seq = seq
+        self.idxes = idxes
+        self.stack_num = stack_num
+        self._data = None
+
+    def __len__(self):
+        return len(self.idxes)
+
+    @property
+    def data(self):
+        if self._data is not None:
+            return self._data
+
+        assert self.idxes.step == 1
+        start, stop = self.idxes.start, self.idxes.stop
+        seq_len = stop - start
+
+        s = self.stack_num or 1
+        if s > 1:
+            obs_start = start - s + 1
+            obs = [self.seq[max(t, 0)]["obs"] for t in range(obs_start, stop)]
+            obs = [np.concatenate(obs[t : t + s], -1) for t in range(seq_len)]
+        else:
+            obs = [self.seq[t]["obs"] for t in range(start, stop)]
+
+        act = [self.seq[t]["act"] for t in range(start + 1, stop)]
+        act = np.array(act, dtype=np.int32)
+
+        rew = [self.seq[t]["reward"] for t in range(start + 1, stop)]
+        rew = np.array(rew, dtype=np.float32)
+
+        term = [self.seq[t].get("term", False) for t in range(start, stop)]
+        term = np.array(term, dtype=bool)
+
+        trunc = [self.seq[t].get("trunc", False) for t in range(start, stop)]
+        trunc = np.array(trunc, dtype=bool)
+
+        self._data = obs, act, rew, term, trunc
+        return self._data
+
+    def __getitem__(self, idx: int | slice):
+        if isinstance(idx, slice):
+            return AtariSeq(
+                seq=self.seq,
+                idxes=self.idxes[idx],
+                stack_num=self.stack_num,
+            )
+        else:
+            obs, act, rew, term, trunc = self.data
+            item = {"obs": obs[idx], "term": term[idx], "trunc": trunc[idx]}
+            if idx > 0:
+                item = {**item, "act": act[idx - 1], "reward": rew[idx - 1]}
+            return item
 
 
 class BufferWrapper(data.Wrapper):
@@ -261,11 +277,9 @@ class BufferWrapper(data.Wrapper):
         self,
         buf: data.Buffer,
         stack_num: int | None,
-        obs_type: Literal["rgb", "grayscale", "ram"],
     ):
         super().__init__(buf)
         self.stack_num = stack_num
-        self.obs_type = obs_type
 
     def reset(self, obs) -> int:
         obs = {k: obs[k] for k in self.KEYS if k in obs}
@@ -276,44 +290,25 @@ class BufferWrapper(data.Wrapper):
         return super().step(seq_id, act, next_obs)
 
     def __getitem__(self, seq_id: int):
-        seq = [*self.buf[seq_id]]
-        if self.stack_num is not None:
-            seq = StackSeq(seq, stack_num=self.stack_num)
-        seq = MapSeq(seq, self.seq_f)
-        return seq
-
-    def seq_f(self, x: dict) -> dict:
-        x = {**x}
-        x["obs"] = self._obs_f(x["obs"])
-        if "act" in x:
-            x["act"] = self._act_f(x["act"])
-        return x
-
-    def _obs_f(self, obs):
-        if isinstance(obs, tuple):
-            obs = np.concatenate(obs, 0)
-        obs = torch.as_tensor(obs.copy())
-        if self.obs_type != "ram":
-            obs = obs / 255.0
-        else:
-            obs = obs.long()
-        return obs
-
-    def _act_f(self, act):
-        return torch.as_tensor(act, dtype=torch.long)
+        seq = self.buf[seq_id]
+        return AtariSeq(
+            seq=seq,
+            idxes=range(len(seq)),
+            stack_num=self.stack_num,
+        )
 
 
 class SDK:
     """An env SDK for Atari Learning Environment (ALE).
 
-    ## Tensor format
+    ## Data format
 
-    The observations received by the (vec) agent are either:
+    The observations received by the agent are either:
 
-    - if `obs_type` is not `ram`: a batch of images, a tensor of shape `(N, C * S, H, W)`, of dtype `float32` with values in `[0.0, 1.0]`, where `C` is # of channels (3 if `obs_type` is `rgb`, 1 if `grayscale`), and `S` is the stack number (`stack_num`), or `1` if not used.
-    - if `obs_type` is `ram`: a batch of RAM states, a tensor of shape `(N, 128 * S)`, of dtype `long` with values in `[0, 255]`, and `S` is the stack number.
+    - if `obs_type` is `ram`: a batch of RAM states, a `np.ndarray` of shape `(N, 128 * S)`, of dtype `np.uint8` with values in `[0, 255]`, and `S` is the stack number:
+    - otherwise: a batch of images, a `np.ndarray` of shape `(N, H, W, C * S)`, of dtype `np.uint8` with values in `[0, 255]`, where `C` is # of channels (3 if `obs_type` is `rgb`, 1 if `grayscale`), and `S` is the stack number (`stack_num`), or `1` if not used.
 
-    The actions produced must be a tensor of shape `(N, A)`, where `A` is the action space size, and be of dtype `long`.
+    The actions produced must be an array of shape `(N, A)`, where `A` is the action space size, and be of dtype `np.int64`.
     """
 
     def __init__(self, cfg: Config):
@@ -322,18 +317,18 @@ class SDK:
 
         s = cfg.stack_num or 1
         if cfg.obs_type == "ram":
-            self.obs_space = spaces.torch.Box((128 * s,), dtype=torch.long)
+            self.obs_space = spaces.np.Box((128 * s,), dtype=np.uint8)
         else:
             if isinstance(cfg.screen_size, tuple):
                 h, w = cfg.screen_size
             else:
                 h, w = cfg.screen_size, cfg.screen_size
             c = {"grayscale": 1, "rgb": 3}[cfg.obs_type]
-            self.obs_space = spaces.torch.Image((c * s, h, w), dtype=torch.float32)
+            self.obs_space = spaces.np.Image((h, w, c * s))
 
         dummy_env = gymnasium.make(f"ALE/{cfg.env_id}-v5")
         assert isinstance(dummy_env.action_space, gymnasium.spaces.Discrete)
-        self.act_space = spaces.torch.Discrete(dummy_env.action_space.n)
+        self.act_space = spaces.np.Discrete(dummy_env.action_space.n)
 
         self.id = self.cfg.env_id
         if self.cfg.randomize:
@@ -405,14 +400,13 @@ class SDK:
         if seed is None:
             seed = np.random.randint(int(2**31))
 
-        if self.randomize:
-            kw = dict(obs_f=self._randomize_obs, act_f=self._randomize_act)
-        else:
-            kw = dict()
+        obs_f = self._envpool_obs_f
+        act_f = self._randomize_act if self.randomize else None
 
         envs = gym.envs.Envpool(
             task_id=f"{self.cfg.env_id}-v5",
-            **kw,
+            obs_f=obs_f,
+            act_f=act_f,
             num_envs=num_envs,
             max_episode_steps=max_steps,
             img_height=img_h,
@@ -438,12 +432,19 @@ class SDK:
         )
         return envs
 
+    def _envpool_obs_f(self, obs: np.ndarray):
+        if self.cfg.obs_type != "ram":
+            obs = np.moveaxis(obs, 0, -1)
+        if self.randomize:
+            obs = self._randomize_obs(obs)
+        return obs
+
     def _randomize_obs(self, obs: np.ndarray):
         # obs: [..., C, H, W]
         if self.flip_w:
-            obs = np.flip(obs, -1)
+            obs = np.flip(obs, 1)
         if self.flip_h:
-            obs = np.flip(obs, -2)
+            obs = np.flip(obs, 0)
         return obs
 
     def _randomize_act(self, act: np.ndarray):
@@ -480,7 +481,6 @@ class SDK:
             )
             if render:
                 env = FixRender(env)
-            env = ToChannelFirst(env)
         else:
             env = NoopResetEnv(env, self.cfg.noop_max)
             if episodic:
@@ -508,7 +508,6 @@ class SDK:
         return BufferWrapper(
             buf,
             stack_num=self.cfg.stack_num,
-            obs_type=self.cfg.obs_type,
         )
 
     def rollout(self, envs: gym.VecEnv, agent: gym.VecAgent):
@@ -527,13 +526,9 @@ class SDK:
         - `render`: if `envs` was created with `render=True`, a Pillow image with the current observation is attached.
         """
 
-        agent = VecAgentWrapper(
-            agent,
-            stack_num=self.cfg.stack_num,
-            obs_type=self.cfg.obs_type,
-        )
-        agent = gym.vector.agents.Pointwise(
-            agent=agent,
-            transform=partial(AgentWrapper, stack_num=self.cfg.stack_num),
-        )
+        if (self.cfg.stack_num or 1) > 1:
+            agent = gym.vector.agents.Pointwise(
+                agent=agent,
+                transform=partial(StackAgentWrapper, stack_num=self.cfg.stack_num),
+            )
         return envs.rollout(agent)

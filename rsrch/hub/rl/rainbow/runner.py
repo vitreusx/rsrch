@@ -148,7 +148,7 @@ class Runner:
             prefix=self.sdk.id,
             config=asdict(self.cfg),
         )
-        self.exp._boards.append(exp.board.Tensorboard(self.exp.dir))
+        self.exp._boards.append(exp.boards.Tensorboard(self.exp.dir))
 
         self.device = torch.device(self.cfg.device)
 
