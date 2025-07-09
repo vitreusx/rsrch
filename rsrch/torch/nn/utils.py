@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 from functools import cache, wraps
 from numbers import Number
-from typing import TypeVar
+from typing import Generic, TypeVar
 
 import torch
 from torch import Tensor, nn

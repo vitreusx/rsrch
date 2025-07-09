@@ -14,17 +14,22 @@ logger = logging.getLogger(__name__)
 
 
 class Tensorboard(StepMixin, Board):
-    def __init__(self, dir: str | Path, launch: bool = False):
+    def __init__(
+        self,
+        dir: str | Path,
+        launch: bool = False,
+        port: int = 6006,
+    ):
         super().__init__()
         self.dir = Path(dir)
         self._writer = tensorboard.SummaryWriter(log_dir=str(self.dir))
         if launch:
             self._proc = subprocess.Popen(
-                ["tensorboard", "--logdir", str(self.dir), "--port", "6006"],
+                ["tensorboard", "--logdir", str(self.dir), "--port", str(port)],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-            logger.info("Started Tensorboard at http://localhost:6006")
+            logger.info(f"Started Tensorboard at http://localhost:{port}")
 
     def __del__(self):
         if hasattr(self, "_proc"):

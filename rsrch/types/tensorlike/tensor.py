@@ -58,8 +58,8 @@ class Tensorlike:
         self.shape = shape
 
     def register(self, __name, __value: T, batched=True) -> T:
-        """Register a tensor field. The value must be either a torch.Tensor
-        or a Tensorlike.
+        """Register a tensor field. The value must be either a `torch.Tensor`
+        or a `Tensorlike`.
         """
 
         if hasattr(self, __name):

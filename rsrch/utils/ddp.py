@@ -1,12 +1,13 @@
+import math
 import os
-from typing import Literal, Sequence, Sized, TypeVar
+from typing import Any, Callable, Iterable, Literal, Sequence, Sized, TypeVar
 
 import torch
 import torch.distributed
 from torch import Tensor, nn
 from torch.distributed import ReduceOp
 from torch.nn.parallel import DistributedDataParallel
-from torch.utils.data import DistributedSampler, RandomSampler, SequentialSampler
+from torch.utils.data import RandomSampler, SequentialSampler
 
 M = TypeVar("M")
 F = TypeVar("F")
@@ -22,6 +23,61 @@ ReduceOpType = Literal[
     "bxor",
     "premul_sum",
 ]
+
+
+class DistributedSampler:
+    """A more generic version of `torch.utils.data.DistributedSampler`. Makes any (sized) sampler, including batch samplers, a distributed sampler.
+
+    Note: Torch's variant has a `shuffle` option, which is missing here. You need to provide a random sampler, if you want to replicate the behavior of `shuffle=True`.
+    """
+
+    def __init__(
+        self,
+        sampler: Sized,
+        set_epoch: Callable[[int], None],
+        num_replicas: int,
+        rank: int,
+        drop_last: bool = False,
+    ):
+        self.sampler = sampler
+        self.set_epoch = set_epoch
+        self.num_replicas = num_replicas
+        self.rank = rank
+        self.drop_last = drop_last
+
+        index_count = len(self.sampler)
+        if self.drop_last:
+            self.num_samples = index_count // self.num_replicas
+        else:
+            self.num_samples = (
+                index_count + self.num_replicas - 1
+            ) // self.num_replicas
+
+        self.total_size = self.num_samples * self.num_replicas
+        self.padding_size = self.total_size - index_count
+
+    def __len__(self):
+        return self.num_samples
+
+    def __iter__(self):
+        pad = []
+
+        local = 0
+        for index in self.sampler:
+            if local >= self.total_size:
+                break
+            if local < self.padding_size:
+                pad.append(index)
+            if local % self.num_replicas == self.rank:
+                yield index
+            local += 1
+
+        for index in pad:
+            if local >= self.total_size:
+                break
+            if local % self.num_replicas == self.rank:
+                yield index
+            local += 1
 
 
 class DDPHelper:
@@ -41,6 +97,7 @@ class DDPHelper:
             device = "cpu"
 
         torch.distributed.init_process_group(backend=backend)
+        self.num_replicas = torch.distributed.get_world_size()
         self.rank = torch.distributed.get_rank()
         self.local_rank = local_rank
         self.device = torch.device(device)
@@ -61,27 +118,30 @@ class DDPHelper:
         """Whether the current process is the master process."""
         return self.rank == 0
 
-    def get_sampler(
+    def wrap_sampler(
         self,
-        dataset: Sized,
-        shuffle: bool = True,
-        seed: int = 0,
+        sampler: Sized,
+        set_epoch: Callable[[int], None],
         drop_last: bool = False,
     ):
-        """Prepare a sampler for use in `DataLoader`."""
+        """Make an index or a batch sampler ready for use in DDP.
+
+        Makes rank :math:`r` process only process samples :math:`r+kN` where :math:`N` is the world size.
+
+        **Warning**: Remember to set DDP sampler epoch for shuffled samplers, to
+        ensure consistency between DDP processes.
+        """
+
         return DistributedSampler(
-            dataset,
-            shuffle=shuffle,
-            seed=seed,
+            sampler=sampler,
+            set_epoch=set_epoch,
+            num_replicas=self.num_replicas,
+            rank=self.rank,
             drop_last=drop_last,
         )
 
-    def set_epoch(
-        self,
-        sampler: DistributedSampler,
-        epoch: int,
-    ):
-        """Set epoch number for a sampler obtained using `get_sampler`."""
+    def set_epoch(self, sampler: DistributedSampler, epoch: int):
+        """Sets current epoch number for a sampler obtained via `wrap_sampler`."""
         sampler.set_epoch(epoch)
 
     def all_reduce(self, tensor: Tensor, op: ReduceOpType):
@@ -91,7 +151,7 @@ class DDPHelper:
 
 
 class SPFallback:
-    """An API-compatible single-process fallback for `ViaDDP`."""
+    """An API-compatible single-process fallback for `DDPHelper`."""
 
     def __init__(self, device: str | torch.device | None = None):
         if device is None:
@@ -108,25 +168,22 @@ class SPFallback:
     def is_master(self):
         return True
 
-    def get_sampler(
+    def wrap_sampler(
         self,
-        dataset: Sized,
-        shuffle: bool = True,
-        seed: int = 0,
+        sampler: Sized,
+        set_epoch: Callable[[int], None],
         drop_last: bool = False,
     ):
-        if shuffle:
-            gen = torch.Generator().manual_seed(seed)
-            return RandomSampler(dataset, replacement=False, generator=gen)
-        else:
-            return SequentialSampler(dataset)
+        return DistributedSampler(
+            sampler=sampler,
+            set_epoch=set_epoch,
+            num_replicas=1,
+            rank=0,
+            drop_last=drop_last,
+        )
 
-    def set_epoch(
-        self,
-        sampler: DistributedSampler,
-        epoch: int,
-    ):
-        pass
+    def set_epoch(self, sampler: DistributedSampler, epoch: int):
+        sampler.set_epoch(epoch)
 
     def all_reduce(self, tensor: Tensor, op: ReduceOpType):
         pass
