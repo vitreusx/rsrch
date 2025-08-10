@@ -1,13 +1,11 @@
-import math
 import os
-from typing import Any, Callable, Iterable, Literal, Sequence, Sized, TypeVar
+from typing import Callable, Literal, Sized, TypeVar
 
 import torch
 import torch.distributed
 from torch import Tensor, nn
 from torch.distributed import ReduceOp
 from torch.nn.parallel import DistributedDataParallel
-from torch.utils.data import RandomSampler, SequentialSampler
 
 M = TypeVar("M")
 F = TypeVar("F")
@@ -26,15 +24,18 @@ ReduceOpType = Literal[
 
 
 class DistributedSampler:
-    """A more generic version of `torch.utils.data.DistributedSampler`. Makes any (sized) sampler, including batch samplers, a distributed sampler.
+    """A more generic version of `torch.utils.data.DistributedSampler`.
+    Makes any (sized) sampler, including batch samplers, a distributed sampler.
 
-    Note: Torch's variant has a `shuffle` option, which is missing here. You need to provide a random sampler, if you want to replicate the behavior of `shuffle=True`.
+    Note: Torch's variant has a `shuffle` option, which is missing here. You
+    need to provide a random sampler, if you want to replicate the behavior
+    of `shuffle=True`.
     """
 
     def __init__(
         self,
         sampler: Sized,
-        set_epoch: Callable[[int], None],
+        set_epoch: Callable[[int], None] | None,
         num_replicas: int,
         rank: int,
         drop_last: bool = False,
@@ -121,15 +122,25 @@ class DDPHelper:
     def wrap_sampler(
         self,
         sampler: Sized,
-        set_epoch: Callable[[int], None],
+        set_epoch: Callable[[int], None] | None,
         drop_last: bool = False,
     ):
         """Make an index or a batch sampler ready for use in DDP.
 
-        Makes rank :math:`r` process only process samples :math:`r+kN` where :math:`N` is the world size.
+        Makes rank :math:`r` process only process samples :math:`r+kN` where
+        :math:`N` is the world size.
 
         **Warning**: Remember to set DDP sampler epoch for shuffled samplers, to
         ensure consistency between DDP processes.
+
+        :param sampler: A base sampler (or batch sampler) to be prepared for use
+        in DDP.
+        :param set_epoch: A callable that sets the epoch number for the sampler.
+        For example, one might initialize the seed of RNG to `base + epoch` to
+        make sure that the order of items is different for each epoch.
+        :param drop_last: Whether to drop last set of items, if the size of the
+        sampler is not divisible by the number of DDP workers.
+        :return: A distributed sampler created from the provided base sampler.
         """
 
         return DistributedSampler(
@@ -142,7 +153,8 @@ class DDPHelper:
 
     def set_epoch(self, sampler: DistributedSampler, epoch: int):
         """Sets current epoch number for a sampler obtained via `wrap_sampler`."""
-        sampler.set_epoch(epoch)
+        if sampler.set_epoch is not None:
+            sampler.set_epoch(epoch)
 
     def all_reduce(self, tensor: Tensor, op: ReduceOpType):
         """Perform in-place all-reduce op on a tensor."""
@@ -183,7 +195,8 @@ class SPFallback:
         )
 
     def set_epoch(self, sampler: DistributedSampler, epoch: int):
-        sampler.set_epoch(epoch)
+        if sampler.set_epoch is not None:
+            sampler.set_epoch(epoch)
 
     def all_reduce(self, tensor: Tensor, op: ReduceOpType):
         pass
@@ -192,7 +205,11 @@ class SPFallback:
 def auto_detect() -> DDPHelper:
     """Auto-detect and setup "infrastructure" (DDP etc.)
 
-    Depending on the environment variables. If using multiple processes (as indicated by `LOCAL_RANK` env variable), DDP is used, and an appropriate helper is returned. Otherwise, API-compatible version for single-process setup is returned. This is done in order to streamline single- and multi-process deployments.
+    Depending on the environment variables. If using multiple processes (as
+    indicated by `LOCAL_RANK` env variable), DDP is used, and an appropriate
+    helper is returned. Otherwise, API-compatible version for single-process
+    setup is returned. This is done in order to streamline single- and
+    multi-process deployments.
     """
 
     if "LOCAL_RANK" in os.environ:

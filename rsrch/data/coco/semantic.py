@@ -34,5 +34,6 @@ class COCOSemantic(Sequence):
         labels = cat_map[inv]
         return {"image": item["image"], "labels": Image.fromarray(labels)}
 
-    def meta(self):
-        return SegMeta(self._panoptic.meta().data)
+    @staticmethod
+    def meta():
+        return SegMeta(COCOPanoptic.meta().data)

@@ -1,8 +1,7 @@
-import torch
 import torch.nn.functional as F
 from torch import Tensor
 
-from rsrch.nn.utils import pass_gradient
+from rsrch.torch.nn.utils import pass_gradient
 from rsrch.types.tensorlike import Tensorlike
 
 from .categorical import Categorical

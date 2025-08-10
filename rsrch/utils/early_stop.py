@@ -12,8 +12,11 @@ class EarlyStopping:
     ):
         """Create an early stopping monitor.
 
-        :param rel_patience: *Relative* patience value. Limits the training to last at most `(1 + rel_patience)` times as much steps as it took to reach best val loss value.
-        :param margin: Consider val loss to have improved if the *relative* improvement is at least as great as this.
+        :param rel_patience: *Relative* patience value. Limits the training to
+        last at most `(1 + rel_patience)` times as much steps as it took to
+        reach best val loss value.
+        :param margin: Consider val loss to have improved if the *relative*
+        improvement is at least as great as this.
         :param min_steps: Minimum number of steps for the training process.
         :param max_steps: Maximum number of steps for the training process."""
 

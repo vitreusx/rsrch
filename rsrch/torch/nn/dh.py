@@ -11,21 +11,6 @@ from torch import Tensor, nn
 import rsrch.torch.distributions as D
 from rsrch import spaces
 
-from .utils import tf_init_
-
-
-def cleanrl_sac_init_(layer: nn.Module, bias_const: float = 0.0):
-    if isinstance(layer, (nn.Linear, nn.Conv2d, nn.ConvTranspose2d)):
-        nn.init.kaiming_normal_(layer.weight)
-        if layer.bias is not None:
-            nn.init.constant_(layer.bias, bias_const)
-
-
-def cleanrl_ppo_init_(layer, std=math.sqrt(2), bias_const=0.0):
-    if isinstance(layer, (nn.Linear, nn.Conv2d, nn.ConvTranspose2d)):
-        nn.init.orthogonal_(layer.weight, std)
-        if layer.bias is not None:
-            nn.init.constant_(layer.bias, bias_const)
 
 
 def get_out_features(space: spaces.torch.Tensor):
@@ -66,7 +51,6 @@ class Normal(nn.Module):
         std_value: float | None = None,
         init_std: float = 0.0,
         min_std: float = 0.1,
-        init: Literal["torch", "tf"] = "torch",
     ):
         super().__init__()
         self.space = space
@@ -82,9 +66,6 @@ class Normal(nn.Module):
             self.std_fc = layer_ctor(out_features)
 
         self._event_dims = len(space.shape)
-
-        if init == "tf":
-            self.apply(tf_init_)
 
     def forward(self, input: Tensor):
         mean: Tensor = self.mean_fc(input)
@@ -106,7 +87,6 @@ class TruncNormal(nn.Module):
         std_type: Literal["exp", "softplus", "sigmoid2"] = "sigmoid2",
         init_std: float = 0.0,
         min_std: float = 0.1,
-        init: Literal["torch", "tf"] = "torch",
     ):
         super().__init__()
         self.space = space
@@ -122,11 +102,6 @@ class TruncNormal(nn.Module):
         self._event_dims = len(space.shape)
         self.register_buffer("loc", 0.5 * (space.low + space.high))
         self.register_buffer("scale", 0.5 * (space.high - space.low))
-
-        if init == "tf":
-            self.apply(tf_init_)
-        elif init != "torch":
-            raise ValueError(init)
 
     def forward(self, input: Tensor):
         mean: Tensor = self.mean_fc(input)
@@ -149,7 +124,6 @@ class MSEProxy(nn.Module):
         self,
         layer_ctor: Callable[[int], nn.Module],
         space: spaces.torch.Box,
-        init: Literal["torch", "tf"] = "torch",
     ):
         super().__init__()
         self.space = space
@@ -158,9 +132,6 @@ class MSEProxy(nn.Module):
         self.layer = layer_ctor(out_features)
 
         self._event_dims = len(space.shape)
-
-        if init == "tf":
-            self.apply(tf_init_)
 
     def forward(self, input: Tensor):
         value: Tensor = self.layer(input)
@@ -173,13 +144,10 @@ class Bernoulli(nn.Module):
         self,
         layer_ctor: Callable[[int], nn.Module],
         space: spaces.torch.Discrete,
-        init: Literal["torch", "tf"] = "torch",
     ):
         super().__init__()
         assert space.n == 2 and space.dtype == torch.bool
         self.layer = layer_ctor(1)
-        if init == "tf":
-            self.apply(tf_init_)
 
     def forward(self, input: Tensor):
         logits: Tensor = self.layer(input)
@@ -192,20 +160,12 @@ class Categorical(nn.Module):
         self,
         layer_ctor: Callable[[int], nn.Module],
         space: spaces.torch.Discrete,
-        init: Literal["torch", "tf", "cleanrl_sac", "cleanrl_ppo"] = "torch",
     ):
         super().__init__()
         self.space = space
         self.vocab_size = int(space.n)
         self.layer = layer_ctor(self.vocab_size)
         self._event_dims = len(space.shape)
-
-        if init == "tf":
-            tf_init_(self.layer)
-        elif init == "cleanrl_sac":
-            cleanrl_sac_init_(self.layer)
-        elif init == "cleanrl_ppo":
-            cleanrl_ppo_init_(self.layer, std=1e-2)
 
     def forward(self, input: Tensor):
         logits: Tensor = self.layer(input)
@@ -218,14 +178,11 @@ class OneHot(nn.Module):
         self,
         layer_ctor: Callable[[int], nn.Module],
         space: spaces.torch.OneHot,
-        init: Literal["torch", "tf"] = "torch",
     ):
         super().__init__()
         self.space = space
         self.vocab_size = int(space.shape[0])
         self.layer = layer_ctor(self.vocab_size)
-        if init == "tf":
-            self.apply(tf_init_)
 
     def forward(self, input: Tensor):
         logits: Tensor = self.layer(input)
@@ -238,14 +195,11 @@ class Discrete(nn.Module):
         self,
         layer_ctor: Callable[[int], nn.Module],
         space: spaces.torch.TokenSeq,
-        init: Literal["torch", "tf"] = "torch",
     ):
         super().__init__()
         self.space = space
         self.num_tokens, self.vocab_size = space.num_tokens, space.vocab_size
         self.layer = layer_ctor(space.num_tokens * space.vocab_size)
-        if init == "tf":
-            self.apply(tf_init_)
 
     def forward(self, input: Tensor):
         logits: Tensor = self.layer(input)

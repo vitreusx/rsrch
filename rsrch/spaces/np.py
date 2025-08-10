@@ -1,4 +1,3 @@
-from functools import partial
 from numbers import Number
 
 import gymnasium

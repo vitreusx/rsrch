@@ -1,6 +1,6 @@
 import math
 from numbers import Number
-from typing import List, Protocol
+from typing import Protocol
 
 import torch
 import torch.nn.functional as F

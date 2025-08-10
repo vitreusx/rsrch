@@ -1,7 +1,7 @@
 import math
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Callable, Literal
+from typing import Literal
 
 import dm_env
 import dm_env.specs
@@ -12,12 +12,13 @@ from dm_control import suite
 from rsrch import spaces
 from rsrch.rl.gym.wrappers import RenderEnv, VecFrameSkip, VecRecordStats
 
-ALL_TASKS = suite.ALL_TASKS
-BENCHMARKING = suite.BENCHMARKING
-
 from .. import data, gym
 from . import gym as gym_api
 from .utils import GymnasiumFrameSkip, GymnasiumRecordStats
+
+ALL_TASKS = suite.ALL_TASKS
+BENCHMARKING = suite.BENCHMARKING
+
 
 ObsType = Literal["proprio_dict", "proprio_nd", "visual"]
 
@@ -36,20 +37,21 @@ class Config:
 def dmc_to_gym(space):
     if isinstance(space, dict):
         return gymnasium.spaces.Dict({k: dmc_to_gym(v) for k, v in space.items()})
-    elif type(space) == dm_env.specs.BoundedArray:
+    elif type(space) is dm_env.specs.BoundedArray:
         return gymnasium.spaces.Box(
             low=space.minimum,
             high=space.maximum,
             shape=space.shape,
             dtype=space.dtype,
         )
-    elif type(space) == dm_env.specs.DiscreteArray:
+    elif type(space) is dm_env.specs.DiscreteArray:
         return gymnasium.spaces.Discrete(
             n=space.num_values,
             dtype=space.dtype,
         )
-    elif type(space) == dm_env.specs.Array:
-        # We use gym.spaces.Box with inf bounds, because gym.spaces.Space is not flattenable
+    elif type(space) is dm_env.specs.Array:
+        # We use gym.spaces.Box with inf bounds, because gym.spaces.Space is
+        # not flattenable
         if np.issubdtype(space.dtype, np.integer):
             iinfo = np.iinfo(space.dtype)
             low, high = iinfo.min, iinfo.max
@@ -84,7 +86,8 @@ class DMCGymEnv(gymnasium.Env):
 
     def step(self, act):
         step = self._env.step(act)
-        # From technical report: "Control Suite tasks have no terminal states or time limit and are therefore of the infinite-horizon variety."
+        # From technical report: "Control Suite tasks have no terminal states
+        # or time limit and are therefore of the infinite-horizon variety."
         return step.observation, step.reward, False, step.last(), {}
 
     def render(self):
@@ -118,18 +121,7 @@ class FlattenF:
 
 
 class SDK:
-    """An env SDK for `dm_control`.
-
-    ## Data format
-
-    The observations received by the (vec) agent are either:
-
-    - if `obs_type` is `visual`: a batch of images, a `np.ndarray` of shape `(N, H, W, 3)`, of dtype `uint8` with values in `[0, 255]`
-    - if `obs_type` is `proprio_dict`: a (possibly nested) dict of proprioceptive data, as tensors of shape `(N, D)`, of dtype `float32` with values in env-type-dependent range indicated by `obs_space`
-    - if `obs_type` is `proprio_nd`: an array of shape `(N, sum(D))` being a concatenation of all proprioceptive data tensors.
-
-    The actions produced must be an array of shape `(N, *A)`, where `A` denotes the shape of the action space. Usually, the action space is a `Box`, so the actions must also be within range.
-    """
+    """An env SDK for `dm_control`."""
 
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -147,12 +139,7 @@ class SDK:
         mode: Literal["train", "val"] = "train",
         render: bool = False,
         seed: int | None = None,
-        **kwargs,
     ):
-        if len(kwargs) > 0:
-            param_list = ", ".join(f"'{kw}'" for kw in kwargs)
-            raise RuntimeError(f"Following parameters are unsupported: {param_list}")
-
         if seed is None:
             seed = np.random.randint(int(2**31))
 
@@ -191,7 +178,7 @@ class SDK:
                 num_envs=num_envs,
                 seed=seed,
             )
-        except:
+        except Exception:
             return
 
         if self.cfg.frame_skip > 1:
@@ -230,17 +217,42 @@ class SDK:
     def rollout(self, envs: gym.VecEnv, agent: gym.VecAgent):
         """Perform a rollout of DMC vec env.
 
-        :return: A sequence of `(env_idx, (step, final))` pairs, where `step` dict has a following fields:
+        :param envs: Vector env created with the `make_envs` method.
+
+        :param agent: A vector agent. It needs to conform to the following spec:
+
+            1. The agent must accept observations in the following form:
+
+                - if `obs_type` is `visual`: a batch of images, a `np.ndarray` of shape
+                `(N, H, W, 3)`, of dtype `uint8` with values in `[0, 255]`
+                - if `obs_type` is `proprio_dict`: a (possibly nested) dict of
+                proprioceptive data, as tensors of shape `(N, D)`, of dtype `float32`
+                with values in env-type-dependent range indicated by `obs_space`
+                - if `obs_type` is `proprio_nd`: an array of shape `(N, sum(D))`
+                being a concatenation of all proprioceptive data tensors.
+
+            2. The actions produced must be an array of shape `(N, *A)`, where
+            `A` denotes the shape of the action space. Usually, the action space
+            is a `Box`, so the actions must also be within range.
+
+        :return: A sequence of `(env_idx, (step, final))` pairs, where `step`
+        dict has following fields:
 
         - `obs`: an image or proprioceptive data.
-        - if step is non-initial:
-            - `act`: action perfomed to reach current state, as a Numpy array.
-            - `reward`: reward upon arriving at the current state, as a `float`.
-            - `term`, `trunc`: boolean termination/truncation values.
-        - `total_steps`: a global counter of (base) environment steps in the current rollout. Because of `frame_skip`, it may be difficult to keep track of the actual number of environment steps performed, which may introduce mistakes in comparing different RL algorithms' performance. Thus, a "canonical" step value is provided.
+        - `act` (if non-initial): action perfomed to reach current state,
+        as a Numpy array.
+        - `reward` (if non-initial): reward upon arriving at the current state,
+        as a `float`.
+        - `term`, `trunc`: boolean termination/truncation values.
+        - `total_steps`: a global counter of (base) environment steps in the
+        current rollout. Because of `frame_skip`, it may be difficult to keep
+        track of the actual number of environment steps performed, which may
+        introduce mistakes in comparing different RL algorithms' performance.
+        Thus, a "canonical" step value is provided.
         - `ep_length`: length of the current episode.
         - `ep_returns`: total rewards in the current episode.
-        - `render`: if `envs` was created with `render=True`, an image with the current observation is attached.
+        - `render`: if `envs` was created with `render=True`, a PIL image with the
+        current observation is attached.
         """
 
         agent = gym_api.VecAgentWrapper(agent)

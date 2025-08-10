@@ -1,4 +1,3 @@
-import multiprocessing as mp
 from multiprocessing.reduction import ForkingPickler
 from multiprocessing.shared_memory import SharedMemory
 

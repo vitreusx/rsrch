@@ -1,7 +1,6 @@
 import math
 
 import torch
-import torch.nn.functional as F
 from torch import Tensor, nn
 
 __all__ = ["Linear"]

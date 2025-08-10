@@ -1,7 +1,6 @@
 from typing import Callable, Iterable, Literal
 
 from torch import Tensor, nn
-from torch.nn import *
 
 ActType = Literal["relu", "elu", "tanh"]
 
@@ -52,7 +51,7 @@ def NormLayer2d(type: NormType) -> Callable[[int], nn.Module]:
     }[type]
 
 
-class Reshape(Module):
+class Reshape(nn.Module):
     def __init__(
         self,
         in_shape: int | tuple[int, ...],

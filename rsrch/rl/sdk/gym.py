@@ -1,15 +1,12 @@
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Literal, Mapping, Sequence
+from typing import Literal
 
 import cv2
 import gymnasium
 import numpy as np
-import torch
 
-from rsrch import spaces
 from rsrch.rl.gym.wrappers import VecRecordStats
-from rsrch.types.tensorlike.dict import TensorDict
 
 from .. import data, gym
 from .utils import GymnasiumRecordStats
@@ -97,12 +94,7 @@ class BufferWrapper(data.Wrapper):
 
 
 class SDK:
-    """An env SDK for `gymnasium` environments.
-
-    ## Data format
-
-    The observations and actions are exactly the same, as for the original `gymnasium` env. Only Numpy arrays, along with dicts and tuples thereof, are supported.
-    """
+    """An env SDK for `gymnasium` environments."""
 
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -160,7 +152,7 @@ class SDK:
                 seed=seed,
             )
             envs = VecRecordStats(envs)
-        except:
+        except Exception:
             return
 
         return envs

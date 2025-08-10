@@ -1,0 +1,43 @@
+# yaml-language-server: $schema=config.schema.json
+seed: 1
+device: cuda
+compute_dtype: float32
+create_exp_commit: false
+
+env:
+  type: atari
+  atari:
+    env_id: Pong
+    screen_size: 84
+    frame_skip: 4
+    obs_type: grayscale
+    noop_max: 30
+    fire_reset: true
+    term_on_life_loss: true
+    time_limit: 108e3
+    stack_num: 4
+    use_envpool: true
+    repeat_action_probability: 0.25 # *-v5 setting
+    randomize: false
+num_train_envs: 8
+num_val_envs: ~
+min_seq_len: 8
+
+sample_every: 1e6
+
+lr: 2.5e-4
+opt_eps: 1e-5
+steps_per_batch: 1024
+mb_size: 256
+update_epochs: 8
+adv_norm: true
+clip_coef: 0.1
+clip_vloss: true
+gamma: 0.99
+gae_lambda: 0.95
+clip_grad: 0.5
+vf_coef: 0.5
+rew_norm: sign
+ent_coef: 1e-2
+target_critic: ~
+share_encoder: true

@@ -1,9 +1,8 @@
-from enum import Enum
 import inspect
 import types
 import typing
-from dataclasses import MISSING, dataclass, fields, is_dataclass
-from functools import partial, wraps
+from enum import Enum
+from functools import wraps
 from textwrap import indent
 from typing import Any, Callable, ParamSpec, Type, TypeVar, get_args, get_origin
 
@@ -13,7 +12,6 @@ T = TypeVar("T")
 def cast(x: Any, t: Type[T]) -> T:
     """Cast a value into a given type."""
 
-    orig_t = t
     t_args = get_args(t)
     t = get_origin(t) or t
 
@@ -54,7 +52,7 @@ def cast(x: Any, t: Type[T]) -> T:
             t_len = len(t_args)
 
         if len(x) != len(t_args):
-            raise ValueError(f"Tuple length is incorrect") from None
+            raise ValueError("Tuple length is incorrect") from None
 
         values = []
         for idx, (xi, ti) in enumerate(zip(x, t_args)):
@@ -170,9 +168,12 @@ def safe_partial(
     *args: P.args,
     **kwargs: P.kwargs,
 ) -> Callable[P, R]:
-    """Bind a function with args and kwargs in a type-safe manner - `args` and `kwargs` are converted to types as indicated by the parameter annotations.
+    """Bind a function with args and kwargs in a type-safe manner - `args`
+    and `kwargs` are converted to types as indicated by the parameter annotations.
 
-    A function with the same signature is returned. Positional and keyword arguments provided override the ones given during the binding, and are *not* converted to proper types.
+    A function with the same signature is returned. Positional and keyword
+    arguments provided override the ones given during the binding, and are
+    *not* converted to proper types.
     """
 
     sig = inspect.signature(func)
@@ -215,7 +216,8 @@ def safe_partial(
 
 
 def typesafe(func: Callable[P, R]) -> Callable[P, R]:
-    """Create a variant of a function, in which passed arguments are automatically converted to proper types, as indicated with parameter annotations."""
+    """Create a variant of a function, in which passed arguments are
+    automatically converted to proper types, as indicated with parameter annotations."""
 
     @wraps(func)
     def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:

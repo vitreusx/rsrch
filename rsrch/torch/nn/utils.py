@@ -1,18 +1,21 @@
 from contextlib import contextmanager
 from functools import cache, wraps
-from numbers import Number
-from typing import Generic, TypeVar
+from typing import TypeVar
 
 import torch
 from torch import Tensor, nn
 
-from rsrch.types.tensorlike.tensor import Tensorlike
 
+def shape_infer_mode(*nets: nn.Module, enabled: bool = True):
+    """Disables autograd and sets networks to eval mode.
 
-def safe_mode(*nets: nn.Module, enabled: bool = True):
-    """Disables autograd and sets networks to eval model. Useful for computing shapes of outputs for modules.
+    Useful for computing shapes of outputs for modules. This can be used to
+    dynamically parametrize model architecture in a chain of models - for example,
+    you can get the # of output features from the encoder and use it to create
+    the head module, without having to compute the # of features yourself.
 
-    If no arguments are passed, functions as a decorator - otherwise, functions as a context manager.
+    If no arguments are passed, functions as a decorator - otherwise, functions
+    as a context manager.
     """
 
     @contextmanager
@@ -120,7 +123,8 @@ def pass_gradient(value: Tensor, to: Tensor) -> Tensor:
 
 @contextmanager
 def frozen(*nets: nn.Module):
-    """Temporarily freeze networks, setting `requires_grad` to False for all the parameters."""
+    """Temporarily freeze networks, setting `requires_grad` to False for
+    all the parameters."""
 
     prev = []
     for net in nets:
@@ -136,3 +140,12 @@ def frozen(*nets: nn.Module):
         for net, prev_for_net in zip(nets, prev):
             for p, v in zip(net.parameters(), prev_for_net):
                 p.requires_grad_(v)
+
+
+def tf_init_(module: nn.Module):
+    """Initialize networks like in Tensorflow."""
+
+    if isinstance(module, (nn.Linear, nn.Conv2d, nn.ConvTranspose2d)):
+        nn.init.xavier_uniform_(module.weight)
+        if module.bias is not None:
+            nn.init.zeros_(module.bias)

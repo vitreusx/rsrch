@@ -40,19 +40,16 @@ def _create_base_palette():
     q = np.clip(np.arange(0, 257, 32), 0, 255)
     colors = np.stack(np.meshgrid(q, q, q), axis=-1).reshape(-1, 3)
 
-    # Initialize palette as [#000000]
+    # Initialize palette as [#000000, #ffffff]
     palette = np.empty_like(colors)
     palette[0] = 0
+    palette[1] = 255
 
     # Select consecutive colors by maximizing the distance to the current
     # palette
     for i in range(1, len(colors)):
         dists = cdist(colors, palette[:i])
         palette[i] = colors[np.argmax(dists.min(-1))]
-
-    # Check if palette[0] is #000000 and palette[1] is #ffffff
-    # This is used later on for palettes with ignore_index
-    assert (palette[0] == 0).all() and (palette[1] == 255).all()
 
     palette = palette.astype(np.uint8)
     return palette

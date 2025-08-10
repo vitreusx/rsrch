@@ -1,12 +1,11 @@
 from collections import defaultdict
 from typing import Callable
 
-import gymnasium
 import numpy as np
 
 from rsrch import spaces
 
-from ._api import *
+from .api import Env, EnvWrapper, VecAgent, VecAgentWrapper, VecEnv, VecEnvWrapper
 
 
 class RenderEnv(EnvWrapper):
@@ -142,4 +141,5 @@ class VecFrameSkip(VecEnvWrapper):
                 if counts[env_idx] >= self.frame_skip or final:
                     step["reward"] = totals[env_idx]
                     yield env_idx, (step, final)
+                    del totals[env_idx], counts[env_idx]
                     del totals[env_idx], counts[env_idx]

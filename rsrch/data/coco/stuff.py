@@ -3,7 +3,6 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
 
-import numpy as np
 from PIL import Image
 
 from rsrch.data.meta import seg_meta

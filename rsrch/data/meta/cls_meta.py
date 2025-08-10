@@ -1,8 +1,7 @@
 from dataclasses import make_dataclass
-from functools import cache, cached_property
+from functools import cached_property
 from pathlib import Path
 from pprint import pformat
-from textwrap import wrap
 from typing import TypedDict
 
 from ruamel.yaml import YAML

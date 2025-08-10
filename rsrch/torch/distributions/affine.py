@@ -2,7 +2,6 @@ import math
 from functools import cached_property
 from numbers import Number
 
-import torch
 from torch import Tensor
 
 from rsrch.types import Tensorlike
@@ -25,7 +24,8 @@ class Affine(Distribution, Tensorlike):
     ):
         """Create an affine distribution.
 
-        :param batched: If true, `loc` and `scale` parameters follow rules for batched tensors (see `Tensorlike` for more details.)
+        :param batched: If true, `loc` and `scale` parameters follow rules
+        for batched tensors (see `Tensorlike` for more details.)
         """
         Tensorlike.__init__(self, base.batch_shape)
         self.event_shape = base.event_shape

@@ -9,15 +9,13 @@ import re
 import sys
 from collections.abc import MutableMapping
 from contextlib import contextmanager
-from functools import wraps
 from pathlib import Path
 from typing import Any, Generic, TypeVar
 
-import numpy as np
 import pyparsing as pp
 from ruamel.yaml import YAML
 
-from .cast import cast, safe_partial
+from .cast import safe_partial
 
 yaml = YAML(typ="safe", pure=True)
 
@@ -42,7 +40,9 @@ in_js_mode, in_upsert_mode, do_eval_templates = False, False, True
 
 @contextmanager
 def js_mode():
-    """Enable accessing `Node` children via attr access, kinda like in JS. Used when evaluating templates, since we want `${key1.key2.key3}` to resolve to `key1["key2"]["key3"]`."""
+    """Enable accessing `Node` children via attr access, kinda like in JS.
+    Used when evaluating templates, since we want `${key1.key2.key3}` to resolve to
+    `key1["key2"]["key3"]`."""
 
     global in_js_mode
     prev_mode = in_js_mode
@@ -55,7 +55,9 @@ def js_mode():
 
 @contextmanager
 def py_mode():
-    """Disable accessing `Node` children via attr access, like in Python by default. When handling "Python-internal" stuff during template evaluation, we must disable access by attr access to avoid unexpected behavior."""
+    """Disable accessing `Node` children via attr access, like in Python by default.
+    When handling "Python-internal" stuff during template evaluation, we must
+    disable access by attr access to avoid unexpected behavior."""
 
     global in_js_mode
     prev_mode = in_js_mode
@@ -118,7 +120,7 @@ class NodeLocals:
         self._pydevd[name] = value
 
 
-locator = pp.Empty().setParseAction(lambda s, l, t: l)
+locator = pp.Empty().setParseAction(lambda s, l_, t: l_)
 
 
 def locatedExpr(expr):
@@ -180,7 +182,10 @@ class TemplateEngine:
 class Node(MutableMapping):
     """A config node.
 
-    Represents a YAML node (dict, list or scalar). Due to the presence of templates, we can't just use native Python classes, for example due to having to keep track of "variables" accessible from a given node, and having to automatically evaluate templates on access, if neccessary.
+    Represents a YAML node (dict, list or scalar). Due to the presence of
+    templates, we can't just use native Python classes, for example due to
+    having to keep track of "variables" accessible from a given node, and having
+    to automatically evaluate templates on access, if neccessary.
 
     The `value` passed to the constructor is modified in-place.
     """
@@ -422,7 +427,10 @@ T = TypeVar("T")
 class Dynamic(Generic[T]):
     """A config type for "dynamically typed" objects.
 
-    Typical use case is as follows: when you design a config file for your training procedure, and want to leave e.g. backbone or optimizer choice completely to the user, you can add them as `Dynamic` objects. A following example YAML config:
+    Typical use case is as follows: when you design a config file for your
+    training procedure, and want to leave e.g. backbone or optimizer choice
+    completely up to the user, you can add them as `Dynamic` objects. A following
+    example YAML config:
 
     ```
     optimizer:
@@ -431,9 +439,11 @@ class Dynamic(Generic[T]):
       eps: 1e-5
     ```
 
-    is converted to `optimizer: Dynamic`, and `optimizer.create()` returns an instance of `torch.optim.AdamW`.
+    is converted to `optimizer: Dynamic`, and `optimizer.create()` returns an
+    instance of `torch.optim.AdamW`.
 
-    One can use a generic annotation (`Dynamic[T]`) to provide a hint, that the constructed value is of type `T`.
+    One can use a generic annotation (`Dynamic[T]`) to provide a hint that
+    the constructed value is of type `T`.
     """
 
     def __init__(self, **kwargs):

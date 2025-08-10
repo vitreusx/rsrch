@@ -5,7 +5,11 @@ import numpy as np
 
 
 class rq_tree:
-    """A (simplified) range-query tree. We maintain an array :math:`[A_1, \\ldots, A_n]`, for which we can (1) query :math:`A_i`, (2) set :math:`A_i := v`, (3) perform equivalent of :func:`np.searchsorted` on :math:`[A_1, A_1 \\oplus A_2, \\ldots, A_1 \\oplus \\ldots \\oplus A_n]` over a specified monoid :math:`M = (\\oplus, 0_{\\oplus})`."""
+    """A (simplified) range-query tree. We maintain an array
+    :math:`[A_1, \\ldots, A_n]`, for which we can (1) query :math:`A_i`, (2) set
+    :math:`A_i := v`, (3) perform equivalent of :func:`np.searchsorted` on
+    :math:`[A_1, A_1 \\oplus A_2, \\ldots, A_1 \\oplus \\ldots \\oplus A_n]`
+    over a specified monoid :math:`M = (\\oplus, 0_{\\oplus})`."""
 
     def __init__(
         self,
@@ -17,12 +21,13 @@ class rq_tree:
     ):
         """Create a range-query tree.
 
-        Args:
-            size (int): Size of the underlying array.
-            reduce_fn (optional): Associative op for reducing the array. Defaults to ops.add.
-            zero (float, optional): Zero element for the reduce_fn. Defaults to 0.0.
-            init (_type_, optional): Array initializer. If not specified, defaults to zero of the op.
-            dtype (_type_, optional): Numpy dtype for the array. Defaults to None.
+        :param size: Size of the underlying array.
+        :param reduce_fn: Associative op for reducing the array. Defaults to
+        `ops.add`.
+        :param zero: Zero element for the reduce_fn. Defaults to `0.0`.
+        :param init: Array initializer. If not specified, defaults to zero of
+        the op.
+        :param dtype: Numpy dtype for the array. Defaults to None.
         """
         self.size = size
         self.reduce_fn = reduce_fn
@@ -76,7 +81,8 @@ class rq_tree:
 
     @property
     def total(self):
-        """Reduction of entire array (for example, max element for max, or sum for ops.add.)"""
+        """Reduction of entire array (for example, max element for max, or sum
+        for ops.add.)"""
         return self.tree[0]
 
     def __getitem__(self, idx):
@@ -110,4 +116,4 @@ class rq_tree:
         return node - self._array_beg
 
     def __repr__(self):
-        return f"rq_tree({self.array[:self.size]}, total={self.total})"
+        return f"rq_tree({self.array[: self.size]}, total={self.total})"

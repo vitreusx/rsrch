@@ -8,7 +8,7 @@ from torch.utils import data
 from rsrch.data.meta import ClsMeta
 
 
-def get_label_names(loc_synset_mapping_txt: str | Path):
+def _get_label_names(loc_synset_mapping_txt: str | Path):
     names = []
     with open(loc_synset_mapping_txt, "r") as f:
         for line in f:
@@ -24,6 +24,36 @@ def get_label_names(loc_synset_mapping_txt: str | Path):
 
 
 class ImageNet(data.Dataset):
+    """ImageNet dataset.
+
+    The dataset may also be a subset of IN-1k or any compatible one. Here's the
+    required file structure:
+
+    ```
+    <root>/
+    ├─ ILSVRC/
+    │  ├─ Data/                   # Image files
+    │  │  ├─ CLS-LOC/
+    │  │  │  ├─ train/
+    │  │  │  │  ├─ {wnid}/
+    │  │  │  │  │  ├─ {image_file}
+    │  │  │  │  │  ├─ ...
+    │  │  │  ├─ val/
+    │  │  │  │  ├─ {image_file}
+    │  │  │  │  ├─ ...
+    │  │  │  ├─ test/
+    │  │  │  │  ├─ {image_file}
+    │  │  │  │  ├─ ...
+    │  ├─ ImageSets/              # Item lists
+    │  │  ├─ CLS-LOC/
+    │  │  │  ├─ train_cls.txt
+    │  │  │  ├─ val.txt
+    │  │  │  ├─ test.txt
+    ├─ LOC_synset_mapping.txt     # A list of labels with WordNet IDs
+    ├─ LOC_val_solution.csv       # An assignment of labels for val set
+    ```
+    """
+
     def __init__(
         self,
         root: str | Path,
@@ -35,7 +65,7 @@ class ImageNet(data.Dataset):
         self.img_root = self.root / "ILSVRC/Data/CLS-LOC" / split
 
         cls_lists = {"train": "train_cls.txt", "val": "val.txt", "test": "test.txt"}
-        cls_list = self.root / f"ILSVRC/ImageSets/CLS-LOC" / cls_lists[split]
+        cls_list = self.root / "ILSVRC/ImageSets/CLS-LOC" / cls_lists[split]
 
         self._paths: list[Path] = []
         with open(cls_list, "r") as f:
@@ -81,6 +111,6 @@ class ImageNet(data.Dataset):
 
     def meta(self):
         loc_synset_mapping_txt = self.root / "LOC_synset_mapping.txt"
-        label_names = get_label_names(loc_synset_mapping_txt)
-        classes = {label: name for label, name in enumerate(label_names)}
+        label_names = _get_label_names(loc_synset_mapping_txt)
+        classes = dict(enumerate(label_names))
         return ClsMeta({"classes": classes, "ignore_index": None})

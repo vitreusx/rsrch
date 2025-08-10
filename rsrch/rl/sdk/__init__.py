@@ -1,10 +1,7 @@
 from dataclasses import dataclass
-from typing import Any, Iterable, Literal, Protocol
+from typing import Literal
 
-from rsrch import spaces
-
-from . import atari, dmc, gym, wrappers
-from .api import SDK
+from . import atari, dmc, gym
 
 AtariCfg = atari.Config
 GymCfg = gym.Config
@@ -19,7 +16,7 @@ class Config:
     dmc: DMCCfg | None = None
 
 
-def make(cfg: Config) -> SDK:
+def make(cfg: Config):
     """Create an SDK from a config object."""
     if cfg.type == "atari":
         return atari.SDK(cfg.atari)

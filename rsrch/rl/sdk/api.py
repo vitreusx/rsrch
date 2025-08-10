@@ -1,15 +1,23 @@
-from typing import Any
+from typing import Any, Generic, Iterable, TypeVar
 
 from ..data import Buffer
 from ..gym import VecAgent, VecEnv
 
+T_obs = TypeVar("T_obs")
+T_act = TypeVar("T_act")
 
-class SDK:
+
+class SDK(Generic[T_obs, T_act]):
     """RL environment SDK.
 
-    Provides utilities for working with RL environments (doing rollouts, storing samples, fetching sequences etc.) without having to worry about converting the data to/from tensors - the SDK ensures that the data format given to the agent on rollout (see `rollout`), and retrieved from a wrapped buffer (see `wrap_buffer`) are identical.
+    Provides utilities for working with RL environments (doing rollouts, storing
+    samples, fetching sequences etc.) without having to worry about converting
+    the data to/from tensors - the SDK ensures that the data format given to the
+    agent on rollout (see `rollout`), and retrieved from a wrapped buffer (see
+    `wrap_buffer`) are identical.
 
-    These functionalities allow one to greatly simplify env-agent interaction loop. We provide an example one below:
+    These functionalities allow one to greatly simplify env-agent interaction
+    loop. We provide an example one below:
 
     .. code-block:: python
         # Initialize envs, vec agent and buffer to store data.
@@ -24,7 +32,9 @@ class SDK:
         for env_idx, (step, final) in sdk.rollout(envs, agent):
             seq_ids[env_idx] = buf.push(seq_ids[env_idx], step, final)
 
-    where `agent` operates on tensors already. Details such as resets and updates of both environments and agents, or the parallel implementation of vectorized environments, are all hidden from the user.
+    where `agent` operates on tensors already. Details such as resets and updates
+    of both environments and agents, or the parallel implementation of
+    vectorized environments, are all hidden from the user.
     """
 
     id: str
@@ -36,15 +46,24 @@ class SDK:
     act_space: Any
     """Action space, in target format."""
 
-    def make_envs(self, num_envs: int, **kwargs) -> VecEnv:
+    def make_envs(self, num_envs: int, **kwargs) -> VecEnv[T_obs, T_act]:
         """Create a vector env.
 
         :param num_envs: Number of parallel environments.
-        :param kwargs: Parameters for the environments. The specific list of parameters depends on the SDK in question.
+        :param kwargs: Parameters for the environments. The specific list of
+        parameters depends on the SDK in question.
         """
 
     def wrap_buffer(self, buffer: Buffer) -> Buffer:
-        """Wrap a regular buffer into an SDK-aware version. Episodes in the buffer are automatically converted to target format (e.g. `torch` tensors) on retrieval."""
+        """Wrap a regular buffer into an SDK-aware version. Episodes in the
+        buffer are automatically converted to target format (e.g. `torch`
+        tensors) on retrieval."""
 
-    def rollout(self, envs: VecEnv, agent: VecAgent):
-        """Create a rollout with vector env `envs` and vector agent `agent`. The agent must operate in target format; the actions and observations in the env format are converted automatically."""
+    def rollout(
+        self,
+        envs: VecEnv[T_obs, T_act],
+        agent: VecAgent,
+    ) -> Iterable[tuple[int, tuple[T_obs, bool]]]:
+        """Create a rollout with vector env `envs` and vector agent `agent`.
+        The agent must operate in target format; the actions and observations
+        in the env format are converted automatically."""

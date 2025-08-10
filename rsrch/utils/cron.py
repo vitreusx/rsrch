@@ -10,7 +10,8 @@ class Flag:
 class Every(Flag):
     """A flag for running actions periodically.
 
-    Formally, the flag itself doesn't perform actions, but rather provides a way to check (via bool conversion) if the action should be performed, and for how long.
+    Formally, the flag itself doesn't perform actions, but rather provides a way
+    to check (via bool conversion) if the action should be performed, and for how long.
 
     The flag is parametrized by:
 
@@ -20,13 +21,24 @@ class Every(Flag):
 
     There are two modes of operation, controlled by `accumulate` parameter:
 
-    - `accumulate = True`: Every `period` steps, starting from the first call, `iters` number of actions are added to an accumulator. `bool(flag)` returns `True` as long as the number of leftover actions is greater than zero.
-    - `accumulate = False`: At the point of first check `bool(flag)`, it returns `True` at most `iters` number of times, as long as the step value remains the same. Thereafter, the flag activates once again only after at least `period` steps have elapsed since the last time it was active, and again remains active for `iters` number of steps for as long as the step value remains the same.
+    - `accumulate = True`: Every `period` steps, starting from the first call,
+    `iters`number of actions are added to an accumulator. `bool(flag)` returns
+    `True` as long as the number of leftover actions is greater than zero.
+    - `accumulate = False`: At the point of first check `bool(flag)`, it returns
+    `True` at most `iters` number of times, as long as the step value remains
+    the same. Thereafter, the flag activates once again only after at least
+    `period` steps have elapsed since the last time it was active, and again
+    remains active for `iters` number of steps for as long as the step value
+    remains the same.
 
-    Usage and examples are motivated mostly by RL applications, where step values are nontrivial compared to supervised learning:
+    Usage and examples are motivated mostly by RL applications, where step
+    values are nontrivial compared to supervised learning:
 
-    - If you want to perform optimization step every `K` environment steps on average, you want to use `accumulate = True`.
-    - If you want to write logs or save stats to the dashboard every so often, accumulation is unnecessary, so you'd rather use `accumulate = False` with `iters = 1`.
+    - If you want to perform optimization step every `K` environment steps on
+    average, you want to use `accumulate = True`.
+    - If you want to write logs or save stats to the dashboard every so often,
+    accumulation is unnecessary, so you'd rather use `accumulate = False` with
+    `iters = 1`.
     """
 
     def __init__(

@@ -1,5 +1,5 @@
 from functools import cache
-from typing import Callable, ParamSpec, TypeVar
+from typing import TypeVar
 
 
 def is_contiguous(xs: list[int]):

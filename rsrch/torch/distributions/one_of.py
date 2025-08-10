@@ -3,7 +3,6 @@ from torch import Tensor
 
 from rsrch.types import Tensorlike
 
-from .categorical import Categorical
 from .discrete import OneHot
 from .distribution import Distribution
 

@@ -1,4 +1,5 @@
-"""A collection of various distributions for Torch. Basically a mirror of `torch.distributions`, except that the distributions are tensor-likes."""
+"""A collection of various distributions for Torch. Basically a mirror of
+`torch.distributions`, except that the distributions are tensor-likes."""
 
 from .affine import Affine
 from .bernoulli import Bernoulli
@@ -14,6 +15,26 @@ from .normal import Normal
 from .one_of import OneOf
 from .tanh_normal import TanhNormal
 from .transformed import Transformed
-from .transforms import *
 from .trunc_normal import TruncNormal
 from .uniform import Uniform
+
+__all__ = [
+    "Affine",
+    "Bernoulli",
+    "Beta",
+    "Categorical",
+    "ClipNormal",
+    "Dirac",
+    "Discrete",
+    "OneHot",
+    "Distribution",
+    "kl_divergence",
+    "register_kl",
+    "MSEProxy",
+    "Normal",
+    "OneOf",
+    "TanhNormal",
+    "Transformed",
+    "TruncNormal",
+    "Uniform",
+]

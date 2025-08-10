@@ -1,7 +1,6 @@
 import re
 from typing import Any, Callable
 
-import torch
 from torch import Tensor, nn
 
 
@@ -54,19 +53,22 @@ def extract_features_with_hook(
     module: nn.Module,
     pattern: Callable[[str, nn.Module], bool] | str | None = None,
 ):
-    """Extract intermediate features (i.e. outputs of module's submodules) from the forward calls of `module`.
+    """Extract intermediate features (i.e. outputs of module's submodules)
+    from the forward calls of `module`.
 
     :param module: Torch module to be "hacked" to extract features.
     :param pattern: Optional pattern for matching submodules.
 
         - If it's a string, it's assumed to be a regex pattern.
-        - If it's callable, it's used as a filter function (`pattern(path, module) -> bool`).
+        - If it's callable, it's used as a filter function
+        (`pattern(path, module) -> bool`).
         - If not provided or `None`, all submodules are matched.
 
     :return: A pair `(features, hook)`, where:
 
         - `features` is a dictionary populated with the features;
-        - `hook` object has a method `remove`, which can be used to stop retrieving the features.
+        - `hook` object has a method `remove`, which can be used to stop
+        retrieving the features.
     """
 
     hook = ExtractFeaturesHook(module, pattern)

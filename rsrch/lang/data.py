@@ -34,10 +34,10 @@ def split_into_buckets(
 
     i_min, i_max = 0, len(lengths)
     if min_seq_len is not None:
-        # least idx s.t. values[idx] >= min_seq_len
+        # Find least idx s.t. values[idx] >= min_seq_len
         i_min = np.searchsorted(values, min_seq_len)
     if max_seq_len is not None:
-        # least idx s.t. values[idx] > max_seq_len
+        # Find least idx s.t. values[idx] > max_seq_len
         i_max = np.searchsorted(values, max_seq_len, side="right")
 
     cumul_tok_counts = np.cumsum(values)
@@ -46,9 +46,11 @@ def split_into_buckets(
     begin = i_min
     while begin < i_max:
         end = begin + 1
+
         if min_bucket_size is not None:
             end_by_size = begin + min_bucket_size
             end = max(end, end_by_size)
+
         if min_bucket_token_count is not None:
             # tok_count for bucket is cumul[last - 1] - cumul[begin - 1]
             # so: search for least idx s.t.

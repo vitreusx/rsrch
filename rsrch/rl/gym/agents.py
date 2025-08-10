@@ -1,9 +1,9 @@
-from ._api import *
+from .api import Agent, Env
 
 
 class RandomAgent(Agent):
     def __init__(self, env: Env):
-        super().__init__()
+        super().__init__(env.obs_space, env.act_space)
         self.obs_space = env.obs_space
         self.act_space = env.act_space
 

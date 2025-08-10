@@ -20,7 +20,8 @@ class Schedule:
 
 
 class Profiler:
-    """A profiler for Torch. Basically a (hopefully) easy-to-use wrapper around `torch.profiler` stuff."""
+    """A profiler for Torch. Basically a (hopefully) easy-to-use wrapper
+    around `torch.profiler` stuff."""
 
     def __init__(
         self,
@@ -34,7 +35,7 @@ class Profiler:
         self.traces_dir = Path(traces_dir)
         self.schedule = schedule
         if options is None:
-            options = dict(with_stack=True, with_modules=True)
+            options = {"with_stack": True, "with_modules": True}
         self.options = options
         self.enabled = enabled
 
@@ -49,7 +50,9 @@ class Profiler:
     ) -> Callable[P, R]:
         """Transform a function into a profiled one.
 
-        Transforms a function so as to profile it. To be specific, on the first execution, we repeat the function call until Torch profiler finishes, and save the results to a trace json file. Subsequent calls behave as usual.
+        Transforms a function so as to profile it. To be specific, on the first
+        execution, we repeat the function call until Torch profiler finishes,
+        and save the results to a trace json file. Subsequent calls behave as usual.
         """
 
         if not self.enabled:

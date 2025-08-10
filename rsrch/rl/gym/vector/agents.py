@@ -1,10 +1,14 @@
-from typing import Callable
+from abc import ABC, abstractmethod
+from typing import Any, Callable
 
-from .._api import *
+import numpy as np
+
+from ..api import Agent, VecAgent, VecAgentWrapper, VecEnv
 
 
 class Pointwise(VecAgentWrapper):
-    """A vec agent wrapper which (implicitly) applies a transform to each "sub-agent" of a vec agent (hence 'pointwise.')"""
+    """A vec agent wrapper which (implicitly) applies a transform to each
+    "sub-agent" of a vec agent (hence 'pointwise.')"""
 
     def __init__(self, agent: VecAgent, transform: Callable[[Agent], Agent]):
         super().__init__(agent)
@@ -15,10 +19,8 @@ class Pointwise(VecAgentWrapper):
 
     class Proxy(Agent):
         def __init__(self, parent: "Pointwise", env_idx: int):
-            super().__init__()
+            super().__init__(parent.obs_space, parent.act_space)
             self.parent = parent
-            self.obs_space = parent.obs_space
-            self.act_space = parent.act_space
             self.env_idx = env_idx
 
         def reset(self, obs):
@@ -65,12 +67,11 @@ class Pointwise(VecAgentWrapper):
 
 
 class Markov(VecAgent, ABC):
-    """A helper class for implementing 'Markovian' vector agents (that is, agents which decide based on the last observation alone.)"""
+    """A helper class for implementing 'Markovian' vector agents (that is,
+    agents which decide based on the last observation alone.)"""
 
     def __init__(self, obs_space, act_space):
-        super().__init__()
-        self.obs_space = obs_space
-        self.act_space = act_space
+        super().__init__(obs_space, act_space)
         self._last_obs = None
 
     def reset(self, idxes: np.ndarray, obs_seq):
@@ -97,13 +98,11 @@ class RandomVecAgent(VecAgent):
         obs_space: Any | None = None,
         act_space: Any | None = None,
     ):
-        super().__init__()
         if obs_space is None:
             obs_space = envs.obs_space
-        self.obs_space = obs_space
         if act_space is None:
             act_space = envs.act_space
-        self.act_space = act_space
+        super().__init__(obs_space, act_space)
 
     def policy(self, idxes: np.ndarray):
         return self.act_space.sample((len(idxes),))

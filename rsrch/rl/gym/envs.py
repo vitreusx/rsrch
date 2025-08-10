@@ -13,7 +13,7 @@ from PIL import Image
 from rsrch import spaces
 from rsrch.types.shared import shared_ndarray
 
-from ._api import *
+from .api import Env, VecAgent, VecEnv
 
 
 def unbind(x):
@@ -88,23 +88,27 @@ class Envpool(VecEnv):
         act_f: Callable[[np.ndarray], np.ndarray] | None = None,
         **kwargs,
     ):
-        self.pool = envpool.make(task_id, env_type="gymnasium", **kwargs)
+        pool = envpool.make(task_id, env_type="gymnasium", **kwargs)
+
+        num_envs = pool.config["num_envs"]
+
+        obs_space = spaces.np.from_gym(pool.observation_space)
+        if obs_f is not None and hasattr(obs_f, "codomain"):
+            obs_space = obs_f.codomain(obs_space)
+
+        act_space = spaces.np.from_gym(pool.action_space)
+        act_space = cast_action.codomain(act_space)
+
+        super().__init__(num_envs, obs_space, act_space)
+
+        self.pool = pool
         self.obs_f = obs_f
         self.act_f = act_f
 
-        self.num_envs = self.pool.config["num_envs"]
         self._batch_size = self.pool.config["batch_size"]
-
-        self.obs_space = spaces.np.from_gym(self.pool.observation_space)
-        if self.obs_f is not None and hasattr(self.obs_f, "codomain"):
-            self.obs_space = self.obs_f.codomain(self.obs_space)
-        self.obs_space = {"obs": self.obs_space}
-
-        self.act_space = spaces.np.from_gym(self.pool.action_space)
-        self.act_space = cast_action.codomain(self.act_space)
         self._actions = self.act_space.sample([self.num_envs])
 
-    def rollout(self, agent: VecAgent):
+    def rollout(self, agent: VecAgent):  # noqa: C901
         self.pool.async_reset()
         next_reset = [True for _ in range(self.num_envs)]
 
@@ -179,12 +183,13 @@ class GymEnv(Env):
     """An env created from a gymnasium.Env."""
 
     def __init__(self, env: gym.Env, seed=None, render=False):
-        super().__init__()
+        obs_space = {"obs": spaces.np.from_gym(env.observation_space)}
+        act_space = spaces.np.from_gym(env.action_space)
+        super().__init__(obs_space, act_space)
+
         self.env = env
         self.render = render
         self.seed = seed
-        self.obs_space = {"obs": spaces.np.from_gym(self.env.observation_space)}
-        self.act_space = spaces.np.from_gym(self.env.action_space)
 
     def reset(self):
         obs, info = self.env.reset(seed=self.seed)
@@ -299,7 +304,8 @@ class ProcEnv(Env):
         )
         self.proc.start()
 
-        self.obs_space, self.act_space = self.recv_c.recv()
+        obs_space, act_space = self.recv_c.recv()
+        super().__init__(obs_space, act_space)
 
     def reset(self):
         self.send_c.send(("reset",))
@@ -339,11 +345,9 @@ class EnvSet(VecEnv):
         envs: list[Env],
         batch_size: int | None = None,
     ):
+        super().__init__(len(envs), envs[0].obs_space, envs[0].act_space)
         self.envs = envs
-        self.num_envs = len(envs)
         self.batch_size = batch_size or self.num_envs
-        self.obs_space = envs[0].obs_space
-        self.act_space = envs[0].act_space
 
     def rollout(self, agent: VecAgent):
         with cf.ThreadPoolExecutor(self.batch_size) as pool:
@@ -411,9 +415,8 @@ class EnvSet(VecEnv):
 
 
 class OrdinalEnv(Env):
-    def __init__(self, is_final):
-        super().__init__()
-        self.act_space = spaces.np.Discrete(1)
+    def __init__(self, is_final: Callable):
+        super().__init__(None, spaces.np.Discrete(1))
         self.is_final = is_final
         self.ep_id = 0
         self.step_idx = 0

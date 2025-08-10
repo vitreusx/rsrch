@@ -1,6 +1,5 @@
 import logging
 from abc import ABC, abstractmethod
-from textwrap import shorten
 
 from colorama import Fore, Style, just_fix_windows_console
 

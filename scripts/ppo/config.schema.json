@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema",
+  "$id": "https://github.com/vitreusx/rsrch",
+  "type": "object",
+  "properties": {
+    "seed": { "type": "integer" },
+    "device": { "type": "string" },
+    "compute_dtype": { "enum": ["float32", "float16", "bfloat16"] },
+    "create_exp_commit": { "type": "boolean" },
+    "env": {
+      "type": "object",
+      "properties": {
+        "type": { "enum": ["atari", "gym", "dmc"] },
+        "atari": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "env_id": { "type": "string" },
+                "screen_size": {
+                  "anyOf": [
+                    { "type": "integer" },
+                    {
+                      "type": "array",
+                      "minItems": 2,
+                      "maxItems": 2,
+                      "prefixItems": [
+                        { "type": "integer" },
+                        { "type": "integer" }
+                      ]
+                    }
+                  ]
+                },
+                "frame_skip": { "type": "integer" },
+                "obs_type": { "enum": ["rgb", "grayscale", "ram"] },
+                "noop_max": { "type": "integer" },
+                "fire_reset": { "type": "boolean" },
+                "term_on_life_loss": { "type": "boolean" },
+                "time_limit": {
+                  "anyOf": [{ "type": "integer" }, { "type": "null" }]
+                },
+                "stack_num": {
+                  "anyOf": [{ "type": "integer" }, { "type": "null" }]
+                },
+                "use_envpool": { "type": "boolean" },
+                "repeat_action_probability": { "type": "number" },
+                "randomize": { "type": "boolean" }
+              },
+              "additionalProperties": false,
+              "required": ["env_id"]
+            },
+            { "type": "null" }
+          ]
+        },
+        "gym": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "env_id": { "type": "string" },
+                "obs_type": { "enum": ["base", "flat", "render"] },
+                "render_size": {
+                  "anyOf": [
+                    {
+                      "type": "array",
+                      "minItems": 2,
+                      "maxItems": 2,
+                      "prefixItems": [
+                        { "type": "integer" },
+                        { "type": "integer" }
+                      ]
+                    },
+                    { "type": "null" }
+                  ]
+                },
+                "use_envpool": { "type": "boolean" }
+              },
+              "additionalProperties": false,
+              "required": ["env_id"]
+            },
+            { "type": "null" }
+          ]
+        },
+        "dmc": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "domain": { "type": "string" },
+                "task": { "type": "string" },
+                "obs_type": {
+                  "enum": ["proprio_dict", "proprio_nd", "visual"]
+                },
+                "frame_skip": { "type": "integer" },
+                "render_size": {
+                  "anyOf": [
+                    { "type": "integer" },
+                    {
+                      "type": "array",
+                      "minItems": 2,
+                      "maxItems": 2,
+                      "prefixItems": [
+                        { "type": "integer" },
+                        { "type": "integer" }
+                      ]
+                    }
+                  ]
+                },
+                "camera_id": { "type": "integer" },
+                "use_envpool": { "type": "boolean" }
+              },
+              "additionalProperties": false,
+              "required": ["domain", "task"]
+            },
+            { "type": "null" }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": ["type"]
+    },
+    "num_train_envs": { "type": "integer" },
+    "num_val_envs": { "anyOf": [{ "type": "integer" }, { "type": "null" }] },
+    "steps_per_batch": { "type": "integer" },
+    "min_seq_len": { "type": "integer" },
+    "sample_every": { "type": "integer" },
+    "lr": { "type": "number" },
+    "opt_eps": { "type": "number" },
+    "update_epochs": { "type": "integer" },
+    "mb_size": { "anyOf": [{ "type": "integer" }, { "type": "null" }] },
+    "adv_norm": { "type": "boolean" },
+    "clip_coef": { "type": "number" },
+    "clip_vloss": { "type": "boolean" },
+    "gamma": { "type": "number" },
+    "gae_lambda": { "type": "number" },
+    "clip_grad": { "anyOf": [{ "type": "number" }, { "type": "null" }] },
+    "vf_coef": { "type": "number" },
+    "rew_norm": { "enum": ["id", "clip", "sign"] },
+    "ent_coef": { "type": "number" },
+    "target_critic": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "tau": { "anyOf": [{ "type": "number" }, { "enum": ["sync"] }] },
+            "every": { "type": "integer" }
+          },
+          "additionalProperties": false,
+          "required": []
+        },
+        { "type": "null" }
+      ]
+    },
+    "share_encoder": { "type": "boolean" }
+  },
+  "additionalProperties": false,
+  "required": [
+    "seed",
+    "device",
+    "compute_dtype",
+    "create_exp_commit",
+    "env",
+    "num_train_envs",
+    "num_val_envs",
+    "steps_per_batch",
+    "min_seq_len",
+    "sample_every",
+    "lr",
+    "opt_eps",
+    "update_epochs",
+    "mb_size",
+    "adv_norm",
+    "clip_coef",
+    "clip_vloss",
+    "gamma",
+    "gae_lambda",
+    "clip_grad",
+    "vf_coef",
+    "rew_norm",
+    "ent_coef",
+    "target_critic",
+    "share_encoder"
+  ]
+}

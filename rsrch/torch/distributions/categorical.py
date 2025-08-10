@@ -82,7 +82,7 @@ class Categorical(Distribution, Tensorlike):
 
     @property
     def mode(self):
-        return self.probs.argmax(axis=-1)
+        return self._param.argmax(axis=-1)
 
     @property
     def variance(self):

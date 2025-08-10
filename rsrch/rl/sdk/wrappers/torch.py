@@ -1,7 +1,9 @@
-from typing import Mapping, Sequence
+from collections import defaultdict
+from typing import Mapping, Sequence, TypeVar
 
 import numpy as np
 import torch
+from torch import Tensor
 
 from rsrch import spaces
 from rsrch.rl import data, gym
@@ -40,11 +42,11 @@ class CastF:
 
             if isinstance(self.space, spaces.np.Image):
                 d = 1 if batched else 0
-                if len(x.shape) == 3 + d:
+                if len(x.shape) == 2 + d:
+                    x = np.expand_dims(x, d)
+                else:
                     if self.space.channel_last:
-                        x = np.swapaxes(x, 2 + d, d)
-                elif len(x.shape) == 2 + d:
-                    x = x[:, None]
+                        x = np.moveaxis(x, -1, d)
 
                 if x.dtype == np.uint8:
                     x = x / 255.0
@@ -114,17 +116,14 @@ class CastF:
                 raise RuntimeError(f"Invalid space {space}")
 
 
-def getitem(xs, index):
-    if isinstance(xs, dict):
-        return {k: getitem(v, index) for k, v in xs.items()}
-    elif isinstance(xs, tuple):
-        return tuple(getitem(x, index) for x in xs)
-    else:
-        return xs[index]
-
-
-class TensorSeq(Sequence):
-    def __init__(self, seq: Sequence[dict], obs_f: CastF, act_f: CastF, idxes: range):
+class LazySeq(Sequence):
+    def __init__(
+        self,
+        seq: Sequence[dict],
+        idxes: range,
+        obs_f: CastF,
+        act_f: CastF,
+    ):
         self.seq = seq
         self.obs_f = obs_f
         self.act_f = act_f
@@ -139,41 +138,38 @@ class TensorSeq(Sequence):
         if self._data is not None:
             return self._data
 
-        assert self.idxes.step == 1
-        start, stop = self.idxes.start, self.idxes.stop
+        KEYS = ("obs", "act", "reward", "term", "trunc")
 
-        obs = [self.seq[t]["obs"] for t in range(start, stop)]
-        obs = self.obs_f(obs, batched=True)
+        data = defaultdict(lambda: [])
+        assoc = defaultdict(lambda: [])
+        for i, t in enumerate(self.idxes):
+            step = self.seq[t]
+            for k in KEYS:
+                if k in step:
+                    assoc[k].append(i)
+                    data[k].append(step[k])
 
-        act = [self.seq[t]["act"] for t in range(start + 1, stop)]
-        act = self.act_f(act, batched=True)
+        data["obs"] = self.obs_f(data["obs"], batched=True)
+        data["act"] = self.act_f(data["act"], batched=True)
 
-        rew = [self.seq[t]["reward"] for t in range(start + 1, stop)]
-        rew = np.array(rew, dtype=np.float32)
+        items = [{} for _ in self.idxes]
+        for k in KEYS:
+            for i, v in zip(assoc[k], data[k]):
+                items[i][k] = v
 
-        term = [self.seq[t].get("term", False) for t in range(start, stop)]
-        term = np.array(term, dtype=bool)
-
-        trunc = [self.seq[t].get("trunc", False) for t in range(start, stop)]
-        trunc = np.array(trunc, dtype=bool)
-
-        self._data = obs, act, rew, term, trunc
+        self._data = items
         return self._data
 
     def __getitem__(self, idx: int | slice):
-        if isinstance(idx, slice):
-            return TensorSeq(
+        if self._data is None and isinstance(idx, slice):
+            return LazySeq(
                 seq=self.seq,
+                idxes=self.idxes[idx],
                 obs_f=self.obs_f,
                 act_f=self.act_f,
-                idxes=self.idxes[idx],
             )
         else:
-            obs, act, rew, term, trunc = self.data
-            item = {"obs": getitem(obs, idx), "term": term[idx], "trunc": trunc[idx]}
-            if idx > 0:
-                item = {**item, "act": getitem(act, idx - 1), "reward": rew[idx - 1]}
-            return item
+            return self.data[idx]
 
 
 class TensorBufferWrapper(data.Wrapper):
@@ -184,11 +180,11 @@ class TensorBufferWrapper(data.Wrapper):
 
     def __getitem__(self, seq_id: int):
         seq = self.buf[seq_id]
-        return TensorSeq(
-            seq,
+        return LazySeq(
+            seq=seq,
+            idxes=range(len(seq)),
             obs_f=self.obs_f,
             act_f=self.act_f,
-            idxes=range(len(seq)),
         )
 
 
@@ -212,23 +208,25 @@ class TensorVecAgent(gym.vector.AgentWrapper):
         super().step(idxes, act_seq, next_obs_seq)
 
 
-class ToTensor:
+T_obs = TypeVar("T_obs")
+T_act = TypeVar("T_act")
+
+
+class ToTensor(api.SDK[T_obs, T_act]):
     """An "SDK wrapper" for `torch`.
 
-    Given an `SDK` operating on Numpy arrays, converts them to Torch tensors, possibly recursively - the SDK supports using dicts and tuples as observation and action types.
+    Given an `SDK` operating on Numpy arrays, converts them to Torch tensors,
+    possibly recursively - the SDK supports using dicts and tuples as observation
+    and action types.
 
     The conversions are performed in a following fashion:
 
     - if the array is an image, it's normalized and permuted to make it channel-first.
-    - otherwise, only dtype casting is performed: floating dtypes to `torch.float32`, and integral types to `torch.long`.
-
-    The data format for the vector agent is as follows:
-
-    - the observations received are tensors or dicts/tuples thereof - batching is performed
-
+    - otherwise, only dtype casting is performed: floating dtypes to
+    `torch.float32`, and integral types to `torch.long`.
     """
 
-    def __init__(self, sdk: api.SDK):
+    def __init__(self, sdk: api.SDK[T_obs, T_act]):
         self.sdk = sdk
         self.obs_f = CastF(self.sdk.obs_space)
         self.obs_space = self.obs_f.codomain(self.sdk.obs_space)
@@ -242,6 +240,10 @@ class ToTensor:
         buf = self.sdk.wrap_buffer(buf)
         return TensorBufferWrapper(buf, obs_f=self.obs_f, act_f=self.act_f)
 
-    def rollout(self, envs: gym.VecEnv, agent: gym.VecAgent):
+    def rollout(
+        self,
+        envs: gym.VecEnv[T_obs, T_act],
+        agent: gym.VecAgent[Tensor, Tensor],
+    ):
         agent = TensorVecAgent(agent, obs_f=self.obs_f, act_f=self.act_f)
         return self.sdk.rollout(envs, agent)

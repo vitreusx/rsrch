@@ -1,5 +1,4 @@
-from dataclasses import dataclass
-from functools import partial
+from pathlib import Path
 from typing import Literal, TypedDict
 
 import albumentations as A
@@ -10,10 +9,9 @@ import torch
 import torch.nn.functional as F
 import torchvision.transforms.functional as tv_F
 from PIL import Image
-from torch import Tensor, nn
-from torch.utils.data import DataLoader
+from torch import Tensor
+from torch.utils.data import DataLoader, RandomSampler
 from torchmetrics import JaccardIndex
-from torchmetrics.segmentation import MeanIoU
 
 from rsrch.data.voc import VOCSegmentation
 from rsrch.exp import Experiment, boards
@@ -21,7 +19,6 @@ from rsrch.models.unet import UNet
 from rsrch.torch.nn.optim import ScaledOptimizer
 from rsrch.utils import cron, repro
 from rsrch.utils.ddp import auto_detect
-from rsrch.utils.download import download_url
 from rsrch.utils.preview import make_grid
 
 
@@ -36,7 +33,7 @@ class Config:
     batch_size: int = 16
     val_batch_size: int | None = None
     log_every: TimeDelta = {"n": 4, "of": "step"}
-    val_every: TimeDelta = {"n": 256, "of": "step"}
+    val_every: TimeDelta = {"n": 2048, "of": "step"}
     save_every: TimeDelta | None = None
     resize_mode: Literal["preds", "labels"] = "preds"
 
@@ -51,10 +48,53 @@ class Batch(TypedDict):
     labels: Tensor
 
 
-def collate_fn(batch: list[Item]) -> Batch:
-    image = torch.stack([item["image"] for item in batch])
-    labels = torch.stack([item["labels"] for item in batch])
-    return {"image": image, "labels": labels}
+class Dataset:
+    MEAN = np.array([0.485, 0.456, 0.406])
+    STD = np.array([0.229, 0.224, 0.225])
+
+    def __init__(
+        self,
+        root: str | Path,
+        split: Literal["train", "val"],
+        transforms: list,
+    ):
+        super().__init__()
+        self.base = VOCSegmentation(root, split=split)
+
+        self.meta = self.base.meta()
+
+        self.transform = A.Compose(
+            [
+                *transforms,
+                A.Normalize(self.MEAN, self.STD),
+                A.ToTensorV2(),
+            ]
+        )
+
+    def __len__(self):
+        return len(self.base)
+
+    def __getitem__(self, index: int):
+        item = self.base[index]
+        image = np.asarray(item["image"].convert("RGB"))
+        labels = np.asarray(item["labels"])
+        res = self.transform(image=image, mask=labels)
+        return {
+            "image": res["image"],
+            "labels": res["mask"].to(torch.long),
+        }
+
+    def to_pil_image(self, image: Tensor):
+        img_nd = image.moveaxis(0, -1).numpy(force=True)
+        img_nd = img_nd * self.STD + self.MEAN
+        img_nd = (255 * img_nd).astype(np.uint8)
+        return Image.fromarray(img_nd)
+
+    @staticmethod
+    def collate_fn(batch: list[Item]) -> Batch:
+        image = torch.stack([item["image"] for item in batch])
+        labels = torch.stack([item["labels"] for item in batch])
+        return {"image": image, "labels": labels}
 
 
 def move_to_device(batch: Batch, device: torch.device) -> Batch:
@@ -97,6 +137,7 @@ class Trainer:
         self.should_save_samples = cron.Once()
         self.should_save_val_samples = cron.Always()
 
+        self.pbar = self.exp.make_pbar(desc=self.project)
         while True:
             if should_val:
                 self.val_epoch()
@@ -105,6 +146,7 @@ class Trainer:
                 self.save_model(tag)
             self.train_step()
             self.step += 1
+            self.pbar.update()
 
     def setup_infra(self):
         self.ddp = auto_detect()
@@ -113,58 +155,18 @@ class Trainer:
 
         self.step, self.epoch = 0, 0
         if self.ddp.is_master:
-            self.exp = Experiment(self.project)
+            self.exp = Experiment(project=self.project)
             self.exp.add_board(boards.Tensorboard(self.exp.dir / "board", launch=True))
 
             self.exp.register_step("step", lambda: self.step)
             self.exp.register_step("epoch", lambda: self.epoch)
 
     def setup_data(self):
-        voc_root = "./datasets/voc"
-        MEAN = np.array([0.485, 0.456, 0.406])
-        STD = np.array([0.229, 0.224, 0.225])
-
-        class Data:
-            def __init__(
-                self,
-                split: Literal["train", "val"],
-                transforms: list,
-            ):
-                super().__init__()
-                self.base = VOCSegmentation(voc_root, split=split)
-
-                self.meta = self.base.meta()
-
-                self.transform = A.Compose(
-                    [
-                        *transforms,
-                        A.Normalize(MEAN, STD),
-                        A.ToTensorV2(),
-                    ]
-                )
-
-            def __len__(self):
-                return len(self.base)
-
-            def __getitem__(self, index: int):
-                item = self.base[index]
-                image = np.asarray(item["image"].convert("RGB"))
-                labels = np.asarray(item["labels"])
-                res = self.transform(image=image, mask=labels)
-                return {
-                    "image": res["image"],
-                    "labels": res["mask"].to(torch.long),
-                }
-
-            def to_pil_image(self, image: Tensor):
-                img_nd = image.moveaxis(0, -1).numpy(force=True)
-                img_nd = img_nd * STD + MEAN
-                img_nd = (255 * img_nd).astype(np.uint8)
-                return Image.fromarray(img_nd)
-
+        voc_root = "datasets/voc"
         img_size = 256
 
-        self.train_data = Data(
+        self.train_data = Dataset(
+            root=voc_root,
             split="train",
             transforms=[
                 A.RandomResizedCrop(
@@ -177,7 +179,8 @@ class Trainer:
             ],
         )
 
-        self.val_data = Data(
+        self.val_data = Dataset(
+            root=voc_root,
             split="val",
             transforms=[
                 A.SmallestMaxSize(img_size),
@@ -199,32 +202,38 @@ class Trainer:
         self.opt = ScaledOptimizer(self.opt, self.compute_dtype)
 
     def setup_data_loaders(self):
+        train_gen = torch.Generator()
+        train_sampler = self.ddp.wrap_sampler(
+            RandomSampler(self.train_data, generator=train_gen),
+            set_epoch=lambda epoch: train_gen.manual_seed(epoch),
+            drop_last=True,
+        )
+
         self.train_loader = DataLoader(
             self.train_data,
             batch_size=self.cfg.batch_size,
-            sampler=self.ddp.get_sampler(
-                self.train_data,
-                shuffle=True,
-                seed=0,
-                drop_last=True,
-            ),
+            sampler=train_sampler,
             num_workers=2,
             worker_init_fn=repro.worker_init_fn,
-            collate_fn=collate_fn,
+            collate_fn=self.train_data.collate_fn,
+            persistent_workers=True,
+        )
+
+        val_sampler = range(len(self.val_data))
+        val_sampler = self.ddp.wrap_sampler(
+            val_sampler,
+            set_epoch=None,
+            drop_last=False,
         )
 
         self.val_loader = DataLoader(
             self.val_data,
             batch_size=self.cfg.val_batch_size or self.cfg.batch_size,
-            sampler=self.ddp.get_sampler(
-                self.val_data,
-                shuffle=False,
-                seed=0,
-                drop_last=False,
-            ),
+            sampler=val_sampler,
             num_workers=2,
             worker_init_fn=repro.worker_init_fn,
-            collate_fn=collate_fn,
+            collate_fn=self.val_data.collate_fn,
+            persistent_workers=True,
         )
 
         self.train_iter = self.get_train_iter()
@@ -265,17 +274,11 @@ class Trainer:
             if self.ddp.is_master:
                 self.exp.add_scalar("train/loss", loss, step="step")
 
-    def get_sample_grid(
-        self,
-        dataset,
-        batch: Batch,
-        logits: Tensor,
-    ):
+    def get_sample_grid(self, dataset: Dataset, batch: Batch, logits: Tensor):
         num_images = len(batch["image"])
         num_samples = min(num_images, 8)
         idxes = np.random.choice(num_images, size=num_samples, replace=False)
 
-        to_pil_image = dataset.to_pil_image
         palette = self.meta.palette
         ignore_index = self.meta.ignore_index
 
@@ -287,7 +290,7 @@ class Trainer:
 
         grid = []
         for idx in idxes:
-            img = to_pil_image(batch["image"][idx].cpu())
+            img = dataset.to_pil_image(batch["image"][idx].cpu())
 
             seg_map_gt = labels[idx].numpy(force=True)
             seg_map_gt = palette.label2rgb(seg_map_gt, ignore_index)
@@ -348,4 +351,6 @@ def main():
 
 
 if __name__ == "__main__":
+    main()
+    main()
     main()

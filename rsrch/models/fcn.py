@@ -4,7 +4,7 @@ import torch
 import torchvision.transforms.functional as tv_F
 from torch import Tensor, nn
 
-from rsrch.torch.nn.utils import safe_mode
+from rsrch.torch.nn.utils import shape_infer_mode
 
 
 class FCN(nn.Module):
@@ -32,7 +32,7 @@ class FCN(nn.Module):
         input_shape = in_channels, input_h, input_w
         dummy = torch.zeros((1, *input_shape))
 
-        with safe_mode(self.encoder):
+        with shape_infer_mode(self.encoder):
             features: list[Tensor] = self.encoder(dummy)
             assert len(features) == 5
             feat_channels = []

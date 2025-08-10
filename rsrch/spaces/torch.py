@@ -2,7 +2,6 @@ from numbers import Number
 
 import numpy as np
 import torch
-from torch import Tensor
 
 from rsrch.types.tensorlike.dict import TensorDict
 
@@ -125,7 +124,10 @@ class Box(Tensor):
         low_r = low_x if torch.all(self.low == low_x) else self.low
         high_x = self.high.ravel()[0].item()
         high_r = high_x if torch.all(self.high == high_x) else self.high
-        return f"{self.__class__.__name__}({low_r!r}, {high_r!r}, {self.shape!r}, {self.dtype}, {self.device})"
+        return (
+            f"{self.__class__.__name__}({low_r!r}, {high_r!r},"
+            f" {self.shape!r}, {self.dtype}, {self.device})"
+        )
 
     def __getitem__(self, index):
         low, high = self.low[index], self.high[index]
@@ -308,7 +310,8 @@ def as_tensor(space, device: torch.device | None = None):
 
 
 class Tensorlike:
-    """A space denoting tensor-like objects, which can be cast to regular tensors via `as_tensor` method."""
+    """A space denoting tensor-like objects, which can be cast to regular
+    tensors via `as_tensor` method."""
 
     def __init__(self, as_tensor: Tensor):
         self.as_tensor = as_tensor

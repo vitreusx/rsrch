@@ -1,13 +1,14 @@
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from functools import partial
-from typing import Literal, Sequence
+from typing import Literal, Sequence, TypedDict
 
 import ale_py
 import gymnasium
 import numpy as np
-import torch
+from PIL import Image
 
 from rsrch import spaces
 from rsrch.rl.gym.wrappers import VecRecordStats
@@ -298,18 +299,20 @@ class BufferWrapper(data.Wrapper):
         )
 
 
+class ObsType(TypedDict):
+    obs: np.ndarray
+    total_steps: int
+    ep_length: int
+    ep_returns: float
+    act: int | None
+    reward: float | None
+    term: bool | None
+    trunc: bool | None
+    render: Image.Image | None
+
+
 class SDK:
-    """An env SDK for Atari Learning Environment (ALE).
-
-    ## Data format
-
-    The observations received by the agent are either:
-
-    - if `obs_type` is `ram`: a batch of RAM states, a `np.ndarray` of shape `(N, 128 * S)`, of dtype `np.uint8` with values in `[0, 255]`, and `S` is the stack number:
-    - otherwise: a batch of images, a `np.ndarray` of shape `(N, H, W, C * S)`, of dtype `np.uint8` with values in `[0, 255]`, where `C` is # of channels (3 if `obs_type` is `rgb`, 1 if `grayscale`), and `S` is the stack number (`stack_num`), or `1` if not used.
-
-    The actions produced must be an array of shape `(N, A)`, where `A` is the action space size, and be of dtype `np.int64`.
-    """
+    """An env SDK for Atari Learning Environment (ALE)."""
 
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -350,11 +353,14 @@ class SDK:
         mode: Literal["train", "val"] = "train",
         render: bool = False,
         seed: int | None = None,
-        **kwargs,
-    ):
-        if len(kwargs) > 0:
-            param_list = ", ".join(f"'{kw}'" for kw in kwargs)
-            raise RuntimeError(f"Following parameters are unsupported: {param_list}")
+    ) -> gym.VecEnv[ObsType, np.ndarray]:
+        """Create Atari envs.
+
+        :param num_envs: Number of environments.
+        :param mode: Env mode. Either `train` or `val`. The only difference is
+        that episodic lives (`term_on_life_loss`) are disabled for `val` envs.
+        :param render: Whether to also output observation frames.
+        :param seed: Optional RNG seed for the environment."""
 
         if seed is None:
             seed = np.random.randint(int(2**31))
@@ -458,13 +464,14 @@ class SDK:
     ) -> gym.Env:
         episodic = self.cfg.term_on_life_loss and mode == "train"
 
-        env = gymnasium.make(
-            f"ALE/{self.cfg.env_id}-v5",
-            frameskip=1,
-            obs_type=self.cfg.obs_type,
-            render_mode="rgb_array" if render else None,
-            repeat_action_probability=self.cfg.repeat_action_probability,
-        )
+        with redirect_stdout(None), redirect_stderr(None):
+            env = gymnasium.make(
+                f"ALE/{self.cfg.env_id}-v5",
+                frameskip=1,
+                obs_type=self.cfg.obs_type,
+                render_mode="rgb_array" if render else None,
+                repeat_action_probability=self.cfg.repeat_action_probability,
+            )
 
         env = GymnasiumRecordStats(env)
 
@@ -505,30 +512,62 @@ class SDK:
         return env
 
     def wrap_buffer(self, buf: data.Buffer):
-        return BufferWrapper(
-            buf,
-            stack_num=self.cfg.stack_num,
-        )
+        return BufferWrapper(buf, stack_num=self.cfg.stack_num)
 
-    def rollout(self, envs: gym.VecEnv, agent: gym.VecAgent):
+    def rollout(
+        self,
+        envs: gym.VecEnv[ObsType, np.ndarray],
+        agent: gym.VecAgent[np.ndarray, np.ndarray],
+    ):
         """Perform a rollout of Atari vec env.
 
-        :return: A sequence of `(env_idx, (step, final))` pairs, where `step` dict has a following fields:
+        :param envs: A vector of environments, constructed using the `make_envs`
+            method.
 
-        - `obs`: an image or RAM dump, as described in the tensor format section, except that (1) the tensors are Numpy arrays, (2) the values are unnormalized, of dtype `uint8` and values in `[0, 255]`, and (3) the stacking is bypassed, to improve memory usage.
-        - if step is non-initial:
-            - `act`: action perfomed to reach current state, as an `int`.
-            - `reward`: reward upon arriving at the current state, as a `float`.
-            - `term`, `trunc`: boolean termination/truncation values.
-        - `total_steps`: a global counter of (base) environment steps in the current rollout. Because of `frame_skip` and `noop_max`, it may be difficult to keep track of the actual number of environment steps performed, which may introduce mistakes in comparing different RL algorithms' performance. Thus, a "canonical" step value is provided.
-        - `ep_length`: length of the current (actual/ALE) episode, in terms of actions performed. If `term_on_life_loss` is true, MDP resets (`final` in `(step, final)`) do not necessarily correspond to actual/ALE environment resets, which are in turn used for comparison and evaluation purposes. Thus, a no-`term_on_life_loss` episode length is provided.
-        - `ep_returns`: total rewards in the current (actual/ALE) episode. See `ep_length` for explanation.
-        - `render`: if `envs` was created with `render=True`, a Pillow image with the current observation is attached.
+        :param agent: A vector agent. It needs to conform to the following spec:
+
+            1. The agent must accept the observations in the following form:
+
+                - A batch of RAM states, if `obs_type` is `ram`, in the form of
+                a `np.ndarray` of shape `(N, 128 * S)`, of dtype `np.uint8` with
+                values in `[0, 255]`, and `S` is the stack number.
+                - Otherwise, a batch of images: a `np.ndarray` of shape
+                `(N, H, W, C * S)`, of dtype `np.uint8` with values in `[0, 255]`,
+                where `C` is # of channels (3 if `obs_type` is `rgb`, 1 if
+                `grayscale`), and `S` is the stack number (`stack_num`), or `1`
+                if not used.
+
+            2. The agent needs to produce actions in the form of an `np.ndarray`
+            of shape `(N, A)`, where `A` is the action space size, and be of
+            dtype `np.int64`.
+
+        :return: A sequence of `(env_idx, (step, final))` pairs, where `step`
+        dict has a following fields:
+
+        - `obs`: an image or RAM dump, as observed by the agent, except that
+        the stacking mechanism is not applied.
+        - `act` (if non-initial): action perfomed to reach current state, as an `int`.
+        - `reward` (if non-initial): reward upon arriving at the current state,
+        as a `float`.
+        - `term`, `trunc`: boolean termination/truncation values.
+        - `total_steps`: a global counter of (base) environment steps in the
+        current rollout. Because of `frame_skip` and `noop_max`, it may be
+        difficult to keep track of the actual number of environment steps performed,
+        which may introduce mistakes in comparing different RL algorithms. Thus,
+        a "canonical" step value is provided.
+        - `ep_length`: length of the current (actual/ALE) episode, in terms of
+        actions performed. If `term_on_life_loss` is true, MDP resets (`final`
+        in `(step, final)`) do not necessarily correspond to actual/ALE environment
+        resets, which are in turn used for comparison and evaluation purposes.
+        Thus, a no-`term_on_life_loss` episode length is provided.
+        - `ep_returns`: total rewards in the current (actual/ALE) episode.
+        See `ep_length` for explanation.
+        - `render`: if `envs` was created with `render=True`, a Pillow image
+        with the current observation is attached.
         """
 
         if (self.cfg.stack_num or 1) > 1:
-            agent = gym.vector.agents.Pointwise(
-                agent=agent,
-                transform=partial(StackAgentWrapper, stack_num=self.cfg.stack_num),
-            )
+            transform = partial(StackAgentWrapper, stack_num=self.cfg.stack_num)
+            agent = gym.vector.agents.Pointwise(agent, transform)
+
         return envs.rollout(agent)

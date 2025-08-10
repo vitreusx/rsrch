@@ -36,6 +36,8 @@ class ScaledOptimizer:
         if self._use_scaler:
             self.scaler.scale(loss).backward()
             self.scaler.unscale_(self.opt)
+        else:
+            loss.backward()
 
         if clip_grad is not None:
             nn.utils.clip_grad_norm_(self.parameters, max_norm=clip_grad)

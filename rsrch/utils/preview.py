@@ -1,6 +1,4 @@
 import numpy as np
-import torch
-import torchvision.transforms.functional as F
 from PIL import Image
 
 
@@ -10,7 +8,9 @@ def make_grid(
     nrows: int | None = None,
     gap_px: int = 2,
 ) -> Image.Image:
-    """Create a grid of images. The list of images can be 1-d or 2-d, in the former case the number of columns or rows must be provided in order to determine the shape of the grid."""
+    """Create a grid of images. The list of images can be 1-d or 2-d, in the
+    former case the number of columns or rows must be provided in order to
+    determine the shape of the grid."""
 
     if not isinstance(images[0], list):
         if nrows is not None:

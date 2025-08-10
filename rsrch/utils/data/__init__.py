@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Callable, Tuple, TypeVar, Union
+from typing import Tuple, TypeVar, Union
 
 import numpy as np
-
-from .samplers import *
 
 X = TypeVar("X")
 Y = TypeVar("Y")

@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass
-from functools import cache, cached_property
+from functools import cached_property
 from numbers import Number
-from threading import RLock
-from typing import Callable, Sequence, Tuple, TypeVar, overload
+from typing import Sequence, TypeVar, overload
 
 import numpy as np
 import torch
@@ -44,12 +42,17 @@ class Tensorlike:
 
     Features:
 
-    - Exposes an interface much like `torch.Tensor`. One can use Torch functions such as `torch.cat`, `torch.stack` etc. on tensor-likes, and the output shall be a tensor-like of the same type.
+    - Exposes an interface much like `torch.Tensor`. One can use Torch functions
+    such as `torch.cat`, `torch.stack` etc. on tensor-likes, and the output
+    shall be a tensor-like of the same type.
 
-    - User can register tensor fields via `register`. When using operations such as slicing, stacking, concatenating etc., the output is a tensor-like, with
-    operations being executed over the tensor fields.
+    - User can register tensor fields via `register`. When using operations
+    such as slicing, stacking, concatenating etc., the output is a tensor-like,
+    with operations being executed over the tensor fields.
 
-    - When a "child" tensorlike is created, non-Tensor fields are simply (shallow-)copied, *except* for cached properties (see `functools.cached_property`.)
+    - When a "child" tensorlike is created, non-Tensor fields are simply
+    (shallow-)copied, *except* for cached properties
+    (see `functools.cached_property`.)
     """
 
     def __init__(self, shape: torch.Size):
@@ -102,7 +105,7 @@ class Tensorlike:
             if isinstance(getattr(new.__class__, name), cached_property):
                 try:
                     delattr(new, name)
-                except:
+                except Exception:
                     # If cached_property hasn't been accessed, delattr will
                     # throw an error.
                     pass
@@ -172,8 +175,7 @@ class Tensorlike:
         return tensor.flatten(start_dim, end_dim)
 
     @overload
-    def expand(self, size: Sequence[int]):
-        ...
+    def expand(self, size: Sequence[int]): ...
 
     def _expand_seq(self, size: Sequence[int]):
         fields = {}
@@ -187,8 +189,7 @@ class Tensorlike:
         return self._new(new_shape, fields)
 
     @overload
-    def expand(self, *sizes: int):
-        ...
+    def expand(self, *sizes: int): ...
 
     def _expand_arg(self, *sizes: int):
         return self._expand_seq([*sizes])
@@ -375,8 +376,7 @@ class Tensorlike:
         dtype: torch.dtype = None,
         non_blocking=False,
         copy=False,
-    ):
-        ...
+    ): ...
 
     @overload
     def to(
@@ -385,8 +385,7 @@ class Tensorlike:
         dtype: torch.dtype = None,
         non_blocking=False,
         copy=False,
-    ):
-        ...
+    ): ...
 
     @overload
     def to(
@@ -394,8 +393,7 @@ class Tensorlike:
         other: Tensorlike,
         non_blocking=False,
         copy=False,
-    ):
-        ...
+    ): ...
 
     def to(self, *args, **kwargs):
         fields = {}
@@ -476,7 +474,8 @@ class Tensorlike:
             tensor = getattr(self, name)
             if isinstance(tensor, torch.Tensor):
                 lines.append(
-                    f"  {name}: <Tensor shape={tuple(tensor.shape)} dtype={tensor.dtype}>"
+                    f"  {name}: <Tensor shape={tuple(tensor.shape)} "
+                    f"dtype={tensor.dtype}>"
                 )
             else:
                 tensor_lines = str(tensor).splitlines()
