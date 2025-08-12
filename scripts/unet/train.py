@@ -5,37 +5,29 @@ import albumentations as A
 import numpy as np
 import safetensors
 import safetensors.torch
+
+# from rsrch.models.unet import UNet
+import segmentation_models_pytorch as smp
 import torch
 import torch.nn.functional as F
 import torchvision.transforms.functional as tv_F
 from PIL import Image
+from ruamel.yaml import YAML
 from torch import Tensor
 from torch.utils.data import DataLoader, RandomSampler
 from torchmetrics import JaccardIndex
 
 from rsrch.data.voc import VOCSegmentation
 from rsrch.exp import Experiment, boards
-from rsrch.models.unet import UNet
 from rsrch.torch.nn.optim import ScaledOptimizer
 from rsrch.utils import cron, repro
+from rsrch.utils.cast import cast
 from rsrch.utils.ddp import auto_detect
 from rsrch.utils.preview import make_grid
 
-
-class TimeDelta(TypedDict):
-    n: int
-    of: Literal["step", "epoch"]
-
-
-class Config:
-    seed: int = 0
-    compute_dtype: Literal["float16", "bfloat16", "float32"] = "float16"
-    batch_size: int = 16
-    val_batch_size: int | None = None
-    log_every: TimeDelta = {"n": 4, "of": "step"}
-    val_every: TimeDelta = {"n": 2048, "of": "step"}
-    save_every: TimeDelta | None = None
-    resize_mode: Literal["preds", "labels"] = "preds"
+# isort: off
+from config import Config, TimeDelta
+# isort: on
 
 
 class Item(TypedDict):
@@ -104,12 +96,10 @@ def move_to_device(batch: Batch, device: torch.device) -> Batch:
     }
 
 
-def resize(input: Tensor, other: Tensor):
-    if input.dtype.is_floating_point:
-        interp_mode = tv_F.InterpolationMode.BILINEAR
-    else:
-        interp_mode = tv_F.InterpolationMode.NEAREST
-    return tv_F.resize(input, other.shape[-2:], interp_mode)
+def match_size(logits: Tensor, labels: Tensor):
+    if logits.shape[-2:] != labels.shape[-2:]:
+        logits = tv_F.resize(logits, labels.shape[-2:])
+    return logits
 
 
 class Trainer:
@@ -128,8 +118,8 @@ class Trainer:
             if delta is None:
                 return cron.Never()
             else:
-                step_fn = lambda: getattr(self, delta["of"])
-                return cron.Every(step_fn=step_fn, period=delta["n"])
+                step_fn = lambda: getattr(self, delta.of)
+                return cron.Every(step_fn=step_fn, period=delta.n)
 
         should_val = get_flag(self.cfg.val_every)
         should_save = get_flag(self.cfg.save_every)
@@ -155,7 +145,10 @@ class Trainer:
 
         self.step, self.epoch = 0, 0
         if self.ddp.is_master:
-            self.exp = Experiment(project=self.project)
+            self.exp = Experiment(
+                project=self.project,
+                create_commit=self.cfg.create_exp_commit,
+            )
             self.exp.add_board(boards.Tensorboard(self.exp.dir / "board", launch=True))
 
             self.exp.register_step("step", lambda: self.step)
@@ -189,16 +182,30 @@ class Trainer:
         )
 
         self.meta = self.train_data.meta
+        if self.train_data.meta.ignore_index == 0:
+            self.reduce_zero = True
+            self.ignore_index = -1
+        else:
+            self.reduce_zero = False
+            self.ignore_index = self.train_data.meta.ignore_index
 
     def setup_model(self):
-        self.model = UNet(
+        # h = 32
+        # self.model = UNet(
+        #     in_channels=3,
+        #     out_channels=self.meta.num_classes,
+        #     block_channels=[h, 2 * h, 4 * h, 8 * h],
+        # )
+        self.model = smp.Unet(
+            encoder_name="resnet34",
+            encoder_weights="imagenet",
+            decoder_interpolation="bilinear",
             in_channels=3,
-            out_channels=self.meta.num_classes,
-            block_channels=[32, 64, 128, 256],
+            classes=self.meta.num_classes,
         )
         self.model = self.ddp.wrap_model(self.model)
 
-        self.opt = torch.optim.AdamW(self.model.parameters(), lr=3e-4)
+        self.opt = torch.optim.AdamW(self.model.parameters(), lr=self.cfg.lr)
         self.opt = ScaledOptimizer(self.opt, self.compute_dtype)
 
     def setup_data_loaders(self):
@@ -250,21 +257,17 @@ class Trainer:
         batch = move_to_device(batch, self.ddp.device)
 
         with self.autocast():
-            logits: Tensor = self.model(batch["image"])
-
-            if self.cfg.resize_mode == "labels":
-                labels = resize(batch["labels"], logits)
-            else:
-                labels = batch["labels"]
-                logits = resize(logits, labels)
-
-            if self.train_data.meta.ignore_index == 0:
+            labels = batch["labels"]
+            if self.reduce_zero:
                 labels = labels - 1
+
+            logits: Tensor = self.model(batch["image"])
+            logits = match_size(logits, labels)
 
             loss = F.cross_entropy(
                 input=logits,
                 target=labels,
-                ignore_index=self.meta.ignore_index,
+                ignore_index=self.ignore_index,
             )
 
         self.opt.step(loss)
@@ -282,11 +285,8 @@ class Trainer:
         palette = self.meta.palette
         ignore_index = self.meta.ignore_index
 
-        if self.cfg.resize_mode == "labels":
-            labels = resize(batch["labels"], logits)
-        else:
-            labels = batch["labels"]
-            logits = resize(logits, labels)
+        labels = batch["labels"]
+        logits = match_size(logits, labels)
 
         grid = []
         for idx in idxes:
@@ -310,19 +310,25 @@ class Trainer:
         mean_iou = JaccardIndex(
             task=task,
             num_classes=self.meta.num_classes,
-            ignore_index=self.meta.ignore_index,
+            ignore_index=self.ignore_index,
         ).to(self.ddp.device)
 
         for batch in self.val_loader:
             batch = move_to_device(batch, self.ddp.device)
+
             with self.autocast():
                 logits: Tensor = self.model(batch["image"])
             preds = logits.argmax(1)
-            preds = resize(preds, batch["labels"])
+
+            labels = batch["labels"]
+            if self.reduce_zero:
+                labels = labels - 1
+
+            logits = match_size(logits, labels)
             mean_iou.update(preds, batch["labels"])
 
         if self.ddp.is_master:
-            val_unit = self.cfg.val_every["of"]
+            val_unit = self.cfg.val_every.of
             self.exp.add_scalar("val/mean_iou", mean_iou.compute(), step=val_unit)
 
             if self.should_save_val_samples:
@@ -345,12 +351,12 @@ class Trainer:
 
 
 def main():
-    cfg = Config()
+    yaml = YAML(typ="safe", pure=True)
+    with open(Path(__file__).parent / "config.yml", "r") as f:
+        cfg = cast(yaml.load(f), Config)
     trainer = Trainer(cfg)
     trainer.run()
 
 
 if __name__ == "__main__":
-    main()
-    main()
     main()

@@ -6871,6 +6871,32 @@ cryptography = ">=2.0"
 jeepney = ">=0.6"
 
 [[package]]
+name = "segmentation-models-pytorch"
+version = "0.5.0"
+description = "Image segmentation models with pre-trained backbones. PyTorch."
+optional = false
+python-versions = ">=3.9"
+groups = ["main"]
+files = [
+    {file = "segmentation_models_pytorch-0.5.0-py3-none-any.whl", hash = "sha256:c34e09047771aa4dd8878b4f899e8125700cd1f8f7db16e58c37204154151a05"},
+    {file = "segmentation_models_pytorch-0.5.0.tar.gz", hash = "sha256:cabba8aced6ef7bdcd6288dd9e1dc2840848aa819d539c455bd07aeceb2fdf96"},
+]
+
+[package.dependencies]
+huggingface-hub = ">=0.24"
+numpy = ">=1.19.3"
+pillow = ">=8"
+safetensors = ">=0.3.1"
+timm = ">=0.9"
+torch = ">=1.8"
+torchvision = ">=0.9"
+tqdm = ">=4.42.1"
+
+[package.extras]
+docs = ["autodocsumm", "huggingface-hub", "six", "sphinx", "sphinx-book-theme"]
+test = ["gitpython", "packaging", "pytest", "pytest-cov", "pytest-xdist", "ruff (>=0.9)", "setuptools"]
+
+[[package]]
 name = "semver"
 version = "3.0.2"
 description = "Python helper for Semantic Versioning (https://semver.org)"
@@ -7774,6 +7800,25 @@ files = [
     {file = "threadpoolctl-3.6.0-py3-none-any.whl", hash = "sha256:43a0b8fd5a2928500110039e43a5eed8480b918967083ea48dc3ab9f13c4a7fb"},
     {file = "threadpoolctl-3.6.0.tar.gz", hash = "sha256:8ab8b4aa3491d812b623328249fab5302a68d2d71745c8a4c719a2fcaba9f44e"},
 ]
+
+[[package]]
+name = "timm"
+version = "1.0.19"
+description = "PyTorch Image Models"
+optional = false
+python-versions = ">=3.8"
+groups = ["main"]
+files = [
+    {file = "timm-1.0.19-py3-none-any.whl", hash = "sha256:c07b56c32f3d3226c656f75c1b5479c08eb34eefed927c82fd8751a852f47931"},
+    {file = "timm-1.0.19.tar.gz", hash = "sha256:6e71e1f67ac80c229d3a78ca58347090514c508aeba8f2e2eb5289eda86e9f43"},
+]
+
+[package.dependencies]
+huggingface_hub = "*"
+pyyaml = "*"
+safetensors = "*"
+torch = "*"
+torchvision = "*"
 
 [[package]]
 name = "tinycss2"
@@ -8825,4 +8870,4 @@ rl = ["ale-py", "box2d-py", "dm-control", "envpool", "gymnasium", "mujoco"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.10"
-content-hash = "dfd7f79c42c7f1a6a0b44f8f7506d6a0bf536d8cfefc656c75c2e062fcc44248"
+content-hash = "c497f14b9d8baa57dabbf278af68389207f7d3d63e9640b81ebe9da98caf96cc"

@@ -1,11 +1,10 @@
 # yaml-language-server: $schema=config.schema.json
 seed: 0
-create_exp_commit: false
 compute_dtype: float16
+create_exp_commit: false
 batch_size: 16
 val_batch_size: ~
-train_for: { n: 100e3, of: step }
 log_every: { n: 4, of: step }
-val_every: { n: 256, of: step }
-max_val_samples: 1024
+val_every: { n: 1, of: epoch }
 save_every: ~
+lr: 3e-4

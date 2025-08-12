@@ -11,15 +11,14 @@ class TimeDelta:
 @dataclass
 class Config:
     seed: int
-    create_exp_commit: bool
     compute_dtype: Literal["float16", "bfloat16", "float32"]
+    create_exp_commit: bool
     batch_size: int
     val_batch_size: int | None
-    train_for: TimeDelta
     log_every: TimeDelta
     val_every: TimeDelta
-    max_val_samples: int | None
     save_every: TimeDelta | None
+    lr: float
 
 
 def main():
