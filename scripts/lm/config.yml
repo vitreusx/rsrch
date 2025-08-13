@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=config.schema.json
+seed: 0
+compute_dtype: float16
+create_exp_commit: false
+# Data
+dataset_path: roneneldan/TinyStories
+dataset_name: ~
+tokenizer_path: openai-community/gpt2
+min_seq_len: 32
+max_seq_len: 1024
+min_bucket_size: 512
+min_bucket_char_count: 20480
+chars_per_batch: 2048
+# Model
+model_dim: 128
+num_blocks: 6
+num_heads: 8
+hidden_dim: 512
+# Training
+sample_size: 8
+sample_min_seq_len: 32
+sample_max_seq_len: 128
+val_every: { n: 2048, of: step }
+max_completion_tokens: 128
