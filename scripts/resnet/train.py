@@ -20,7 +20,7 @@ from rsrch.torch.nn.optim import ScaledOptimizer
 from rsrch.utils import cron, repro
 from rsrch.utils.cast import cast
 from rsrch.utils.ddp import auto_detect
-from rsrch.utils.preview import make_grid
+from rsrch.utils.vis import make_grid
 
 # isort: off
 from config import Config, TimeDelta
@@ -28,18 +28,24 @@ from config import Config, TimeDelta
 
 
 class Item(TypedDict):
-    image: Tensor
+    """A dataset item for image classification."""
+
+    image: Tensor  # (C, H, W), dtype: float
     label: int
 
 
 class Batch(TypedDict):
-    image: Tensor
-    label: Tensor
+    """A batch of items for image classification."""
+
+    image: Tensor  # (N, C, H, W), dtype: float
+    label: Tensor  # (N), dtype: long
 
 
 class Dataset:
-    MEAN = [0.485, 0.456, 0.406]
-    STD = [0.229, 0.224, 0.225]
+    """An adapter for `ImageNet` dataset for use in training ResNet."""
+
+    MEAN = [0.485, 0.456, 0.406]  # "Canonical" ImageNet mean
+    STD = [0.229, 0.224, 0.225]  # "Canonical" ImageNet std
 
     def __init__(
         self,
@@ -48,6 +54,7 @@ class Dataset:
         subset: list[int] | None = None,
     ):
         self.base = base
+        # Metadata (ignore index, # of classes etc.) for the dataset
         self.meta = base.meta()
 
         if subset is None:
@@ -77,7 +84,7 @@ class Dataset:
         image = image.moveaxis(0, -1)  # [C, H, W] -> [H, W, C]
         mean = torch.tensor(self.MEAN, device=image.device)
         std = torch.tensor(self.STD, device=image.device)
-        image = image * std + mean
+        image = image * std + mean  # Invert the normalization transform
         image = (255 * image).clamp(0.0, 255.0).to(torch.uint8)
         image = Image.fromarray(image.cpu().numpy())
         return image
@@ -168,6 +175,8 @@ class Trainer:
         )
 
         val_ds = ImageNet(data_root, split="val")
+
+        # For debugging, we limit the number of val samples
         if self.cfg.max_val_samples is not None:
             val_size = min(len(val_ds), self.cfg.max_val_samples)
             val_idxes = np.random.choice(len(val_ds), size=val_size, replace=False)
@@ -191,6 +200,7 @@ class Trainer:
         self.model = self.ddp.wrap_model(self.model)
 
         self.opt = torch.optim.AdamW(self.model.parameters(), lr=3e-4)
+        # Use `ScaledOptimizer` to simplify optimization step when autocasting
         self.opt = ScaledOptimizer(self.opt, self.compute_dtype)
 
     def setup_data_loaders(self):
@@ -208,7 +218,7 @@ class Trainer:
             sampler=train_sampler,
             drop_last=True,
             num_workers=2,
-            worker_init_fn=repro.worker_init_fn,
+            worker_init_fn=repro.worker_init_fn(self.cfg.seed),
             collate_fn=self.train_data.collate_fn,
         )
 
@@ -223,7 +233,7 @@ class Trainer:
             sampler=val_sampler,
             drop_last=False,
             num_workers=2,
-            worker_init_fn=repro.worker_init_fn,
+            worker_init_fn=repro.worker_init_fn(self.cfg.seed),
             collate_fn=self.train_data.collate_fn,
         )
 

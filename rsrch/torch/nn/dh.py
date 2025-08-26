@@ -1,4 +1,4 @@
-"""A module providing "distribution heads", i.e. network layers which output 
+"""A module providing "distribution heads", i.e. network layers which output
 `Distribution` objects."""
 
 import math
@@ -10,7 +10,6 @@ from torch import Tensor, nn
 
 import rsrch.torch.distributions as D
 from rsrch import spaces
-
 
 
 def get_out_features(space: spaces.torch.Tensor):

@@ -56,7 +56,7 @@ class BasicBlock(nn.Module):
         res = self.conv1(input)
         if self.bn1 is not None:
             res = self.bn1(res)
-        res = self.act(self.conv2(res))
+        res = self.conv2(self.act(res))
         if self.bn2 is not None:
             res = self.bn2(res)
         if self.downsample is not None:
@@ -316,7 +316,7 @@ def adapt_tv_state_dict(state_dict: dict[str, Tensor]):
     state_dict = to_tree(state_dict)
 
     # Rename layer0 to layers.0 etc.
-    rename = {f"layer{idx+1}": f"layers.{idx}" for idx in range(4)}
+    rename = {f"layer{idx + 1}": f"layers.{idx}" for idx in range(4)}
     for k in [*state_dict]:
         if k in rename:
             v = state_dict[k]

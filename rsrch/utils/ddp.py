@@ -134,12 +134,14 @@ class DDPHelper:
         ensure consistency between DDP processes.
 
         :param sampler: A base sampler (or batch sampler) to be prepared for use
-        in DDP.
-        :param set_epoch: A callable that sets the epoch number for the sampler.
-        For example, one might initialize the seed of RNG to `base + epoch` to
-        make sure that the order of items is different for each epoch.
-        :param drop_last: Whether to drop last set of items, if the size of the
-        sampler is not divisible by the number of DDP workers.
+            in DDP.
+        :param set_epoch: A callable that sets the epoch number for the
+            sampler. For example, one might initialize the seed of RNG to
+            `base + epoch` to make sure that the order of items is different
+            for each epoch.
+        :param drop_last: Whether to drop last set of items, if the size of
+            the sampler is not divisible by the number of DDP workers.
+
         :return: A distributed sampler created from the provided base sampler.
         """
 

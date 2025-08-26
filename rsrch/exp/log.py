@@ -42,8 +42,7 @@ def set_log_format(logger: logging.Logger):
 
 class LogMixin(ABC):
     @abstractmethod
-    def log(self, level: int, msg):
-        ...
+    def log(self, level: int, msg): ...
 
     def fatal(self, msg):
         return self.log(logging.FATAL, msg)

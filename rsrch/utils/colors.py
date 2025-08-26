@@ -19,7 +19,7 @@ def hex2rgb(hex: str) -> tuple[int, int, int]:
 
 @cache
 def base_palette():
-    src = Path(__file__).parent / "palette.npy"
+    src = Path(__file__).parent / "colors.npy"
     if src.exists():
         with open(src, "rb") as f:
             palette: np.ndarray = np.load(f)

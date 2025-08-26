@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Literal
 
 import requests
+from platformdirs import user_cache_dir
 from tqdm.auto import tqdm
 
 from .path import sanitize
@@ -11,11 +12,13 @@ from .path import sanitize
 def download_url(
     url: str,
     cache: bool = True,
-    cache_dir: str = "~/.cache/rsrch",
+    cache_dir: str | None = None,
     mode: Literal["r", "rb"] = "rb",
     progress_bar: bool = True,
 ):
     if cache:
+        if cache_dir is None:
+            cache_dir = user_cache_dir(appauthor="rsrch")
         cache_dir = Path(cache_dir).expanduser()
         url_as_path = sanitize(url)
         dest = cache_dir / url_as_path

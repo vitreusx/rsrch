@@ -23,7 +23,7 @@ from rsrch.torch.nn.optim import ScaledOptimizer
 from rsrch.utils import cron, repro
 from rsrch.utils.cast import cast
 from rsrch.utils.ddp import auto_detect
-from rsrch.utils.preview import make_grid
+from rsrch.utils.vis import make_grid
 
 # isort: off
 from config import Config, TimeDelta
@@ -221,7 +221,7 @@ class Trainer:
             batch_size=self.cfg.batch_size,
             sampler=train_sampler,
             num_workers=2,
-            worker_init_fn=repro.worker_init_fn,
+            worker_init_fn=repro.worker_init_fn(self.cfg.seed),
             collate_fn=self.train_data.collate_fn,
             persistent_workers=True,
         )
@@ -238,7 +238,7 @@ class Trainer:
             batch_size=self.cfg.val_batch_size or self.cfg.batch_size,
             sampler=val_sampler,
             num_workers=2,
-            worker_init_fn=repro.worker_init_fn,
+            worker_init_fn=repro.worker_init_fn(self.cfg.seed),
             collate_fn=self.val_data.collate_fn,
             persistent_workers=True,
         )
