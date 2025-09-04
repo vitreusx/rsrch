@@ -174,10 +174,10 @@ class Experiment(LogMixin, boards.Board, boards.StepMixin):
         for board in self._boards:
             board.set_as_default(step)
 
-    def log(self, level: int, message):
-        self.logger.log(level, message)
+    def log(self, level: int, msg, *args):
+        self.logger.log(level, msg, *args)
         for board in self._boards:
-            board.log(level, message)
+            board.log(level, msg, *args)
 
     def add_scalar(self, tag: str, value: Number, *, step: Step = None):
         for board in self._boards:

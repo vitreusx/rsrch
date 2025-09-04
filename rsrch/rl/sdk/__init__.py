@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Literal
 
-from . import atari, dmc, gym
+from . import atari, dmc, gym, wrappers
 
 AtariCfg = atari.Config
 GymCfg = gym.Config
@@ -24,3 +24,6 @@ def make(cfg: Config):
         return gym.SDK(cfg.gym)
     elif cfg.type == "dmc":
         return dmc.SDK(cfg.dmc)
+
+
+__all__ = ["Config", "make", "atari", "dmc", "gym", "wrappers"]

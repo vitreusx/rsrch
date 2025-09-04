@@ -11,6 +11,7 @@ class TimeDelta:
 @dataclass
 class Config:
     seed: int
+    profile: bool
     create_exp_commit: bool
     compute_dtype: Literal["float16", "bfloat16", "float32"]
     batch_size: int

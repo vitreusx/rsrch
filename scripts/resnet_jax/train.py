@@ -1,7 +1,6 @@
-import multiprocessing as mp
-from functools import partial
+from functools import partial, wraps
 from pathlib import Path
-from typing import Any, Literal, TypedDict
+from typing import Any, Callable, Literal, ParamSpec, TypedDict, TypeVar
 
 import albumentations as A
 import equinox as eqx
@@ -38,7 +37,7 @@ class Batch(TypedDict):
     """A batch of items for image classification."""
 
     image: Array  # (N, C, H, W), dtype: float
-    label: Array  # (N), dtype: long
+    label: Array  # (N), dtype: int32
 
 
 class ToArray(A.ImageOnlyTransform):
@@ -63,8 +62,8 @@ class Dataset:
         base: ImageNet,
         transforms: list[A.ImageOnlyTransform] | None = None,
         subset: list[int] | None = None,
-        mean: tuple[float] = (0.485, 0.456, 0.406),
-        std: tuple[float] = (0.229, 0.224, 0.225),
+        mean: float | tuple[float] = (0.485, 0.456, 0.406),
+        std: float | tuple[float] = (0.229, 0.224, 0.225),
     ):
         self.base = base
         # Metadata (ignore index, # of classes etc.) for the dataset
@@ -83,7 +82,6 @@ class Dataset:
             [
                 *transforms,
                 A.Normalize(self.mean, self.std),
-                ToArray(),
             ]
         )
 
@@ -108,7 +106,16 @@ class Dataset:
     @staticmethod
     def collate_fn(batch: list[Item]) -> Batch:
         image = jnp.stack([item["image"] for item in batch])
-        label = np.array([item["label"] for item in batch], dtype=jnp.int64)
+        if len(image.shape) == 3:
+            image = jnp.expand_dims(image, 1)  # [N, H, W] -> [N, 1, H, W]
+        else:
+            image = jnp.moveaxis(image, -1, 1)  # [N, H, W, C] -> [N, C, H, W]
+
+        label = jnp.array(
+            [item["label"] for item in batch],
+            dtype=jnp.int32,
+        )
+
         return {"image": image, "label": label}
 
 
@@ -122,6 +129,7 @@ def train_step(
     labels: Array,
 ):
     @partial(eqx.filter_value_and_grad, has_aux=True)
+    @jax.named_scope("forward_pass")
     def compute_loss(
         model: models.Resnet,
         state: eqx.nn.State,
@@ -137,8 +145,11 @@ def train_step(
         return losses.mean(), new_state
 
     (loss, new_state), grads = compute_loss(model, state)
-    updates, new_opt_state = opt.update(grads, opt_state, model)
-    new_model = eqx.apply_updates(model, updates)
+
+    with jax.named_scope("opt_step"):
+        updates, new_opt_state = opt.update(grads, opt_state, model)
+        new_model: models.Resnet = eqx.apply_updates(model, updates)
+
     return new_model, new_state, new_opt_state, loss
 
 
@@ -190,6 +201,7 @@ class Trainer:
         self.setup_data()
         self.setup_loaders()
         self.setup_model()
+        self.setup_prof()
 
         # Setup loop control flags
         def get_flag(
@@ -234,6 +246,8 @@ class Trainer:
         self.step, self.epoch = 0, 0
         self.exp.register_step("step", lambda: self.step, default=True)
         self.exp.register_step("epoch", lambda: self.epoch)
+
+        self.device = jax.devices()[0]
 
     def setup_data(self):
         if self.cfg.dataset == "imagenet-100":
@@ -280,10 +294,7 @@ class Trainer:
         data_root = "./datasets/mnist"
         self.in_channels = 1
 
-        kw = {
-            "mean": (0.5, 0.5, 0.5),
-            "std": (0.5, 0.5, 0.5),
-        }
+        kw = {"mean": 0.5, "std": 0.5}
 
         train_ds = MNIST(data_root, split="train", download=True)
         self.train_data = Dataset(train_ds, **kw)
@@ -330,8 +341,15 @@ class Trainer:
             batch_size=val_batch_size,
             shuffle=False,
             drop_last=False,
-            collate_fn=self.train_data.collate_fn,
+            collate_fn=self.val_data.collate_fn,
         )
+
+    def setup_prof(self):
+        self.is_profiling = False
+        if self.cfg.profile:
+            self.should_profile = cron.If(lambda: 128 <= self.step < 256)
+        else:
+            self.should_profile = cron.Never()
 
     def get_train_iter(self):
         self.epoch = 0
@@ -340,9 +358,28 @@ class Trainer:
             self.epoch += 1
 
     def train_step(self):
-        batch = next(self.train_iter)
+        if self.should_profile:
+            if not self.is_profiling:
+                jax.profiler.start_trace(self.exp.dir / "board")
+                self.exp.info("Starting profiling")
+                self.is_profiling = True
+            loss = self._train_step_prof()
+        else:
+            if self.is_profiling:
+                jax.profiler.stop_trace()
+                self.exp.info("Ended profiling")
+                self.is_profiling = False
+            loss = self._train_step()
 
-        with jax.disable_jit(False):
+        if self.should_log:
+            self.exp.add_scalar("train/loss", loss)
+
+    def _train_step_prof(self):
+        with jax.profiler.StepTraceAnnotation("train_step"):
+            with jax.profiler.TraceAnnotation("load_data"):
+                batch = next(self.train_iter)
+                jax.block_until_ready(batch)
+
             self.model, self.state, self.opt_state, loss = train_step(
                 model=self.model,
                 state=self.state,
@@ -351,9 +388,31 @@ class Trainer:
                 input=batch["image"],
                 labels=batch["label"],
             )
+            jax.block_until_ready(self.model)
 
-        if self.should_log:
-            self.exp.add_scalar("train/loss", loss)
+        return loss
+
+    def _move_to_device(self, item: dict):
+        result = {}
+        for k, v in item.items():
+            if isinstance(v, jax.Array):
+                v_dev = jax.device_put(v, self.device)
+            else:
+                v_dev = v
+            result[k] = v_dev
+        return result
+
+    def _train_step(self):
+        batch = next(self.train_iter)
+        self.model, self.state, self.opt_state, loss = train_step(
+            model=self.model,
+            state=self.state,
+            opt=self.opt,
+            opt_state=self.opt_state,
+            input=batch["image"],
+            labels=batch["label"],
+        )
+        return loss
 
     def val_epoch(self):
         top1 = Accuracy(self.meta.num_classes, top_k=1)

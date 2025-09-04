@@ -171,6 +171,7 @@ class SPFallback:
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = torch.device(device)
+        self.num_replicas = 1
 
     def wrap_model(self, model: M) -> M:
         return model.to(self.device)

@@ -50,6 +50,12 @@ BatchNorm2d = partial(
 def call_stateful(
     layer: eqx.Module, input: Array, state: eqx.nn.State
 ) -> tuple[Any, eqx.nn.State]:
+    """Call a layer, passing the state along if it's stateful.
+
+    Depending on statefulness of `layer`, either
+    `output, state = layer(input), state` or `output, state = layer(input, state)`
+    must be called. This function provides a uniform interface for both cases."""
+
     if isinstance(layer, eqx.nn.StatefulLayer) and layer.is_stateful():
         input, state = layer(input, state)
     else:

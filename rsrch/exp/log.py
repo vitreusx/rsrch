@@ -42,22 +42,22 @@ def set_log_format(logger: logging.Logger):
 
 class LogMixin(ABC):
     @abstractmethod
-    def log(self, level: int, msg): ...
+    def log(self, level: int, msg, *args): ...
 
-    def fatal(self, msg):
-        return self.log(logging.FATAL, msg)
+    def fatal(self, msg, *args):
+        return self.log(logging.FATAL, msg, *args)
 
-    def critical(self, msg):
-        return self.log(logging.CRITICAL, msg)
+    def critical(self, msg, *args):
+        return self.log(logging.CRITICAL, msg, *args)
 
-    def error(self, msg):
-        return self.log(logging.ERROR, msg)
+    def error(self, msg, *args):
+        return self.log(logging.ERROR, msg, *args)
 
-    def warn(self, msg):
-        return self.log(logging.WARN, msg)
+    def warn(self, msg, *args):
+        return self.log(logging.WARN, msg, *args)
 
-    def info(self, msg):
-        return self.log(logging.INFO, msg)
+    def info(self, msg, *args):
+        return self.log(logging.INFO, msg, *args)
 
-    def debug(self, msg):
-        return self.log(logging.DEBUG, msg)
+    def debug(self, msg, *args):
+        return self.log(logging.DEBUG, msg, *args)

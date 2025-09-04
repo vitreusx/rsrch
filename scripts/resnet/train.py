@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from PIL import Image
 from ruamel.yaml import YAML
 from torch import Tensor
+from torch.profiler import ProfilerAction, ProfilerActivity
 from torch.utils.data import DataLoader, RandomSampler
 from torchmetrics.classification import Accuracy
 
@@ -108,6 +109,7 @@ class Trainer:
         self.setup_data()
         self.setup_data_loaders()
         self.setup_model()
+        self.setup_prof()
 
         # Setup loop control flags
         def get_flag(
@@ -130,8 +132,8 @@ class Trainer:
         should_val = get_flag(self.cfg.val_every)
         should_save = get_flag(self.cfg.save_every)
         self.should_log = get_flag(self.cfg.log_every)
-        self.should_save_samples = cron.Once()
-        self.should_save_val_samples = cron.Once()
+        self.should_save_samples = cron.OneTime()
+        self.should_save_val_samples = cron.OneTime()
 
         # Training loop
         self.pbar = self.exp.make_pbar(desc="Train loop")
@@ -204,6 +206,11 @@ class Trainer:
         self.opt = ScaledOptimizer(self.opt, self.compute_dtype)
 
     def setup_data_loaders(self):
+        worker_kw = {
+            "num_workers": 0,
+            "worker_init_fn": repro.worker_init_fn(self.cfg.seed),
+        }
+
         train_gen = torch.Generator()
         train_sampler = RandomSampler(self.train_data, generator=train_gen)
         train_sampler = self.ddp.wrap_sampler(
@@ -217,9 +224,8 @@ class Trainer:
             batch_size=self.cfg.batch_size,
             sampler=train_sampler,
             drop_last=True,
-            num_workers=2,
-            worker_init_fn=repro.worker_init_fn(self.cfg.seed),
             collate_fn=self.train_data.collate_fn,
+            **worker_kw,
         )
 
         val_sampler = range(len(self.val_data))
@@ -232,12 +238,51 @@ class Trainer:
             batch_size=self.cfg.val_batch_size or self.cfg.batch_size,
             sampler=val_sampler,
             drop_last=False,
-            num_workers=2,
-            worker_init_fn=repro.worker_init_fn(self.cfg.seed),
-            collate_fn=self.train_data.collate_fn,
+            collate_fn=self.val_data.collate_fn,
+            **worker_kw,
         )
 
         self.train_iter = self.get_train_iter()
+
+    def setup_prof(self):
+        if not self.cfg.profile:
+            return
+
+        if self.ddp.num_replicas > 1:
+            raise RuntimeError("Profiling is currently disabled for DDP.")
+
+        activities = [ProfilerActivity.CPU]
+        if self.ddp.device.type == "cuda":
+            activities.append(ProfilerActivity.CUDA)
+
+        def on_trace_ready(prof: torch.profiler.profile):
+            dest = self.exp.dir / "trace.json.gz"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            prof.export_chrome_trace(str(dest))
+            self.exp.info("Saved trace data to %s", dest)
+
+        def schedule(step: int):
+            if self.should_profile:
+                if not self.is_profiling:
+                    self.exp.info("Starting profiling")
+                self.is_profiling = True
+                return ProfilerAction.RECORD
+            else:
+                if self.is_profiling:
+                    self.exp.info("Stopping profiling")
+                    self.is_profiling = False
+                    return ProfilerAction.RECORD_AND_SAVE
+                else:
+                    return ProfilerAction.NONE
+
+        self.prof = torch.profiler.profile(
+            activities=activities,
+            schedule=schedule,
+            on_trace_ready=on_trace_ready,
+            with_stack=True,
+            with_modules=True,
+        )
+        self.prof = self.prof.__enter__()
 
     def get_train_iter(self):
         self.epoch = 0
@@ -255,6 +300,9 @@ class Trainer:
             loss = F.cross_entropy(logits, batch["label"])
 
         self.opt.step(loss)
+
+        if self.cfg.profile and self.ddp.is_master:
+            self.prof.step()
 
         if self.should_log:
             self.ddp.all_reduce(loss, op="mean")

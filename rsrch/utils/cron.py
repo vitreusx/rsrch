@@ -109,11 +109,26 @@ class Always(Flag):
         return True
 
 
-class Once(Flag):
-    def __init__(self):
+class OneTime(Flag):
+    """A flag for performing an action precisely once."""
+
+    def __init__(self, cond: Callable[[], bool] | None = None):
+        self.cond = cond
         self._fired = False
 
     def __bool__(self):
-        ret = not self._fired
-        self._fired = True
+        if not self._fired:
+            ret = self.cond() if self.cond is not None else True
+            if ret:
+                self._fired = True
+        else:
+            ret = False
         return ret
+
+
+class If(Flag):
+    def __init__(self, cond: Callable[[], bool]):
+        self.cond = cond
+
+    def __bool__(self):
+        return self.cond()

@@ -1,5 +1,6 @@
 # yaml-language-server: $schema=config.schema.json
 seed: 0
+profile: true
 create_exp_commit: false
 compute_dtype: float32
 batch_size: 16

@@ -124,7 +124,7 @@ class Trainer:
         should_val = get_flag(self.cfg.val_every)
         should_save = get_flag(self.cfg.save_every)
         self.should_log = get_flag(self.cfg.log_every)
-        self.should_save_samples = cron.Once()
+        self.should_save_samples = cron.OneTime()
         self.should_save_val_samples = cron.Always()
 
         self.pbar = self.exp.make_pbar(desc=self.project)

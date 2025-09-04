@@ -14,7 +14,7 @@ class Board:
         """Add a config value as a dict."""
         pass
 
-    def log(self, level: int, message: str):
+    def log(self, level: int, msg: str, *args):
         """Log a message."""
         pass
 

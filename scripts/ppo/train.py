@@ -14,7 +14,7 @@ from torch.optim import Optimizer
 import rsrch.torch.distributions as D
 from rsrch import rl, spaces
 from rsrch.exp import Experiment, boards
-from rsrch.rl import sdk
+from rsrch.rl import gym, sdk
 from rsrch.rl.data import Buffer
 from rsrch.rl.loaders import OnPolicyRLLoader
 from rsrch.rl.utils import polyak
@@ -379,7 +379,7 @@ class PPO:
                 }
 
 
-class VecAgent(rl.vector.agents.Markov):
+class VecAgent(gym.vector.agents.Markov):
     def __init__(self, actor: Actor, mode: Literal["train", "val"]):
         super().__init__(actor.obs_space, actor.act_space)
         self.actor = actor

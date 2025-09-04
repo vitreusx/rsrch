@@ -1,69 +1,78 @@
-[tool.poetry]
+[project]
 name = "rsrch"
-version = "0.1.0"
-description = ""
-authors = ["vitreusx <jakub_bednarz@protonmail.com>"]
+description = "Private research code"
+version = "0.0.1"
 readme = "README.md"
+authors = [{ name = "vitreusx", email = "jakub_bednarz@protonmail.com" }]
+requires-python = '>=3.10,<4.0'
+dependencies = [
+    'ipykernel (>=6.22.0,<7.0.0)',
+    'ipywidgets (>=8.0.4,<9.0.0)',
+    'tensorboard (>=2.12.2,<3.0.0)',
+    'moviepy (>=1.0.3,<2.0.0)',
+    'patchelf (>=0.17.2.1,<0.18.0.0)',
+    'h5py (>=3.8.0,<4.0.0)',
+    'sympy (>=1.12,<2.0)',
+    "wandb (>=0.21.3,<0.22.0)",
+    'dacite (>=1.8.1,<2.0.0)',
+    'mako (>=1.2.4,<2.0.0)',
+    'ray (>=2.9.0,<3.0.0,!=2.32.0)',
+    'ruamel-yaml (>=0.18.5,<0.19.0)',
+    'lz4 (>=4.3.3,<5.0.0)',
+    'paramiko (>=3.4.0,<4.0.0)',
+    'omegaconf (>=2.3.0,<3.0.0)',
+    'pyparsing (<3)',
+    'tabulate (>=0.9.0,<0.10.0)',
+    'pandas (>=2.2.2,<3.0.0)',
+    'monkeytype (>=23.3.0,<24.0.0)',
+    'opencv-python (>=4.9.0.80,<5.0.0.0)',
+    'torch (==2.7.0)',
+    'torchvision (==0.22.0)',
+    'lpips (>=0.1.4,<0.2.0)',
+    'fast-pytorch-kmeans (>=0.2.0.1,<0.3.0.0)',
+    'fvcore (>=0.1.5.post20221221,<0.2.0)',
+    'colorama (>=0.4.6,<0.5.0)',
+    'numpy (>=1.26.4,<2.0.0)',
+    'kornia (>=0.7.3,<0.8.0)',
+    'datasets (>=3.2.0,<4.0.0)',
+    'torchmetrics (>=1.6.1,<2.0.0)',
+    'safetensors (>=0.5.2,<0.6.0)',
+    'scikit-learn (>=1.6.1,<2.0.0)',
+    'albumentations (>=2.0.5,<3.0.0)',
+    'pycocotools (>=2.0.8,<3.0.0)',
+    'diffusers (>=0.33.1,<0.34.0)',
+    'tokenizers (>=0.21.1,<0.22.0)',
+    'transformers (>=4.52.3,<5.0.0)',
+    'numba (>=0.61.2,<0.62.0)',
+    'segmentation-models-pytorch (>=0.5.0,<0.6.0)',
+    "protobuf (>=6.32.0,<7.0.0)",
+    "tensorflow",
+]
+
+[project.optional-dependencies]
+rl = [
+    'gymnasium[atari,classic-control,toy-text] (>=1.0.0,<2.0.0)',
+    'envpool (>=0.8.4,<0.9.0)',
+    'ale-py (>=0.10.2,<0.11.0)',
+    'dm-control (==1.0.3)',
+    'mujoco (==2.2.1)',
+]
+jax = [
+    'equinox (>=0.13.0,<0.14.0)',
+    'optax (>=0.2.2,<0.3.0)',
+    'jax[cuda12] (>=0.5.3,<0.6.0)',
+]
+
+[build-system]
+requires = ["poetry-core>=2.1.4,<3.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+requires-poetry = '>=2.1.4,<3.0'
 
 [tool.poetry.dependencies]
-python = "^3.10"
-ipykernel = "^6.22.0"
-ipywidgets = "^8.0.4"
-tensorboard = "^2.12.2"
-moviepy = "^1.0.3"
-patchelf = "^0.17.2.1"
-mujoco = { version = "2.2.1", optional = true }
-h5py = "^3.8.0"
-sympy = "^1.12"
-gymnasium = { extras = [
-    "atari",
-    "classic-control",
-    "toy-text",
-], version = "^1.0.0" }
-wandb = "^0.15.5"
-dacite = "^1.8.1"
-mako = "^1.2.4"
-envpool = { version = "^0.8.4", optional = true }
-box2d-py = { path = "ext/box2d-py", optional = true }
-ray = "^2.9.0,!=2.32.0"
-ruamel-yaml = "^0.18.5"
-lz4 = "^4.3.3"
-paramiko = "^3.4.0"
-omegaconf = "^2.3.0"
-pyparsing = "<3"
-tabulate = "^0.9.0"
-pandas = "^2.2.2"
-monkeytype = "^23.3.0"
-equinox = "^0.13.0"
-optax = { version = "^0.2.2", optional = true }
-opencv-python = "^4.9.0.80"
-torch = { version = "2.7.0", source = "torch-cu126" }
-torchvision = { version = "0.22.0", source = "torch-cu126" }
-lpips = "^0.1.4"
-fast-pytorch-kmeans = "^0.2.0.1"
-fvcore = "^0.1.5.post20221221"
-ale-py = "^0.10.2"
-colorama = "^0.4.6"
-numpy = "^1.26.4"
-dm-control = { version = "1.0.5", optional = true }
-kornia = "^0.7.3"
-datasets = "^3.2.0"
-torchmetrics = "^1.6.1"
-safetensors = "^0.5.2"
-scikit-learn = "^1.6.1"
-albumentations = "^2.0.5"
-jax = { version = "^0.5.3", extras = ["cuda12"], optional = true }
-poetry = "2.1.3"
-pycocotools = "^2.0.8"
-diffusers = "^0.33.1"
-tokenizers = "^0.21.1"
-transformers = "^4.52.3"
-numba = "^0.61.2"
-segmentation-models-pytorch = "^0.5.0"
-
-[tool.poetry.extras]
-rl = ["gymnasium", "envpool", "box2d-py", "ale-py", "dm-control", "mujoco"]
-jax = ["equinox", "optax", "jax"]
+torch = { source = "pytorch-cu126" }
+torchvision = { source = "pytorch-cu126" }
 
 [tool.poetry.group.dev.dependencies]
 tomli = "^2.0.1"
@@ -80,18 +89,16 @@ ruff = "^0.12.7"
 sphinx = "^8.1.3"
 myst-parser = "^4.0.1"
 furo = "^2025.7.19"
+poetry = "^2.1.4"
+tensorboard-plugin-profile = "^2.20.6"
 
 [tool.poetry.requires-plugins]
 poetry-dotenv-plugin = "^0.2.0"
 
 [[tool.poetry.source]]
-name = "torch-cu126"
+name = "pytorch-cu126"
 url = "https://download.pytorch.org/whl/cu126"
 priority = "explicit"
-
-[build-system]
-requires = ["poetry-core>=1.5,<2"]
-build-backend = "poetry.core.masonry.api"
 
 [tool.black]
 line-length = 88

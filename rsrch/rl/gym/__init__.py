@@ -1,10 +1,19 @@
-from . import utils, vector, wrappers
-from .agents import Agent, AgentWrapper, VecAgent, VecAgentWrapper
-from .envs import Env, EnvWrapper, VecEnv
+from . import envs, utils, vector, wrappers
+from .api import (
+    Agent,
+    AgentWrapper,
+    Env,
+    EnvWrapper,
+    VecAgent,
+    VecAgentWrapper,
+    VecEnv,
+    VecEnvWrapper,
+)
 
 __all__ = [
     "utils",
     "vector",
+    "envs",
     "wrappers",
     "Agent",
     "AgentWrapper",
@@ -13,4 +22,5 @@ __all__ = [
     "Env",
     "EnvWrapper",
     "VecEnv",
+    "VecEnvWrapper",
 ]

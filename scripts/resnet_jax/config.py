@@ -11,6 +11,7 @@ class TimeDelta:
 @dataclass
 class Config:
     seed: int
+    profile: bool
     create_exp_commit: bool
     model: Literal["mnist", "resnet18", "resnet34", "resnet50"]
     dataset: Literal["mnist", "imagenet-100"]
