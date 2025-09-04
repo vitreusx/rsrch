@@ -15,8 +15,9 @@ from torch.utils.data import DataLoader, RandomSampler
 from torchmetrics.classification import Accuracy
 
 from rsrch.data.imagenet import ImageNet
+from rsrch.data.mnist import MNIST
 from rsrch.exp import Experiment, boards
-from rsrch.models.resnet import resnet34
+from rsrch.models import resnet
 from rsrch.torch.nn.optim import ScaledOptimizer
 from rsrch.utils import cron, repro
 from rsrch.utils.cast import cast
@@ -107,7 +108,7 @@ class Trainer:
         # Setup infra, data, models etc.
         self.setup_infra()
         self.setup_data()
-        self.setup_data_loaders()
+        self.setup_loaders()
         self.setup_model()
         self.setup_prof()
 
@@ -141,8 +142,7 @@ class Trainer:
             if should_val:
                 self.val_epoch()
             if should_save:
-                tag = f"model.step={self.step:07d}"
-                self.save_model(tag)
+                self.save_model(tag=f"model.step={self.step:07d}")
             self.train_step()
             self.step += 1
             self.pbar.update()
@@ -164,7 +164,16 @@ class Trainer:
             self.exp.register_step("epoch", lambda: self.epoch)
 
     def setup_data(self):
+        if self.cfg.dataset == "imagenet-100":
+            self._setup_imagenet100()
+        elif self.cfg.dataset == "mnist":
+            self._setup_mnist()
+
+        self.meta = self.train_data.meta
+
+    def _setup_imagenet100(self):
         data_root = "./datasets/imagenet-100"
+        self.in_channels = 3
         image_size = 224
 
         self.train_data = Dataset(
@@ -195,22 +204,39 @@ class Trainer:
             subset=val_subset,
         )
 
-        self.meta = self.train_data.meta
+    def _setup_mnist(self):
+        data_root = "./datasets/mnist"
+        self.in_channels = 1
+
+        kw = {"mean": 0.5, "std": 0.5}
+
+        train_ds = MNIST(data_root, split="train", download=True)
+        self.train_data = Dataset(train_ds, **kw)
+
+        val_ds = MNIST(data_root, split="test")
+
+        # For debugging, we limit the number of val samples
+        if self.cfg.max_val_samples is not None:
+            val_size = min(len(val_ds), self.cfg.max_val_samples)
+            val_idxes = np.random.choice(len(val_ds), size=val_size, replace=False)
+            val_subset = val_idxes.tolist()
+        else:
+            val_subset = None
+
+        self.val_data = Dataset(val_ds, subset=val_subset, **kw)
 
     def setup_model(self):
-        self.model = resnet34(num_classes=self.meta.num_classes)
+        self.model: resnet.Resnet = getattr(resnet, self.cfg.model)(
+            in_channels=self.in_channels,
+            num_classes=self.meta.num_classes,
+        )
         self.model = self.ddp.wrap_model(self.model)
 
         self.opt = torch.optim.AdamW(self.model.parameters(), lr=3e-4)
         # Use `ScaledOptimizer` to simplify optimization step when autocasting
         self.opt = ScaledOptimizer(self.opt, self.compute_dtype)
 
-    def setup_data_loaders(self):
-        worker_kw = {
-            "num_workers": 0,
-            "worker_init_fn": repro.worker_init_fn(self.cfg.seed),
-        }
-
+    def setup_loaders(self):
         train_gen = torch.Generator()
         train_sampler = RandomSampler(self.train_data, generator=train_gen)
         train_sampler = self.ddp.wrap_sampler(
@@ -225,7 +251,6 @@ class Trainer:
             sampler=train_sampler,
             drop_last=True,
             collate_fn=self.train_data.collate_fn,
-            **worker_kw,
         )
 
         val_sampler = range(len(self.val_data))
@@ -239,7 +264,6 @@ class Trainer:
             sampler=val_sampler,
             drop_last=False,
             collate_fn=self.val_data.collate_fn,
-            **worker_kw,
         )
 
         self.train_iter = self.get_train_iter()
@@ -260,6 +284,9 @@ class Trainer:
             dest.parent.mkdir(parents=True, exist_ok=True)
             prof.export_chrome_trace(str(dest))
             self.exp.info("Saved trace data to %s", dest)
+
+        self.is_profiling = False
+        self.should_profile = cron.If(lambda: 128 <= self.step < 256)
 
         def schedule(step: int):
             if self.should_profile:

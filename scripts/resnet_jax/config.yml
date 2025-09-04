@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=config.schema.json
 seed: 0
-profile: true
+profile: false
 create_exp_commit: false
 model: resnet34
 dataset: imagenet-100

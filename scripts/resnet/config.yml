@@ -2,8 +2,10 @@
 seed: 0
 profile: true
 create_exp_commit: false
-compute_dtype: float32
+model: resnet34
+dataset: imagenet-100
 batch_size: 16
+compute_dtype: float32
 val_batch_size: ~
 train_for: { n: 100e3, of: step }
 log_every: { n: 4, of: step }

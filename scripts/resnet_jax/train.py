@@ -1,6 +1,8 @@
-from functools import partial, wraps
+import queue
+import threading
+from functools import partial
 from pathlib import Path
-from typing import Any, Callable, Literal, ParamSpec, TypedDict, TypeVar
+from typing import Any, Literal, TypedDict
 
 import albumentations as A
 import equinox as eqx
@@ -135,10 +137,7 @@ def train_step(
         state: eqx.nn.State,
     ):
         batch_model = jax.vmap(
-            model,
-            axis_name="batch",
-            in_axes=(0, None),
-            out_axes=(0, None),
+            model, axis_name="batch", in_axes=(0, None), out_axes=(0, None)
         )
         logits, new_state = batch_model(input, state)
         losses = optax.softmax_cross_entropy_with_integer_labels(logits, labels)
@@ -352,10 +351,31 @@ class Trainer:
             self.should_profile = cron.Never()
 
     def get_train_iter(self):
+        # Briefly: we fetch from the dataloader in a separate thread, put the
+        # batches in a queue, and fetch from the queue in the main thread.
+        # This is done because, for some reason, the data loading and the
+        # computations aren't done asynchronously by default, despite JAX
+        # having async dispatch by default.
+        # TODO: Investigate why that is the case.
+
         self.epoch = 0
+
+        def batches():
+            while True:
+                yield from self.train_loader
+                self.epoch += 1
+
+        self._batch_queue = queue.Queue(maxsize=2)
+
+        def worker_fn():
+            for batch in batches():
+                self._batch_queue.put(batch)
+
+        self._worker = threading.Thread(target=worker_fn, daemon=True)
+        self._worker.start()
+
         while True:
-            yield from self.train_loader
-            self.epoch += 1
+            yield self._batch_queue.get()
 
     def train_step(self):
         if self.should_profile:

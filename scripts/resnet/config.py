@@ -13,6 +13,8 @@ class Config:
     seed: int
     profile: bool
     create_exp_commit: bool
+    model: Literal["mnist", "resnet18", "resnet34", "resnet50"]
+    dataset: Literal["mnist", "imagenet-100"]
     compute_dtype: Literal["float16", "bfloat16", "float32"]
     batch_size: int
     val_batch_size: int | None
