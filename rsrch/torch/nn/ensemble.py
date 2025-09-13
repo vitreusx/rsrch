@@ -42,13 +42,13 @@ class Linear(nn.Module):
             # This section is virtually the same as in nn.Linear
             nn.init.kaiming_uniform_(self.weight[idx].T, a=math.sqrt(5))
             if self.bias is not None:
-                fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight[idx].T)
+                fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight[idx].T)  # noqa: SLF001
                 bound = 1.0 / math.sqrt(fan_in) if fan_in > 0 else 0
                 nn.init.uniform_(self.bias[idx][0], -bound, bound)
 
-    def forward(self, input: Tensor, models=slice(None)) -> Tensor:
-        # input.shape = [num_models, batch_size, in_features]
-        # output.shape = [num_models, batch_size, out_features]
+    def forward(self, input: Tensor, models=slice(None)) -> Tensor:  # noqa: B008
+        # input.shape -> [num_models, batch_size, in_features]
+        # output.shape -> [num_models, batch_size, out_features]
         output = torch.bmm(input, self.weight[models])
         if self.bias is not None:
             output = output + self.bias

@@ -22,7 +22,7 @@ class OneHot:
             y[np.arange(len(x)), x] = 1.0
             return y.reshape(*shape, self.space.n)
 
-    def codomain(self, X):
+    def codomain(self, xs):  # noqa: ARG002
         return spaces.torch.OneHot(self.space.n)
 
 
@@ -33,8 +33,8 @@ class Argmax:
     def __call__(self, x: torch.Tensor):
         return x.argmax(-1)
 
-    def codomain(self, X: spaces.torch.Box):
-        return spaces.torch.Discrete(X.shape[-1], dtype=self.space.dtype)
+    def codomain(self, xs: spaces.torch.Box):
+        return spaces.torch.Discrete(xs.shape[-1], dtype=self.space.dtype)
 
 
 class BufferWrapper(data.Wrapper):

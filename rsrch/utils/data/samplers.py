@@ -2,7 +2,7 @@ from typing import Sized
 
 import numpy as np
 
-from rsrch.types.rq_tree import rq_tree
+from rsrch.types.rq_tree import RQTree
 
 
 class InfiniteSampler:
@@ -18,11 +18,12 @@ class InfiniteSampler:
 
     def __iter__(self):
         if self.shuffle:
+            gen = np.random.default_rng()
             while True:
                 if self.fixed_size:
-                    yield from np.random.permutation(len(self.ds))
+                    yield from gen.permutation(len(self.ds))
                 else:
-                    yield np.random.randint(len(self.ds))
+                    yield gen.integers(len(self.ds))
         else:
             idx = 0
             while len(self.ds) > 0:
@@ -37,13 +38,14 @@ class PrioritizedSampler:
         self.ds = ds
         if max_size is None:
             max_size = len(self.ds)
-        self._priorities = rq_tree(max_size)
+        self._priorities = RQTree(max_size)
 
     def update(self, idx, prio):
         self._priorities[idx] = prio
 
     def __iter__(self):
+        gen = np.random.default_rng()
         while True:
-            u = np.random.rand() * self._priorities.total
+            u = gen.random() * self._priorities.total
             idx = self._priorities.searchsorted(u)
             yield idx

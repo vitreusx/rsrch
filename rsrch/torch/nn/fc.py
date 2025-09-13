@@ -1,8 +1,8 @@
-from typing import Callable, List, Literal
+import itertools
+from typing import Callable, Literal
 
 import torch
-import torch.nn as nn
-from torch import Tensor
+from torch import Tensor, nn
 
 
 class SkipLinear(nn.Module):
@@ -19,14 +19,14 @@ class SkipLinear(nn.Module):
 class FullyConnected(nn.Sequential):
     def __init__(
         self,
-        layer_sizes: List[int],
+        layer_sizes: list[int],
         norm_layer: Callable[[int], nn.Module] | None = None,
         act_layer: Callable[[], nn.Module] = nn.ReLU,
         final_layer: Literal["fc", "norm", "act"] = "fc",
         highway: bool = False,
     ):
         layers = []
-        in_out = enumerate(zip(layer_sizes[:-1], layer_sizes[1:]))
+        in_out = enumerate(itertools.pairwise(layer_sizes))
         final_idx = len(layer_sizes) - 2
 
         layer_types = []

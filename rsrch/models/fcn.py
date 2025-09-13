@@ -34,11 +34,14 @@ class FCN(nn.Module):
 
         with shape_infer_mode(self.encoder):
             features: list[Tensor] = self.encoder(dummy)
-            assert len(features) == 5
+            if len(features) != 5:
+                raise RuntimeError("FCN requires 5 feature maps")
+
             feat_channels = []
-            for fmap, stride in zip(features, (2, 4, 8, 16, 32)):
+            for fmap, stride in zip(features, (2, 4, 8, 16, 32), strict=False):
                 fmap_h, fmap_w = input_h // stride, input_w // stride
-                assert len(fmap.shape) == 4 and fmap.shape[2:] == (fmap_h, fmap_w)
+                if len(fmap.shape) != 4 or fmap.shape[2:] != (fmap_h, fmap_w):
+                    raise RuntimeError("Invalid feature map size for FCN")
                 feat_channels.append(fmap.shape[1])
 
         self.proj_32 = nn.Conv2d(feat_channels[4], num_classes, 1, 1, 0)

@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import ClassVar, Literal, TypedDict
 
 import albumentations as A
 import numpy as np
@@ -46,8 +46,8 @@ class Batch(TypedDict):
 class Dataset:
     """An adapter for `ImageNet` dataset for use in training ResNet."""
 
-    MEAN = [0.485, 0.456, 0.406]  # "Canonical" ImageNet mean
-    STD = [0.229, 0.224, 0.225]  # "Canonical" ImageNet std
+    MEAN: ClassVar = [0.485, 0.456, 0.406]  # "Canonical" ImageNet mean
+    STD: ClassVar = [0.229, 0.224, 0.225]  # "Canonical" ImageNet std
 
     def __init__(
         self,
@@ -69,7 +69,7 @@ class Dataset:
                 *transforms,
                 A.Normalize(self.MEAN, self.STD),
                 A.ToTensorV2(),
-            ]
+            ],
         )
 
     def __len__(self):
@@ -128,6 +128,8 @@ class Trainer:
                     return cron.Every(step_fn, period=delta.n)
                 elif mode == "until":
                     return cron.Until(step_fn, max_value=delta.n)
+                else:
+                    raise ValueError(mode)
 
         should_run = get_flag(self.cfg.train_for, mode="until")
         should_val = get_flag(self.cfg.val_every)
@@ -190,7 +192,8 @@ class Trainer:
         # For debugging, we limit the number of val samples
         if self.cfg.max_val_samples is not None:
             val_size = min(len(val_ds), self.cfg.max_val_samples)
-            val_idxes = np.random.choice(len(val_ds), size=val_size, replace=False)
+            gen = np.random.default_rng()
+            val_idxes = gen.choice(len(val_ds), size=val_size, replace=False)
             val_subset = val_idxes.tolist()
         else:
             val_subset = None
@@ -218,7 +221,8 @@ class Trainer:
         # For debugging, we limit the number of val samples
         if self.cfg.max_val_samples is not None:
             val_size = min(len(val_ds), self.cfg.max_val_samples)
-            val_idxes = np.random.choice(len(val_ds), size=val_size, replace=False)
+            gen = np.random.default_rng()
+            val_idxes = gen.choice(len(val_ds), size=val_size, replace=False)
             val_subset = val_idxes.tolist()
         else:
             val_subset = None
@@ -255,7 +259,9 @@ class Trainer:
 
         val_sampler = range(len(self.val_data))
         val_sampler = self.ddp.wrap_sampler(
-            val_sampler, set_epoch=None, drop_last=False
+            val_sampler,
+            set_epoch=None,
+            drop_last=False,
         )
 
         self.val_loader = DataLoader(
@@ -288,13 +294,13 @@ class Trainer:
         self.is_profiling = False
         self.should_profile = cron.If(lambda: 128 <= self.step < 256)
 
-        def schedule(step: int):
+        def schedule(step: int):  # noqa: ARG001
             if self.should_profile:
                 if not self.is_profiling:
                     self.exp.info("Starting profiling")
                 self.is_profiling = True
                 return ProfilerAction.RECORD
-            else:
+            else:  # noqa: PLR5501
                 if self.is_profiling:
                     self.exp.info("Stopping profiling")
                     self.is_profiling = False
@@ -342,7 +348,8 @@ class Trainer:
     def get_sample_grid(self, dataset, batch: Batch):
         num_images = len(batch["image"])
         num_samples = min(num_images, 8)
-        idxes = np.random.choice(num_images, size=num_samples, replace=False)
+        gen = np.random.default_rng()
+        idxes = gen.choice(num_images, size=num_samples, replace=False)
 
         to_pil_image = dataset.to_pil_image
         images = [to_pil_image(batch["image"][idx]) for idx in idxes]

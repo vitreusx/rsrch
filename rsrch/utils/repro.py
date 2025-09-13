@@ -16,7 +16,7 @@ def seed_all(seed: int):
         torch.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
     random.seed(seed)
-    np.random.seed(seed)
+    np.random.seed(seed)  # noqa: NPY002
 
 
 def set_fully_deterministic(mode: bool = True):
@@ -46,7 +46,7 @@ class RandomState:
     @staticmethod
     def save():
         state = {
-            "np": np.random.get_state(),
+            "np": np.random.get_state(),  # noqa: NPY002
             "random": random.getstate(),
         }
         if HAS_TORCH:
@@ -59,7 +59,7 @@ class RandomState:
 
     @staticmethod
     def load(state: dict):
-        np.random.set_state(state["np"])
+        np.random.set_state(state["np"])  # noqa: NPY002
         random.setstate(state["random"])
         if HAS_TORCH:
             torch.set_rng_state(torch.as_tensor(state["torch_cpu"]))

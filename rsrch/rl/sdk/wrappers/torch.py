@@ -7,8 +7,7 @@ from torch import Tensor
 
 from rsrch import spaces
 from rsrch.rl import data, gym
-
-from .. import api
+from rsrch.rl.sdk import api
 
 
 class CastF:
@@ -19,7 +18,7 @@ class CastF:
         elif isinstance(self.space, Sequence):
             self.fs = tuple(CastF(v) for v in self.space)
 
-    def __call__(self, x, batched: bool = False):
+    def __call__(self, x, batched: bool = False):  # noqa: PLR0912
         if isinstance(self.space, Mapping):
             x: Mapping
             if batched:
@@ -35,7 +34,7 @@ class CastF:
                 y = tuple(self.fs[i]([v[i] for v in x]) for i in range(n))
                 return [tuple(v[i] for v in y) for i in range(len(x))]
             else:
-                return tuple(f(v) for f, v in zip(self.fs, x))
+                return tuple(f(v) for f, v in zip(self.fs, x, strict=False))
         else:
             if batched:
                 x = np.asarray(x)
@@ -44,46 +43,41 @@ class CastF:
                 d = 1 if batched else 0
                 if len(x.shape) == 2 + d:
                     x = np.expand_dims(x, d)
-                else:
-                    if self.space.channel_last:
-                        x = np.moveaxis(x, -1, d)
+                elif self.space.channel_last:
+                    x = np.moveaxis(x, -1, d)
 
                 if x.dtype == np.uint8:
                     x = x / 255.0
 
-            if np.issubdtype(x.dtype, np.floating):
-                dtype = torch.float32
-            else:
-                dtype = torch.long
+            dtype = torch.float32 if np.issubdtype(x.dtype, np.floating) else torch.long
             if not x.flags["WRITEABLE"]:
                 x = x.copy()
             return torch.as_tensor(x, dtype=dtype)
 
     def inv(self, x, batched: bool = False):
         if isinstance(self.space, Mapping):
-            assert isinstance(x, Mapping)
+            if not isinstance(x, Mapping):
+                raise TypeError("Must provide a mapping")
             if batched:
                 elem = x[0]
                 return {k: self.fs[k].inv([v[k] for v in x], True) for k in elem}
             else:
                 return {k: self.fs[k].inv(v) for k, v in x.items()}
         elif isinstance(self.space, Sequence):
-            assert isinstance(x, Sequence)
+            if not isinstance(x, Sequence):
+                raise TypeError("Must provide a sequence")
             if batched:
                 n = len(x[0])
                 return tuple(self.fs[i].inv([v[i] for v in x], True) for i in range(n))
             else:
-                return tuple(f.inv(v) for f, v in zip(self.fs, x))
+                return tuple(f.inv(v) for f, v in zip(self.fs, x, strict=False))
         else:
             if batched:
                 x = torch.as_tensor(x)
 
             if isinstance(self.space, spaces.np.Image):
                 d = 1 if batched else 0
-                if x.shape[d] == 1:
-                    x = x.squeeze(d)
-                else:
-                    x = x.moveaxis(d, -1)
+                x = x.squeeze(d) if x.shape[d] == 1 else x.moveaxis(d, -1)
 
                 if self.space.dtype == np.uint8:
                     x = (255.0 * x).astype(torch.uint8)
@@ -95,25 +89,24 @@ class CastF:
             co = {k: self.fs[k].codomain(v) for k, v in space.items()}
             return spaces.torch.Dict(co)
         elif isinstance(space, Sequence):
-            co = tuple(f.codomain(v) for f, v in zip(self.fs, space))
+            co = tuple(f.codomain(v) for f, v in zip(self.fs, space, strict=False))
             return spaces.torch.Tuple(co)
+        elif isinstance(space, spaces.np.Image):
+            shape = (space.num_channels, space.height, space.width)
+            return spaces.torch.Image(shape)
+        elif isinstance(space, spaces.np.Discrete):
+            return spaces.torch.Discrete(space.n)
+        elif isinstance(space, spaces.np.Box):
+            return spaces.torch.Box(
+                shape=space.shape,
+                low=self(space.low),
+                high=self(space.high),
+            )
+        elif isinstance(space, spaces.np.Array):
+            test = self(np.zeros(space.shape, space.dtype))
+            return spaces.torch.Tensor(test.shape, dtype=test.dtype)
         else:
-            if isinstance(space, spaces.np.Image):
-                shape = (space.num_channels, space.height, space.width)
-                return spaces.torch.Image(shape)
-            elif isinstance(space, spaces.np.Discrete):
-                return spaces.torch.Discrete(space.n)
-            elif isinstance(space, spaces.np.Box):
-                return spaces.torch.Box(
-                    shape=space.shape,
-                    low=self(space.low),
-                    high=self(space.high),
-                )
-            elif isinstance(space, spaces.np.Array):
-                test = self(np.zeros(space.shape, space.dtype))
-                return spaces.torch.Tensor(test.shape, dtype=test.dtype)
-            else:
-                raise RuntimeError(f"Invalid space {space}")
+            raise TypeError("Invalid space %s", space)
 
 
 class LazySeq(Sequence):
@@ -138,10 +131,10 @@ class LazySeq(Sequence):
         if self._data is not None:
             return self._data
 
-        KEYS = ("obs", "act", "reward", "term", "trunc")
+        KEYS = ("obs", "act", "reward", "term", "trunc")  # noqa: N806
 
-        data = defaultdict(lambda: [])
-        assoc = defaultdict(lambda: [])
+        data = defaultdict(list)
+        assoc = defaultdict(list)
         for i, t in enumerate(self.idxes):
             step = self.seq[t]
             for k in KEYS:
@@ -154,7 +147,7 @@ class LazySeq(Sequence):
 
         items = [{} for _ in self.idxes]
         for k in KEYS:
-            for i, v in zip(assoc[k], data[k]):
+            for i, v in zip(assoc[k], data[k], strict=False):
                 items[i][k] = v
 
         self._data = items

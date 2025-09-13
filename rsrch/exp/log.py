@@ -5,7 +5,7 @@ from colorama import Fore, Style, just_fix_windows_console
 
 
 class ColorFormatter(logging.Formatter):
-    STYLES = {
+    STYLES = {  # noqa: RUF012
         logging.FATAL: Style.BRIGHT + Fore.CYAN,
         logging.CRITICAL: Style.BRIGHT + Fore.MAGENTA,
         logging.ERROR: Style.BRIGHT + Fore.RED,
@@ -54,7 +54,7 @@ class LogMixin(ABC):
         return self.log(logging.ERROR, msg, *args)
 
     def warn(self, msg, *args):
-        return self.log(logging.WARN, msg, *args)
+        return self.log(logging.WARNING, msg, *args)
 
     def info(self, msg, *args):
         return self.log(logging.INFO, msg, *args)

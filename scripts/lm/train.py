@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, PreTrainedTokenizer
 
-from datasets import DatasetDict, load_dataset
+from datasets import load_dataset
 from rsrch.exp import Experiment, boards
 from rsrch.lang.data import BucketBatchSampler, split_into_buckets
 from rsrch.models.transformer import Decoder
@@ -140,8 +140,6 @@ class Trainer:
 
     def setup_data(self):
         data = load_dataset(self.cfg.dataset_path, self.cfg.dataset_name)
-        assert isinstance(data, DatasetDict)
-        assert "train" in data and "validation" in data
 
         ident = f"datasets/{self.cfg.dataset_path}"
         if self.cfg.dataset_name is not None:
@@ -210,7 +208,8 @@ class Trainer:
             seq: str = val_data[idx]
             words = seq.split(" ")
             min_words, max_words = int(0.25 * len(words)), int(0.75 * len(words))
-            word_count = int(np.random.randint(min_words, max_words + 1))
+            gen = np.random.default_rng()
+            word_count = int(gen.integers(min_words, max_words + 1))
             seq = " ".join(words[:word_count])
             val_sample.append(seq)
 
@@ -276,7 +275,7 @@ class Trainer:
 
         result_text = ["# Completions"]
         for idx in range(len(sample_text)):
-            result_text.append(
+            result_text.append(  # noqa: PERF401
                 f"""
 ## Sample #{idx:03d}
 

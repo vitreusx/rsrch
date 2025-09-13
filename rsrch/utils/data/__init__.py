@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import itertools
 from collections.abc import Sequence
-from typing import Tuple, TypeVar, Union
+from typing import TypeVar
 
 import numpy as np
 
@@ -24,7 +25,7 @@ class Subset(Sequence[X]):
         return self._ds[idx]
 
 
-class Indexed(Sequence[Tuple[Idx, X]]):
+class Indexed(Sequence[tuple[Idx, X]]):
     def __init__(self, ds: Sequence[X]):
         super().__init__()
         self._ds = ds
@@ -38,7 +39,7 @@ class Indexed(Sequence[Tuple[Idx, X]]):
 
 def random_split(
     ds: Sequence[X],
-    lengths: Sequence[Union[int, float]],
+    lengths: Sequence[int | float],
     seed: int | np.random.Generator | None = None,
 ) -> Sequence[Sequence[X]]:
     if isinstance(lengths[0], float):
@@ -50,7 +51,7 @@ def random_split(
     pivots = np.hstack((0, lengths)).cumsum()
     g = np.random.default_rng(seed=seed)
     idxes = g.permutation(n)
-    return [Subset(ds, idxes[start:end]) for start, end in zip(pivots[:-1], pivots[1:])]
+    return [Subset(ds, idxes[start:end]) for start, end in itertools.pairwise(pivots)]
 
 
 class Pipeline(Sequence):
@@ -69,7 +70,9 @@ class Pipeline(Sequence):
 
 
 class MapDict:
-    def __init__(self, transforms: dict = {}, **kwargs):
+    def __init__(self, transforms: dict | None = None, **kwargs):
+        if transforms is None:
+            transforms = {}
         self.transforms = {**transforms, **kwargs}
 
     def __call__(self, item: dict):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import copy
 from functools import cached_property
 from numbers import Number
@@ -60,13 +61,13 @@ class Tensorlike:
         self._batched = {}
         self.shape = shape
 
-    def register(self, __name, __value: T, batched=True) -> T:
+    def register(self, __name, __value: T, batched=True) -> T:  # noqa: PYI063
         """Register a tensor field. The value must be either a `torch.Tensor`
         or a `Tensorlike`.
         """
 
         if hasattr(self, __name):
-            raise ValueError(f"Member variable with name '{__name}' already present.")
+            raise ValueError("Member variable with name '%s' already present.", __name)
 
         setattr(self, __name, __value)
 
@@ -103,12 +104,10 @@ class Tensorlike:
 
         for name in dir(new.__class__):
             if isinstance(getattr(new.__class__, name), cached_property):
-                try:
+                # If cached_property hasn't been accessed, delattr will
+                # throw an error, so we suppress it.
+                with contextlib.suppress(Exception):
                     delattr(new, name)
-                except Exception:
-                    # If cached_property hasn't been accessed, delattr will
-                    # throw an error.
-                    pass
 
         for name, value in fields.items():
             setattr(new, name, value)

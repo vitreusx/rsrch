@@ -5,8 +5,6 @@ import albumentations as A
 import numpy as np
 import safetensors
 import safetensors.torch
-
-# from rsrch.models.unet import UNet
 import segmentation_models_pytorch as smp
 import torch
 import torch.nn.functional as F
@@ -60,7 +58,7 @@ class Dataset:
                 *transforms,
                 A.Normalize(self.MEAN, self.STD),
                 A.ToTensorV2(),
-            ]
+            ],
         )
 
     def __len__(self):
@@ -190,12 +188,6 @@ class Trainer:
             self.ignore_index = self.train_data.meta.ignore_index
 
     def setup_model(self):
-        # h = 32
-        # self.model = UNet(
-        #     in_channels=3,
-        #     out_channels=self.meta.num_classes,
-        #     block_channels=[h, 2 * h, 4 * h, 8 * h],
-        # )
         self.model = smp.Unet(
             encoder_name="resnet34",
             encoder_weights="imagenet",
@@ -280,7 +272,8 @@ class Trainer:
     def get_sample_grid(self, dataset: Dataset, batch: Batch, logits: Tensor):
         num_images = len(batch["image"])
         num_samples = min(num_images, 8)
-        idxes = np.random.choice(num_images, size=num_samples, replace=False)
+        gen = np.random.default_rng(seed=0)
+        idxes = gen.choice(num_images, size=num_samples, replace=False)
 
         palette = self.meta.palette
         ignore_index = self.meta.ignore_index

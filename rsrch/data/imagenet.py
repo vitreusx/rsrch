@@ -15,10 +15,7 @@ def _get_label_names(loc_synset_mapping_txt: str | Path):
             line = line.rstrip()
             defs = line[line.index(" ") + 1 :]
             pos = defs.find(",")
-            if pos < 0:
-                name = defs
-            else:
-                name = defs[:pos]
+            name = defs if pos < 0 else defs[:pos]
             names.append(name)
     return names
 
@@ -71,7 +68,8 @@ class ImageNet(data.Dataset):
         with open(cls_list, "r") as f:
             for line in f:
                 path, index = line.strip().split(" ")
-                assert int(index) - 1 == len(self._paths)
+                if int(index) - 1 != len(self._paths):
+                    raise RuntimeError("Invalid class order")
                 self._paths.append(path)
 
         if split in ("train", "val"):

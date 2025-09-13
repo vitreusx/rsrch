@@ -7,14 +7,13 @@ from typing import (
     Literal,
     Optional,
     Tuple,
-    Type,
     Union,
     get_args,
     get_origin,
 )
 
 
-def _get_schema(t):
+def _get_schema(t):  # noqa: PLR0911, PLR0912
     t_args = get_args(t)
     t = get_origin(t) or t
 
@@ -36,14 +35,14 @@ def _get_schema(t):
     elif t == Literal:
         return {"enum": t_args}
 
-    elif t in (list, List):
+    elif t in (list, List):  # noqa: UP006
         if len(t_args) > 0:
             vt = t_args[0]
             return {"type": "array", "items": _get_schema(vt)}
         else:
             return {"type": "array"}
 
-    elif t in (tuple, Tuple):
+    elif t in (tuple, Tuple):  # noqa: UP006
         if len(t_args) > 0:
             if t_args[-1] == ...:
                 return {
@@ -73,18 +72,18 @@ def _get_schema(t):
         required = []
         for param in sig.parameters.values():
             if param.kind == param.VAR_POSITIONAL:
-                raise ValueError()
+                raise ValueError("Constructors with *args list not supported")
             elif param.kind == param.VAR_KEYWORD:
-                if get_origin(param.annotation) in (Any, inspect._empty):
+                if get_origin(param.annotation) in (Any, inspect._empty):  # noqa: SLF001
                     additional_properties = True
                 else:
                     additional_properties = _get_schema(param.annotation)
             else:
                 param_t = param.annotation
-                if param_t == inspect._empty:
+                if param_t == inspect._empty:  # noqa: SLF001
                     param_t = Any
                 properties[param.name] = _get_schema(param_t)
-                if param.default == inspect._empty:
+                if param.default == inspect._empty:  # noqa: SLF001
                     required.append(param.name)
 
         return {
@@ -95,7 +94,7 @@ def _get_schema(t):
         }
 
 
-def get_schema(t: Type, schema_id: str = "https://github.com/vitreusx/rsrch"):
+def get_schema(t: type, schema_id: str = "https://github.com/vitreusx/rsrch"):
     return {
         "$schema": "https://json-schema.org/draft-07/schema",
         "$id": schema_id,

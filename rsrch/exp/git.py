@@ -40,7 +40,7 @@ def create_exp_commit(run: str) -> str:
         commit_msg = f"Exp commit for {run}"
         repo.git.commit("--allow-empty", "-m", commit_msg)
         commit_sha = repo.head.object.hexsha
-        logger.info(f"Created exp commit with SHA {commit_sha[:7]}")
+        logger.info("Created exp commit with SHA %s", commit_sha[:7])
     finally:
         # Switch back to the original state
         repo.git.symbolic_ref("HEAD", f"refs/heads/{cur_ref}")
@@ -55,6 +55,8 @@ def head_commit() -> str | None:
     repo = git.Repo(Path(__file__).parent, search_parent_directories=True)
     if not repo.is_dirty():
         return repo.head.object.hexsha
+    else:
+        return None
 
 
 def main():

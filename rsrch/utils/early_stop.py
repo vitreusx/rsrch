@@ -27,9 +27,8 @@ class EarlyStopping:
         self._best_v, self._best_t = None, None
 
     def __call__(self, value: float, opt_step: int):
-        if self.max_steps is not None:
-            if opt_step > self.max_steps:
-                return True
+        if self.max_steps is not None and opt_step > self.max_steps:
+            return True
 
         if self._best_v is None:
             self._best_v, self._best_t = value, opt_step

@@ -1,7 +1,7 @@
-import os
 import pickle
 import tempfile
 import zipfile
+from pathlib import Path
 
 
 def reduce(x):
@@ -37,11 +37,11 @@ def save_to_zip(obj, f):
         with zipfile.ZipFile(f, mode="w") as zf:
             zf.write(temp_f.name, "ckpt.pt")
     finally:
-        os.unlink(temp_f.name)
+        Path(temp_f.name).unlink()
 
 
 def load_from_zip(obj, f):
     with zipfile.ZipFile(f, mode="r") as zf:
         ckpt_f = zf.open("ckpt.pt")
-        state = pickle.load(ckpt_f)
+        state = pickle.load(ckpt_f)  # noqa: S301
     return load(obj, state)

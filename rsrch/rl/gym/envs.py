@@ -35,17 +35,17 @@ class MonotonicF:
         else:
             return self.f(x)
 
-    def codomain(self, X: spaces.np.Array):
-        if isinstance(X, dict):
-            return {k: self.codomain(X_k) for k, X_k in X.items()}
-        elif isinstance(X, spaces.np.Discrete):
-            dtype = self(X.low).dtype
-            return spaces.np.Discrete(X.n, dtype=dtype)
-        elif isinstance(X, spaces.np.Box):
-            low, high = self(X.low), self(X.high)
+    def codomain(self, xs: spaces.np.Array):
+        if isinstance(xs, dict):
+            return {k: self.codomain(X_k) for k, X_k in xs.items()}
+        elif isinstance(xs, spaces.np.Discrete):
+            dtype = self(xs.low).dtype
+            return spaces.np.Discrete(xs.n, dtype=dtype)
+        elif isinstance(xs, spaces.np.Box):
+            low, high = self(xs.low), self(xs.high)
             return spaces.np.Box(low.shape, low=low, high=high)
         else:
-            x = self(X.sample())
+            x = self(xs.sample())
             return spaces.np.Array(x.shape, x.dtype)
 
 
@@ -69,10 +69,10 @@ class ComposeF:
             x = f(x)
         return x
 
-    def codomain(self, X):
+    def codomain(self, xs):
         for f in self.fs:
-            X = f.codomain(X)
-        return X
+            xs = f.codomain(xs)
+        return xs
 
 
 cast_action = CastActionF()
@@ -108,7 +108,7 @@ class Envpool(VecEnv):
         self._batch_size = self.pool.config["batch_size"]
         self._actions = self.act_space.sample([self.num_envs])
 
-    def rollout(self, agent: VecAgent):  # noqa: C901
+    def rollout(self, agent: VecAgent):  # noqa: PLR0912
         self.pool.async_reset()
         next_reset = [True for _ in range(self.num_envs)]
 
@@ -169,7 +169,7 @@ class Envpool(VecEnv):
             if len(policy_ids) > 0:
                 policy_ids = np.array(policy_ids)
                 actions = agent.policy(policy_ids)
-                for env_id, action in zip(policy_ids, actions):
+                for env_id, action in zip(policy_ids, actions, strict=False):
                     self._actions[env_id] = action
 
             actions = self._actions[env_ids].copy()
@@ -349,7 +349,7 @@ class EnvSet(VecEnv):
         self.envs = envs
         self.batch_size = batch_size or self.num_envs
 
-    def rollout(self, agent: VecAgent):
+    def rollout(self, agent: VecAgent):  # noqa: PLR0912
         with cf.ThreadPoolExecutor(self.batch_size) as pool:
             futures = {}
             actions = [None for _ in range(self.num_envs)]
@@ -408,7 +408,7 @@ class EnvSet(VecEnv):
                 if len(policy_idxes) > 0:
                     policy_idxes = np.array(policy_idxes)
                     policy = agent.policy(policy_idxes)
-                    for env_idx, action in zip(policy_idxes, policy):
+                    for env_idx, action in zip(policy_idxes, policy, strict=False):
                         actions[env_idx] = action
                         fut = pool.submit(self.envs[env_idx].step, action)
                         futures[fut] = env_idx
@@ -427,7 +427,7 @@ class OrdinalEnv(Env):
         self.step_idx += 1
         return {"obs": obs}
 
-    def step(self, act) -> dict:
+    def step(self, act) -> dict:  # noqa: ARG002
         obs = (self.ep_id, self.step_idx)
         self.step_idx += 1
         final = self.is_final(self.ep_id, self.step_idx)

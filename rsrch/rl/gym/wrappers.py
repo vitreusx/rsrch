@@ -14,7 +14,8 @@ class RenderEnv(EnvWrapper):
     def __init__(self, env: Env):
         super().__init__(env)
         obs = self.reset()["obs"]
-        assert isinstance(obs, np.ndarray)
+        if not isinstance(obs, np.ndarray):
+            raise TypeError("Observation must be a Numpy array")
         self.obs_space = {"obs": spaces.np.Image(obs.shape)}
 
     def reset(self):
@@ -95,11 +96,11 @@ class FrameSkipAgent(VecAgentWrapper):
         req_idxes = []
         for env_idx in idxes:
             if env_idx not in self._counts:
-                req_idxes.append(env_idx)
+                req_idxes.append(env_idx)  # noqa: PERF401
 
         if len(req_idxes) > 0:
             req_actions = super().policy(np.array(req_idxes))
-            for req_idx, req_action in zip(req_idxes, req_actions):
+            for req_idx, req_action in zip(req_idxes, req_actions, strict=False):
                 self._actions[req_idx] = req_action
 
         return tuple(self._actions[idx] for idx in idxes)

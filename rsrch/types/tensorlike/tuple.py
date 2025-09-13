@@ -6,7 +6,7 @@ from rsrch.types.tensorlike import Tensorlike
 
 
 class TensorTuple(Tensorlike):
-    def __init__(self, __iterable: Iterable, shape=None):
+    def __init__(self, __iterable: Iterable, shape=None):  # noqa: PYI063
         __iterable = [*__iterable]
         if shape is None:
             shape = __iterable[0].shape

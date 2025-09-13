@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 @torch.no_grad()
@@ -30,7 +30,9 @@ def update(source: nn.Module, target: nn.Module, tau: float):
     :param tau: Update coefficient. Passing :math:`\\tau = 0` copies `source`
     to `target`.
     """
-    for target_p, source_p in zip(target.parameters(), source.parameters()):
+    for target_p, source_p in zip(
+        target.parameters(), source.parameters(), strict=False
+    ):
         update_param(source_p, target_p, tau)
 
 

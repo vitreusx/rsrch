@@ -46,10 +46,10 @@ class ToArray(A.ImageOnlyTransform):
     def __init__(self):
         super().__init__(p=1.0)
 
-    def get_params_dependent_on_data(self, params, data):
+    def get_params_dependent_on_data(self, params, data):  # noqa: ARG002
         return {}
 
-    def apply(self, image: np.ndarray, **kwargs):
+    def apply(self, image: np.ndarray, **kwargs):  # noqa: ARG002
         array = jnp.asarray(image)
         if len(array.shape) == 2:
             array = jnp.expand_dims(array, 0)
@@ -84,7 +84,7 @@ class Dataset:
             [
                 *transforms,
                 A.Normalize(self.mean, self.std),
-            ]
+            ],
         )
 
     def __len__(self):
@@ -137,7 +137,10 @@ def train_step(
         state: eqx.nn.State,
     ):
         batch_model = jax.vmap(
-            model, axis_name="batch", in_axes=(0, None), out_axes=(0, None)
+            model,
+            axis_name="batch",
+            in_axes=(0, None),
+            out_axes=(0, None),
         )
         logits, new_state = batch_model(input, state)
         losses = optax.softmax_cross_entropy_with_integer_labels(logits, labels)
@@ -218,12 +221,12 @@ class Trainer:
                     return cron.Every(step_fn, period=delta.n)
                 elif mode == "until":
                     return cron.Until(step_fn, max_value=delta.n)
+                else:
+                    raise ValueError(mode)
 
         should_run = get_flag(self.cfg.train_for, mode="until")
         should_val = get_flag(self.cfg.val_every)
         self.should_log = get_flag(self.cfg.log_every)
-        # self.should_save_samples = cron.Once()
-        # self.should_save_val_samples = cron.Once()
 
         # Training loop
         self.pbar = self.exp.make_pbar(desc="Train loop")
@@ -275,7 +278,8 @@ class Trainer:
         # For debugging, we limit the number of val samples
         if self.cfg.max_val_samples is not None:
             val_size = min(len(val_ds), self.cfg.max_val_samples)
-            val_idxes = np.random.choice(len(val_ds), size=val_size, replace=False)
+            gen = np.random.default_rng()
+            val_idxes = gen.choice(len(val_ds), size=val_size, replace=False)
             val_subset = val_idxes.tolist()
         else:
             val_subset = None
@@ -303,7 +307,8 @@ class Trainer:
         # For debugging, we limit the number of val samples
         if self.cfg.max_val_samples is not None:
             val_size = min(len(val_ds), self.cfg.max_val_samples)
-            val_idxes = np.random.choice(len(val_ds), size=val_size, replace=False)
+            gen = np.random.default_rng()
+            val_idxes = gen.choice(len(val_ds), size=val_size, replace=False)
             val_subset = val_idxes.tolist()
         else:
             val_subset = None
@@ -356,7 +361,6 @@ class Trainer:
         # This is done because, for some reason, the data loading and the
         # computations aren't done asynchronously by default, despite JAX
         # having async dispatch by default.
-        # TODO: Investigate why that is the case.
 
         self.epoch = 0
 
@@ -415,10 +419,7 @@ class Trainer:
     def _move_to_device(self, item: dict):
         result = {}
         for k, v in item.items():
-            if isinstance(v, jax.Array):
-                v_dev = jax.device_put(v, self.device)
-            else:
-                v_dev = v
+            v_dev = jax.device_put(v, self.device) if isinstance(v, jax.Array) else v
             result[k] = v_dev
         return result
 

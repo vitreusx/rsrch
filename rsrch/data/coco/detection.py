@@ -46,17 +46,15 @@ class COCODetection(Sequence):
         img = Image.open(img_path)
 
         ann_ids = self.coco.getAnnIds(img_id)
-        coco_anns = self.coco.loadAnns(ann_ids)
 
-        detections: list[Detection] = []
-        for coco_ann in coco_anns:
-            detections.append(
-                {
-                    "category": coco_ann["category_id"],
-                    "bbox": Box(coco_ann["bbox"]),
-                    "iscrowd": coco_ann["iscrowd"] > 0,
-                }
-            )
+        detections = [
+            {
+                "category": coco_ann["category_id"],
+                "bbox": Box(coco_ann["bbox"]),
+                "iscrowd": coco_ann["iscrowd"] > 0,
+            }
+            for coco_ann in self.coco.loadAnns(ann_ids)
+        ]
 
         return {"image": img, "objects": detections}
 

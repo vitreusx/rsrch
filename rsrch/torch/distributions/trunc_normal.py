@@ -50,20 +50,20 @@ class TruncStdNormal(Distribution, Tensorlike):
         return torch.special.ndtr(self.high)
 
     @cached_property
-    def Z(self):
+    def z(self):
         return (self.high_cdf - self.low_cdf).clamp_min(self.eps)
 
     @cached_property
-    def log_Z(self):
-        return self.Z.log()
+    def log_z(self):
+        return self.z.log()
 
     @cached_property
     def var_term(self):
-        return (self.high * self.high_pdf - self.low * self.low_pdf) / self.Z
+        return (self.high * self.high_pdf - self.low * self.low_pdf) / self.z
 
     @property
     def mean(self):
-        return (self.low_pdf - self.high_pdf) / self.Z
+        return (self.low_pdf - self.high_pdf) / self.z
 
     @property
     def var(self):
@@ -74,18 +74,18 @@ class TruncStdNormal(Distribution, Tensorlike):
         return self.mean.clamp(self.low, self.high)
 
     def entropy(self):
-        ent = 0.5 * math.log(2.0 * math.pi * math.e) + self.log_Z - 0.5 * self.var_term
+        ent = 0.5 * math.log(2.0 * math.pi * math.e) + self.log_z - 0.5 * self.var_term
         return sum_rightmost(ent, self.event_dims)
 
     def log_prob(self, value: Tensor):
-        logp = _normal_log_pdf(value) - self.log_Z
+        logp = _normal_log_pdf(value) - self.log_z
         return sum_rightmost(logp, self.event_dims)
 
     def rsample(self, sample_shape=()):
         shape = [*sample_shape, *self.batch_shape, *self.event_shape]
         p = torch.empty(shape, device=self.low.device)
         p.uniform_(self.eps, 1.0 - self.eps)
-        p = self.low_cdf + p * self.Z
+        p = self.low_cdf + p * self.z
         return torch.special.ndtri(p.float())
 
 

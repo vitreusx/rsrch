@@ -5,7 +5,7 @@ from torch import Tensor, nn
 ActType = Literal["relu", "elu", "tanh"]
 
 
-def ActLayer(type: ActType) -> Callable[[], nn.Module]:
+def ActLayer(type: ActType) -> Callable[[], nn.Module]:  # noqa: N802
     return {"relu": nn.ReLU, "elu": nn.ELU, "tanh": nn.Tanh}[type]
 
 
@@ -35,7 +35,7 @@ class LayerNorm2d(nn.Module):
 NormType = Literal["none", "batch", "layer"]
 
 
-def NormLayer1d(type: NormType) -> Callable[[int], nn.Module]:
+def NormLayer1d(type: NormType) -> Callable[[int], nn.Module]:  # noqa: N802
     return {
         "none": lambda _: nn.Identity(),
         "batch": nn.BatchNorm1d,
@@ -43,7 +43,7 @@ def NormLayer1d(type: NormType) -> Callable[[int], nn.Module]:
     }[type]
 
 
-def NormLayer2d(type: NormType) -> Callable[[int], nn.Module]:
+def NormLayer2d(type: NormType) -> Callable[[int], nn.Module]:  # noqa: N802
     return {
         "none": lambda _: nn.Identity(),
         "batch": nn.BatchNorm2d,

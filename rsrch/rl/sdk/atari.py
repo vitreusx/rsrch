@@ -11,9 +11,9 @@ import numpy as np
 from PIL import Image
 
 from rsrch import spaces
+from rsrch.rl import data, gym
 from rsrch.rl.gym.wrappers import VecRecordStats
 
-from .. import data, gym
 from .utils import GymnasiumRecordStats
 
 gymnasium.register_envs(ale_py)
@@ -35,7 +35,6 @@ class Config:
     stack_num: int | None = 4
     use_envpool: bool = True
     repeat_action_probability: float = 0.25
-    randomize: bool = False
 
 
 class NoopResetEnv(gymnasium.Wrapper):
@@ -52,7 +51,8 @@ class NoopResetEnv(gymnasium.Wrapper):
         self.noop_max = noop_max
         self.override_num_noops = None
         self.noop_action = 0
-        assert env.unwrapped.get_action_meanings()[0] == "NOOP"  # type: ignore[attr-defined]
+        if env.unwrapped.get_action_meanings()[0] != "NOOP":
+            raise RuntimeError("For no-op reset wrapper, action #0 must be NOOP")
 
     def reset(self, **kwargs):
         self.env.reset(**kwargs)
@@ -60,7 +60,6 @@ class NoopResetEnv(gymnasium.Wrapper):
             noops = self.override_num_noops
         else:
             noops = self.unwrapped.np_random.integers(1, self.noop_max + 1)
-        assert noops > 0
         obs = np.zeros(0)
         info = {}
         for _ in range(noops):
@@ -79,8 +78,11 @@ class FireResetEnv(gymnasium.Wrapper):
 
     def __init__(self, env: gym.Env) -> None:
         super().__init__(env)
-        assert env.unwrapped.get_action_meanings()[1] == "FIRE"  # type: ignore[attr-defined]
-        assert len(env.unwrapped.get_action_meanings()) >= 3  # type: ignore[attr-defined]
+        if env.unwrapped.get_action_meanings()[1] != "FIRE":
+            raise ValueError("For fire reset wrapper, action #1 must be FIRE")
+
+        if len(env.unwrapped.get_action_meanings()) < 3:
+            raise ValueError("For fire reset wrapper, the env must have >= 3 actions.")
 
     def reset(self, **kwargs):
         self.env.reset(**kwargs)
@@ -138,8 +140,8 @@ class EpisodicLifeEnv(gymnasium.Wrapper):
             # The no-op step can lead to a game over, so we need to check it again
             # to see if we should reset the environment and avoid the
             # monitor.py `RuntimeError: Tried to step environment that needs reset`
-            # if terminated or truncated:
-            #     obs, info = self.env.reset(**kwargs)
+            # > if terminated or truncated:
+            # >     obs, info = self.env.reset(**kwargs)
         self.lives = self.env.unwrapped.ale.lives()  # type: ignore[attr-defined]
         return obs, info
 
@@ -218,6 +220,8 @@ class AtariSeq(Sequence):
     ):
         self.seq = seq
         self.idxes = idxes
+        if self.idxes.step != 1:
+            raise ValueError("Step sizes != 1 are not supported")
         self.stack_num = stack_num
         self._data = None
 
@@ -229,7 +233,6 @@ class AtariSeq(Sequence):
         if self._data is not None:
             return self._data
 
-        assert self.idxes.step == 1
         start, stop = self.idxes.start, self.idxes.stop
         seq_len = stop - start
 
@@ -272,7 +275,7 @@ class AtariSeq(Sequence):
 
 
 class BufferWrapper(data.Wrapper):
-    KEYS = ["obs", "act", "reward", "term", "trunc"]
+    KEYS = ["obs", "act", "reward", "term", "trunc"]  # noqa: RUF012
 
     def __init__(
         self,
@@ -316,7 +319,6 @@ class SDK:
 
     def __init__(self, cfg: Config):
         self.cfg = cfg
-        self.randomize = False
 
         s = cfg.stack_num or 1
         if cfg.obs_type == "ram":
@@ -330,22 +332,12 @@ class SDK:
             self.obs_space = spaces.np.Image((h, w, c * s))
 
         dummy_env = gymnasium.make(f"ALE/{cfg.env_id}-v5")
-        assert isinstance(dummy_env.action_space, gymnasium.spaces.Discrete)
+        if not isinstance(dummy_env.action_space, gymnasium.spaces.Discrete):
+            raise TypeError("Action space must be discrete")
+
         self.act_space = spaces.np.Discrete(dummy_env.action_space.n)
 
         self.id = self.cfg.env_id
-        if self.cfg.randomize:
-            self._setup_randomize()
-
-    def _setup_randomize(self):
-        self.act_perm = np.random.permutation(self.act_space.n)
-        while True:
-            flip = np.random.rand(2) < 0.5
-            if not np.any(flip):
-                continue
-            self.flip_h, self.flip_w = flip
-            break
-        self.randomize = True
 
     def make_envs(
         self,
@@ -362,20 +354,21 @@ class SDK:
         :param render: Whether to also output observation frames.
         :param seed: Optional RNG seed for the environment."""
 
-        if seed is None:
-            seed = np.random.randint(int(2**31))
+        gen = np.random.default_rng(seed=seed)
 
         if self.cfg.use_envpool and not render:
             envs = self._try_envpool(
                 num_envs=num_envs,
                 mode=mode,
-                seed=seed,
+                seed=gen.integers(2**31),
             )
             if envs is not None:
                 return envs
 
+        env_seeds = gen.integers(0, 2**31, size=num_envs).tolist()
+
         def env_fn(idx):
-            return lambda: self._env(mode, seed + idx, render)
+            return lambda: self._env(mode, env_seeds[idx], render)
 
         if num_envs > 1:
             with ThreadPoolExecutor() as pool:
@@ -390,10 +383,10 @@ class SDK:
         self,
         num_envs: int,
         mode: Literal["train", "val"],
-        seed: int | None,
+        seed: int,
     ):
         if self.cfg.obs_type == "ram":
-            return
+            return None
 
         max_steps = self.cfg.time_limit or int(1e6)
         max_steps = max_steps // self.cfg.frame_skip
@@ -402,9 +395,6 @@ class SDK:
             img_w, img_h = self.cfg.screen_size
         else:
             img_w = img_h = self.cfg.screen_size
-
-        if seed is None:
-            seed = np.random.randint(int(2**31))
 
         obs_f = self._envpool_obs_f
         act_f = self._randomize_act if self.randomize else None
@@ -446,7 +436,7 @@ class SDK:
         return obs
 
     def _randomize_obs(self, obs: np.ndarray):
-        # obs: [..., C, H, W]
+        # obs -> [..., C, H, W]
         if self.flip_w:
             obs = np.flip(obs, 1)
         if self.flip_h:
@@ -496,6 +486,8 @@ class SDK:
         if self.cfg.fire_reset:
             if "FIRE" in env.unwrapped.get_action_meanings():
                 env = FireResetEnv(env)
+            else:
+                raise RuntimeError("For fire reset wrapper, FIRE action is required")
 
         if self.cfg.time_limit is not None:
             env = gymnasium.wrappers.TimeLimit(env, self.cfg.time_limit)

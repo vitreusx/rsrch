@@ -23,9 +23,9 @@ class OneHot(Distribution, Tensorlike):
 
     @property
     def mode(self):
-        value = self.index_dist._param.argmax(-1)
+        value = self.index_dist.param.argmax(-1)
         value = F.one_hot(value, self.index_dist.num_events)
-        value = value.type_as(self.index_dist._param)
+        value = value.type_as(self.index_dist.param)
         return value
 
     @property
@@ -43,7 +43,7 @@ class OneHot(Distribution, Tensorlike):
     def sample(self, sample_shape=()):
         indices = self.index_dist.sample(sample_shape)
         value = F.one_hot(indices, self.index_dist.num_events)
-        value = value.type_as(self.index_dist._param)
+        value = value.type_as(self.index_dist.param)
         return value
 
     def rsample(self, sample_shape=()):

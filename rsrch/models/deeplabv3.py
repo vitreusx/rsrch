@@ -45,11 +45,11 @@ def convert_resnet_(
     """
 
     num_layers = len(dilations)
-    for layer, dilation in zip(model.layers[-num_layers:], dilations):
+    for layer, dilation in zip(model.layers[-num_layers:], dilations, strict=False):
         layer: nn.Sequential
         if isinstance(dilation, int):
             dilation = [dilation] * len(layer)
-        for block, rate in zip(layer, dilation):
+        for block, rate in zip(layer, dilation, strict=False):
             for node in walk(block):
                 if isinstance(node, nn.Conv2d):
                     conv2d_set_dilation(node, rate)
@@ -119,18 +119,17 @@ class ASPP(nn.Module):
             norm_layer=norm_layer,
         )
 
-        atrous = []
-        for rate in dilations:
-            atrous.append(
-                ConvModule(
-                    in_channels,
-                    out_channels,
-                    kernel_size=3,
-                    dilation=rate,
-                    act_layer=act_layer,
-                    norm_layer=norm_layer,
-                )
+        atrous = [
+            ConvModule(
+                in_channels,
+                out_channels,
+                kernel_size=3,
+                dilation=rate,
+                act_layer=act_layer,
+                norm_layer=norm_layer,
             )
+            for rate in dilations
+        ]
 
         pool = nn.Sequential(
             nn.AdaptiveAvgPool2d(2),

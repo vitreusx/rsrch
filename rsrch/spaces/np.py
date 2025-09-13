@@ -23,7 +23,7 @@ class Array:
         shape: tuple[int, ...] = (),
         gen: np.random.Generator | None = None,
     ):
-        raise NotImplementedError()
+        raise NotImplementedError
 
     def __repr__(self):
         return f"Space(shape={self.shape!r}, dtype={self.dtype})"
@@ -86,18 +86,14 @@ class Box(Array):
         gen: np.random.Generator | None = None,
     ):
         shape = [*sample_size, *self.shape]
+        if gen is None:
+            gen = np.random.default_rng()
         if np.issubdtype(self.dtype, np.floating):
-            if gen is None:
-                u = np.random.rand(*shape).astype(self.dtype)
-            else:
-                u = gen.random(shape, self.dtype)
+            u = gen.random(shape, self.dtype)
             u = np.where(self.bounded, u * (self.high - self.low), u)
             u = np.where(self.bounded_below, self.low + u, u)
         elif np.issubdtype(self.dtype, np.integer):
-            if gen is None:
-                u = np.random.randint(self.low, self.high, size=shape, dtype=self.dtype)
-            else:
-                u = gen.integers(self.low, self.high, size=shape, dtype=self.dtype)
+            u = gen.integers(self.low, self.high, size=shape, dtype=self.dtype)
         return u
 
     def __repr__(self):
@@ -115,7 +111,8 @@ class Discrete(Box):
         *,
         dtype: np.dtype = np.int64,
     ):
-        assert np.issubdtype(dtype, np.integer)
+        if not np.issubdtype(dtype, np.integer):
+            raise TypeError("Must provide integer dtype for a discrete space")
         super().__init__((), low=0, high=n, dtype=dtype)
         self.n = n
 
@@ -147,7 +144,7 @@ class Image(Box):
             self.num_channels = 1
             self.height, self.width = shape
         else:
-            raise RuntimeError(f"Invalid Image array shape {shape}")
+            raise RuntimeError("Invalid Image array shape %s", shape)
 
         self.size = self.width, self.height
 
@@ -164,7 +161,7 @@ class Dict(dict):
         return {key: value.sample(shape, gen) for key, value in self.items()}
 
 
-class Tuple(tuple):
+class Tuple(tuple):  # noqa: SLOT001
     def sample(
         self,
         shape: tuple[int, ...],

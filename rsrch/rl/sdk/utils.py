@@ -19,7 +19,7 @@ class StackSeq(Sequence):
         self.seq = seq
         self.stack_num = stack_num
         if span is None:
-            span = range(0, len(self.seq))
+            span = range(len(self.seq))
         self.span = span
 
     def __len__(self):

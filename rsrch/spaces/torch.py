@@ -154,7 +154,9 @@ class Discrete(Tensor):
         dtype: torch.dtype = torch.int64,
         device: torch.device | None = None,
     ):
-        assert not dtype.is_floating_point
+        if dtype.is_floating_point:
+            raise TypeError("Must provide an integer dtype for a discrete space")
+
         super().__init__((), dtype=dtype, device=device)
         self.n = n
 
@@ -240,10 +242,8 @@ class Image(Box):
         return f"{self.__class__.__name__}({self.shape!r}, {self.dtype}, {self.device})"
 
     def __getitem__(self, index):
-        shape = self.low[index].shape
-        assert len(shape) >= 3
         return Image(
-            shape=shape,
+            shape=self.low[index].shape,
             dtype=self.dtype,
             device=self.device,
             channel_first=self.channel_first,
@@ -262,7 +262,7 @@ class Dict(dict):
         )
 
 
-class Tuple(tuple):
+class Tuple(tuple):  # noqa: SLOT001
     def sample(
         self,
         shape: tuple[int, ...],
@@ -306,7 +306,7 @@ def as_tensor(space, device: torch.device | None = None):
             device=device,
         )
     else:
-        raise RuntimeError()
+        raise TypeError(type(space))
 
 
 class Tensorlike:

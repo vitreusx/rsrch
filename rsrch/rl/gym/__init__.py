@@ -11,16 +11,16 @@ from .api import (
 )
 
 __all__ = [
-    "utils",
-    "vector",
-    "envs",
-    "wrappers",
     "Agent",
     "AgentWrapper",
-    "VecAgent",
-    "VecAgentWrapper",
     "Env",
     "EnvWrapper",
+    "VecAgent",
+    "VecAgentWrapper",
     "VecEnv",
     "VecEnvWrapper",
+    "envs",
+    "utils",
+    "vector",
+    "wrappers",
 ]

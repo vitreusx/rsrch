@@ -16,21 +16,18 @@ class Quantize:
     def __call__(self, x: np.ndarray | torch.Tensor):
         f = (x - self.space.low) / (self.space.high - self.space.low)
         i = ((self.n - 1) * f).round()
-        if isinstance(i, np.ndarray):
-            i = i.astype(np.int32)
-        else:
-            i = i.to(torch.long)
+        i = i.astype(np.int32) if isinstance(i, np.ndarray) else i.to(torch.long)
         return i
 
-    def codomain(self, X: spaces.np.Box | spaces.torch.Box):
-        if isinstance(X, spaces.torch.Box):
-            num_tokens = math.prod(X.shape)
+    def codomain(self, xs: spaces.np.Box | spaces.torch.Box):
+        if isinstance(xs, spaces.torch.Box):
+            num_tokens = math.prod(xs.shape)
             return spaces.torch.TokenSeq(
                 num_tokens=num_tokens,
                 vocab_size=self.n,
             )
         else:
-            raise NotImplementedError()
+            raise NotImplementedError
 
 
 class Dequantize:

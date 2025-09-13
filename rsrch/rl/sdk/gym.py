@@ -6,9 +6,9 @@ import cv2
 import gymnasium
 import numpy as np
 
+from rsrch.rl import data, gym
 from rsrch.rl.gym.wrappers import VecRecordStats
 
-from .. import data, gym
 from .utils import GymnasiumRecordStats
 
 ObsType = Literal["base", "flat", "render"]
@@ -36,7 +36,7 @@ class RenderEnv(gymnasium.ObservationWrapper):
             obs = cv2.resize(obs, self._size)
         self.observation_space = gymnasium.spaces.Box(0, 255, obs.shape, np.uint8)
 
-    def observation(self, observation):
+    def observation(self, observation):  # noqa: ARG002
         obs = self.env.render()
         if self._size is not None:
             obs = cv2.resize(obs, self._size)
@@ -79,7 +79,7 @@ class VecAgentWrapper(gym.VecAgentWrapper):
 
 
 class BufferWrapper(data.Wrapper):
-    KEYS = ["obs", "act", "reward", "term", "trunc"]
+    KEYS = ["obs", "act", "reward", "term", "trunc"]  # noqa: RUF012
 
     def __init__(self, buf: data.Buffer):
         super().__init__(buf)
@@ -107,25 +107,25 @@ class SDK:
     def make_envs(
         self,
         num_envs: int,
-        mode: Literal["train", "val"] = "train",
         render: bool = False,
         seed: int | None = None,
         **kwargs,
     ):
         if len(kwargs) > 0:
             param_list = ", ".join(f"'{kw}'" for kw in kwargs)
-            raise RuntimeError(f"Following parameters are unsupported: {param_list}")
+            raise RuntimeError("Following parameters are unsupported: %s", param_list)
 
-        if seed is None:
-            seed = np.random.randint(int(2**31))
+        gen = np.random.default_rng(seed=seed)
 
         if self.cfg.use_envpool:
-            envs = self._try_envpool(num_envs, render=render, seed=seed)
+            envs = self._try_envpool(num_envs, render=render, seed=gen.integers(2**31))
             if envs is not None:
                 return envs
 
+        env_seeds = gen.integers(0, 2**31, size=num_envs).tolist()
+
         def env_fn(idx):
-            return lambda: self._env(render=render, seed=seed + idx)
+            return lambda: self._env(render=render, seed=env_seeds[idx])
 
         if num_envs > 1:
             with ThreadPoolExecutor() as pool:
@@ -143,7 +143,7 @@ class SDK:
         seed: int,
     ):
         if render or self.cfg.obs_type == "render":
-            return
+            return None
 
         try:
             envs = gym.envs.Envpool(
@@ -153,7 +153,7 @@ class SDK:
             )
             envs = VecRecordStats(envs)
         except Exception:
-            return
+            return None
 
         return envs
 

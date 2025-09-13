@@ -28,13 +28,12 @@ class SegMeta:
     def label_to_name(self) -> dict[str, str]:
         map_ = {}
         for label, info in self.data["classes"].items():
-            if isinstance(info, str):
-                name = info
-            else:
-                name = info["name"]
+            name = info if isinstance(info, str) else info["name"]
             map_[label] = name
 
-        assert is_contiguous([*map_])
+        if not is_contiguous([*map_]):
+            raise RuntimeError("Class labels must be contiguous")
+
         return map_
 
     @cached_property
@@ -51,14 +50,16 @@ class SegMeta:
         map_ = {}
         for label, info in self.data["classes"].items():
             if not isinstance(info, dict) or info.get("palette") is None:
-                return
+                return None
             color = info["palette"]
             if isinstance(color, str):
                 color = hex2rgb(color)
             map_[label] = color
 
-        assert is_contiguous([*map_])
-        assert "ignore_color" in self.data
+        if not is_contiguous([*map_]):
+            raise ValueError("Labels' list must be contiguous")
+        if "ignore_color" not in self.data:
+            raise ValueError("Need to provide ignore_index")
         return map_
 
     @cached_property

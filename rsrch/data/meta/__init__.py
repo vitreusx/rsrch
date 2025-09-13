@@ -4,9 +4,9 @@ from .seg_meta import SegMeta, seg_meta
 
 __all__ = [
     "ClsMeta",
-    "cls_meta",
     "PanopticMeta",
-    "panoptic_meta",
     "SegMeta",
+    "cls_meta",
+    "panoptic_meta",
     "seg_meta",
 ]

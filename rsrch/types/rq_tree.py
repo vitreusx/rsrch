@@ -4,7 +4,7 @@ from typing import Any
 import numpy as np
 
 
-class rq_tree:
+class RQTree:
     """A (simplified) range-query tree. We maintain an array
     :math:`[A_1, \\ldots, A_n]`, for which we can (1) query :math:`A_i`, (2) set
     :math:`A_i := v`, (3) perform equivalent of :func:`np.searchsorted` on
@@ -60,7 +60,7 @@ class rq_tree:
         if new_size <= self.size:
             return self
         else:
-            new_tree = rq_tree(
+            new_tree = RQTree(
                 new_size, self.reduce_fn, self.zero, self.init, self.dtype
             )
             new_tree.array[: self.size] = self.array[: self.size]
@@ -110,9 +110,10 @@ class rq_tree:
             left, right = 2 * node + 1, 2 * node + 2
             left_v = self.tree[left]
             if value <= left_v:
-                node, value = left, value
+                node = left
             else:
-                node, value = right, value - left_v
+                node = right
+                value -= left_v
         return node - self._array_beg
 
     def __repr__(self):

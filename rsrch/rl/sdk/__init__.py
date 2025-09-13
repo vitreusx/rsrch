@@ -24,6 +24,10 @@ def make(cfg: Config):
         return gym.SDK(cfg.gym)
     elif cfg.type == "dmc":
         return dmc.SDK(cfg.dmc)
+    else:
+        raise ValueError(
+            "SDK type must be one of 'atari', 'gym', 'dmc', is '%s'.", cfg.type
+        )
 
 
-__all__ = ["Config", "make", "atari", "dmc", "gym", "wrappers"]
+__all__ = ["Config", "atari", "dmc", "gym", "make", "wrappers"]

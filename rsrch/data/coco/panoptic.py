@@ -1,14 +1,15 @@
 import json
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 from PIL import Image
 
 from rsrch.data.meta import panoptic_meta
 
-from .utils.schema import PanopticAnnFile
+if TYPE_CHECKING:
+    from .utils.schema import PanopticAnnFile
 
 
 class COCOPanoptic(Sequence):
@@ -31,7 +32,8 @@ class COCOPanoptic(Sequence):
         self.img_root = self.root / f"{self.split}2017"
         self.ann_root = self.root / f"annotations/panoptic_{self.split}2017"
 
-        assert all(len(v) == 1 for v in self.img_anns.values())
+        if any(len(v) != 1 for v in self.img_anns.values()):
+            raise RuntimeError("Need to have 1 annotation per image")
 
     def __len__(self):
         return len(self.ann_file["images"])

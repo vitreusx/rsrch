@@ -3,7 +3,7 @@ from typing import Any, Callable
 
 import numpy as np
 
-from ..api import Agent, VecAgent, VecAgentWrapper, VecEnv
+from rsrch.rl.gym.api import Agent, VecAgent, VecAgentWrapper, VecEnv
 
 
 class Pointwise(VecAgentWrapper):
@@ -24,28 +24,28 @@ class Pointwise(VecAgentWrapper):
             self.env_idx = env_idx
 
         def reset(self, obs):
-            self.parent._argv.append((obs,))
+            self.parent._argv.append((obs,))  # noqa: SLF001
 
         def policy(self):
-            return self.parent._policy[self.env_idx]
+            return self.parent._policy[self.env_idx]  # noqa: SLF001
 
         def step(self, act, next_obs):
-            self.parent._argv.append((act, next_obs))
+            self.parent._argv.append((act, next_obs))  # noqa: SLF001
 
     def _make_proxy(self, env_idx: int):
         return self.transform(self.Proxy(self, env_idx))
 
     def reset(self, idxes: np.ndarray, obs_seq):
         self._argv.clear()
-        for env_idx, env_obs in zip(idxes, obs_seq):
+        for env_idx, env_obs in zip(idxes, obs_seq, strict=False):
             if env_idx not in self._agents:
                 self._agents[env_idx] = self._make_proxy(env_idx)
             self._agents[env_idx].reset(env_obs)
-        self.agent.reset(idxes, *zip(*self._argv))
+        self.agent.reset(idxes, *zip(*self._argv, strict=False))
 
     def policy(self, idxes: np.ndarray):
         actions = self.agent.policy(idxes)
-        for env_idx, action in zip(idxes, actions):
+        for env_idx, action in zip(idxes, actions, strict=False):
             self._policy[env_idx] = action
 
         actions = []
@@ -59,11 +59,11 @@ class Pointwise(VecAgentWrapper):
 
     def step(self, idxes: np.ndarray, act_seq, next_obs_seq):
         self._argv.clear()
-        for env_idx, act, next_obs in zip(idxes, act_seq, next_obs_seq):
+        for env_idx, act, next_obs in zip(idxes, act_seq, next_obs_seq, strict=False):
             if env_idx not in self._agents:
                 self._agents[env_idx] = self._make_proxy(env_idx)
             self._agents[env_idx].step(act, next_obs)
-        self.agent.step(idxes, *zip(*self._argv))
+        self.agent.step(idxes, *zip(*self._argv, strict=False))
 
 
 class Markov(VecAgent, ABC):
@@ -85,9 +85,9 @@ class Markov(VecAgent, ABC):
 
     @abstractmethod
     def get_policy(self, last_obs):
-        raise NotImplementedError()
+        raise NotImplementedError
 
-    def step(self, idxes: np.ndarray, act_seq, next_obs_seq):
+    def step(self, idxes: np.ndarray, act_seq, next_obs_seq):  # noqa: ARG002
         self._last_obs[idxes] = next_obs_seq
 
 

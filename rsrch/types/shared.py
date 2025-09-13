@@ -4,7 +4,7 @@ from multiprocessing.shared_memory import SharedMemory
 import numpy as np
 
 
-class shared_ndarray(np.ndarray):
+class shared_ndarray(np.ndarray):  # noqa: N801
     """A numpy array, which can be shared between processes via pickle."""
 
     def __new__(cls, shape, dtype=np.float32, shm_name=None):
@@ -31,7 +31,7 @@ class shared_ndarray(np.ndarray):
 
 
 def _mp_reducer(arr: shared_ndarray):
-    return shared_ndarray, (arr.shape, arr.dtype, arr._shm.name)
+    return shared_ndarray, (arr.shape, arr.dtype, arr._shm.name)  # noqa: SLF001
 
 
 ForkingPickler.register(shared_ndarray, _mp_reducer)
@@ -43,4 +43,4 @@ def make_shared(arr):
         sh_arr[:] = arr
         return sh_arr
     else:
-        raise RuntimeError(f"Cannot make {arr} shared.")
+        raise RuntimeError("Cannot make %s shared.", arr)  # noqa: TRY004

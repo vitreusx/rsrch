@@ -145,7 +145,10 @@ class Bernoulli(nn.Module):
         space: spaces.torch.Discrete,
     ):
         super().__init__()
-        assert space.n == 2 and space.dtype == torch.bool
+        if space.n != 2:
+            raise ValueError("# of categories must equal two")
+        if space.dtype != torch.bool:
+            raise ValueError("Bernoulli distribution returns bool")
         self.layer = layer_ctor(1)
 
     def forward(self, input: Tensor):

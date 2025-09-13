@@ -1,7 +1,7 @@
 from typing import Any, Generic, Iterable, TypeVar
 
-from ..data import Buffer
-from ..gym import VecAgent, VecEnv
+from rsrch.rl.data import Buffer
+from rsrch.rl.gym import VecAgent, VecEnv
 
 T_obs = TypeVar("T_obs")
 T_act = TypeVar("T_act")

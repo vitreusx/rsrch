@@ -29,13 +29,12 @@ class PanopticMeta:
     def label_to_name(self) -> dict[str, str]:
         map_ = {}
         for label, info in self.data["classes"].items():
-            if isinstance(info, str):
-                name = info
-            else:
-                name = info["name"]
+            name = info if isinstance(info, str) else info["name"]
             map_[label] = name
 
-        assert is_contiguous([*map_])
+        if not is_contiguous([*map_]):
+            raise RuntimeError("Class labels must be contiguous")
+
         return map_
 
     def is_stuff(self, label: int) -> bool:
@@ -55,20 +54,22 @@ class PanopticMeta:
         map_ = {}
         for label, info in self.data["classes"].items():
             if not isinstance(info, dict) or info.get("palette") is None:
-                return
+                return None
             color = info["palette"]
             if isinstance(color, str):
                 color = hex2rgb(color)
             map_[label] = color
 
-        assert is_contiguous([*map_])
+        if not is_contiguous([*map_]):
+            raise ValueError("Labels must be contiguous")
+
         return map_
 
     @cached_property
     def palette(self) -> np.ndarray | None:
         map_ = self.label_to_color
         if map_ is None:
-            return
+            return None
 
         palette = np.array(map_[label] for label in map_)
         palette = palette.astype(np.uint8)

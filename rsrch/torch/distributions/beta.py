@@ -27,11 +27,11 @@ class Beta(Distribution, Tensorlike):
 
     def _new(self, shape: torch.Size, fields: dict):
         new = super()._new(shape, fields)
-        new._log_B = None
+        new._log_B = None  # noqa: SLF001
         return new
 
     @property
-    def log_B(self):
+    def log_b(self):
         if self._log_B is None:
             t1 = torch.special.gammaln(self.alpha)
             t2 = torch.special.gammaln(self.beta)
@@ -60,7 +60,7 @@ class Beta(Distribution, Tensorlike):
         value = value.clamp(1e-6, 1.0 - 1e-6)
         t1 = (self.alpha - 1.0) * value.log()
         t2 = (self.beta - 1.0) * (1.0 - value).log()
-        logp = t1 + t2 - self.log_B
+        logp = t1 + t2 - self.log_b
         return sum_rightmost(logp, len(self.event_shape))
 
     def entropy(self):
@@ -69,11 +69,11 @@ class Beta(Distribution, Tensorlike):
         t3 = (self.alpha + self.beta - 2.0) * torch.special.digamma(
             self.alpha + self.beta
         )
-        ent = self.log_B - t1 - t2 + t3
+        ent = self.log_b - t1 - t2 + t3
         return sum_rightmost(ent, len(self.event_shape))
 
     def rsample(self, sample_shape=()):
         shape = (*sample_shape, *self.batch_shape, *self.event_shape)
-        x = torch._standard_gamma(self.alpha.expand(shape))
-        y = torch._standard_gamma(self.beta.expand(shape))
+        x = torch._standard_gamma(self.alpha.expand(shape))  # noqa: SLF001
+        y = torch._standard_gamma(self.beta.expand(shape))  # noqa: SLF001
         return x / (x + y + 1e-6)

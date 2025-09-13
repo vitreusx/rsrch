@@ -12,7 +12,7 @@ from torch import Tensor, nn
 from torch.optim import Optimizer
 
 import rsrch.torch.distributions as D
-from rsrch import rl, spaces
+from rsrch import spaces
 from rsrch.exp import Experiment, boards
 from rsrch.rl import gym, sdk
 from rsrch.rl.data import Buffer
@@ -29,8 +29,10 @@ from rsrch.utils.cast import cast
 from config import Config
 # isort: on
 
+INIT_STD = np.sqrt(2)
 
-def layer_init(layer: nn.Linear | nn.Conv2d, std=np.sqrt(2), bias_const=0.0):
+
+def layer_init(layer: nn.Linear | nn.Conv2d, std=INIT_STD, bias_const=0.0):
     """Do a custom init of a layer.
 
     Taken from cleanrl."""
@@ -44,7 +46,8 @@ class AtariEncoder(nn.Sequential):
     """A standard conv encoder for Atari frames."""
 
     def __init__(self, obs_space: spaces.torch.Image):
-        assert obs_space.shape[1:] == (84, 84)
+        if obs_space.shape[1:] != (84, 84):
+            raise ValueError("Invalid image size: %s", obs_space.shape[1:])
         super().__init__(
             layer_init(nn.Conv2d(obs_space.num_channels, 32, 8, 4)),
             nn.ReLU(),
@@ -58,11 +61,12 @@ class AtariEncoder(nn.Sequential):
         )
 
 
-def ActorHead(in_features: int, act_space: spaces.torch.Discrete):
-    def layer_ctor(out_features: int):
-        return layer_init(nn.Linear(in_features, out_features), std=1e-2)
+class ActorHead(dh.Categorical):
+    def __init__(self, in_features: int, act_space: spaces.torch.Discrete):
+        def layer_ctor(out_features: int):
+            return layer_init(nn.Linear(in_features, out_features), std=1e-2)
 
-    return dh.Categorical(layer_ctor, act_space)
+        super().__init__(layer_ctor, act_space)
 
 
 class Actor(nn.Module):
@@ -172,15 +176,15 @@ def get_minibatches(batch_size: int, num_mb: int):
     except for the last one. The last batch may be larger than the previous ones.
     """
 
-    WARP = 32
-    batch_size_w = batch_size // WARP
-    mb_size = WARP * (batch_size_w // num_mb)
+    warp_size = 32
+    batch_size_w = batch_size // warp_size
+    mb_size = warp_size * (batch_size_w // num_mb)
     mb_size_rem = batch_size - num_mb * mb_size
     split_sizes = [mb_size] * num_mb
     split_sizes[-1] += mb_size_rem
     end = np.cumsum(split_sizes)
     start = end - np.array(split_sizes)
-    return [slice(start_i, end_i) for start_i, end_i in zip(start, end)]
+    return [slice(start_i, end_i) for start_i, end_i in zip(start, end, strict=True)]
 
 
 get_minibatches = cache(get_minibatches)
@@ -377,6 +381,8 @@ class PPO:
                     "entropy": new_ent.mean(),
                     "value": data.val.mean(),
                 }
+        else:
+            return None
 
 
 class VecAgent(gym.vector.agents.Markov):
@@ -393,6 +399,8 @@ class VecAgent(gym.vector.agents.Markov):
             return policy.sample()
         elif self.mode == "val":
             return policy.mode
+        else:
+            raise ValueError(self.mode)
 
 
 class Trainer:
@@ -536,8 +544,7 @@ class Trainer:
             "train": (self.sample_train_env, self.sample_train_agent),
         }
 
-        for mode in modes:
-            env, agent = modes[mode]
+        for mode, (env, agent) in modes.items():
             sample_iter = self.sdk.rollout(env, agent)
 
             frames = []

@@ -1,3 +1,5 @@
+import itertools
+
 import torch
 import torch.nn.functional as F
 import torchvision.transforms.functional as tv_F
@@ -140,7 +142,7 @@ class UNet(nn.Module):
 
         down_channels = [in_channels, *block_channels[:-1]]
         self.down_blocks = nn.ModuleList()
-        for in_, out_ in zip(down_channels, down_channels[1:]):
+        for in_, out_ in itertools.pairwise(down_channels):
             self.down_blocks.append(
                 DownBlock(
                     in_channels=in_,
@@ -159,7 +161,7 @@ class UNet(nn.Module):
 
         up_channels = block_channels[::-1]
         self.up_blocks = nn.ModuleList()
-        for in_, out_ in zip(up_channels, up_channels[1:]):
+        for in_, out_ in itertools.pairwise(up_channels):
             self.up_blocks.append(
                 UpBlock(
                     in_channels=in_,
@@ -180,7 +182,7 @@ class UNet(nn.Module):
 
         input = self.mid_block(input)
 
-        for block, skip in zip(self.up_blocks, skip_features[::-1]):
+        for block, skip in zip(self.up_blocks, skip_features[::-1], strict=False):
             input = block(input, skip)
 
         return self.out_conv(input)

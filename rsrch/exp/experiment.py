@@ -26,6 +26,8 @@ def str2bool(s: str) -> bool:
         return False
     elif s in ("1", "t", "y", "true", "yes"):
         return True
+    else:
+        raise ValueError("%s is not bool-convertible", s)
 
 
 def timestamp():
@@ -45,7 +47,7 @@ def partial_typed(f: Callable[P, R], *args, **kwargs) -> Callable[P, R]:
     return partial(f, *args, **kwargs)
 
 
-class ExpDirExists(RuntimeError):
+class ExpDirExistsError(RuntimeError):
     pass
 
 
@@ -106,7 +108,7 @@ class Experiment(LogMixin, boards.Board, boards.StepMixin):
             self.dir = Path("runs") / sanitize(project) / day / filename
 
         if self.dir.exists():
-            raise ExpDirExists(f"Directory {self.dir} already exists.")
+            raise ExpDirExistsError("Directory %s already exists.", self.dir)
         self.dir.mkdir(parents=True, exist_ok=False)
 
         to_stderr = logging.StreamHandler(sys.stderr)
@@ -133,7 +135,7 @@ class Experiment(LogMixin, boards.Board, boards.StepMixin):
                 yaml.dump(config, f)
             self.info(f"Saved config to: {self.dir / 'config.yml'}")
 
-        if create_commit:
+        if create_commit:  # noqa: SIM108
             commit = create_exp_commit(str(self.dir))
         else:
             commit = head_commit()

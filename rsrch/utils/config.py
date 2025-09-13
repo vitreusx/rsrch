@@ -44,7 +44,7 @@ def js_mode():
     Used when evaluating templates, since we want `${key1.key2.key3}` to resolve to
     `key1["key2"]["key3"]`."""
 
-    global in_js_mode
+    global in_js_mode  # noqa: PLW0603
     prev_mode = in_js_mode
     in_js_mode = True
     try:
@@ -59,7 +59,7 @@ def py_mode():
     When handling "Python-internal" stuff during template evaluation, we must
     disable access by attr access to avoid unexpected behavior."""
 
-    global in_js_mode
+    global in_js_mode  # noqa: PLW0603
     prev_mode = in_js_mode
     in_js_mode = False
     try:
@@ -71,7 +71,7 @@ def py_mode():
 @contextmanager
 def upsert_mode(mode=True):
     """Automatically create a child `Node` on access, if it doesn't exist."""
-    global in_upsert_mode
+    global in_upsert_mode  # noqa: PLW0603
     prev_mode = in_upsert_mode
     in_upsert_mode = mode
     try:
@@ -83,7 +83,7 @@ def upsert_mode(mode=True):
 @contextmanager
 def eval_templates(mode=True):
     """Whether to eval templates (`${...}`'s)."""
-    global do_eval_templates
+    global do_eval_templates  # noqa: PLW0603
     prev_mode = do_eval_templates
     do_eval_templates = mode
     try:
@@ -95,7 +95,7 @@ def eval_templates(mode=True):
 class NodeLocals:
     """A quasi-`locals()` mapping for config nodes."""
 
-    def __init__(self, node: "Node"):
+    def __init__(self, node: Node):
         self.node = node
         # self._pydevd is necessary for python debugger to work
         self._pydevd = {}
@@ -120,10 +120,10 @@ class NodeLocals:
         self._pydevd[name] = value
 
 
-locator = pp.Empty().setParseAction(lambda s, l_, t: l_)
+locator = pp.Empty().setParseAction(lambda s, l_, t: l_)  # noqa: ARG005
 
 
-def locatedExpr(expr):
+def locatedExpr(expr):  # noqa: N802
     return pp.Group(locator("start") + expr("value") + locator("end"))
 
 
@@ -135,19 +135,19 @@ class TemplateEngine:
     VAR_RE = r"^((?P<up>\.*)(?P<var>[a-zA-Z0-9_\.]+))$"
 
     @classmethod
-    def render(self, text: str, locals: NodeLocals):
+    def render(cls, text: str, locals: NodeLocals):
         exprs = []
-        for m in self.EXPR.searchString(text).asList():
+        for m in cls.EXPR.searchString(text).asList():
             beg, _, end = m[0]
             exprs.append((beg, end))
 
         if len(exprs) == 1 and exprs[0] == (0, len(text)):
-            return self._eval(text[2:-1], locals)
+            return cls._eval(text[2:-1], locals)
 
         cur, res = 0, []
         for beg, end in exprs:
             res.append(text[cur:beg])
-            eval_r = self._eval(text[beg + 2 : end - 1], locals)
+            eval_r = cls._eval(text[beg + 2 : end - 1], locals)
             if not isinstance(eval_r, str):
                 eval_r = str(eval_r)
             res.append(eval_r)
@@ -156,27 +156,27 @@ class TemplateEngine:
         return "".join(res)
 
     @classmethod
-    def _eval(self, expr: str, locals: NodeLocals):
-        m = re.match(self.VAR_RE, expr)
+    def _eval(cls, expr: str, locals: NodeLocals):
+        m = re.match(cls.VAR_RE, expr)
         if m is not None:
             up_count = max(len(m["up"]) - 1, 0)
             for _ in range(up_count):
                 locals = locals.up()
             with js_mode():
-                return eval(m["var"], None, locals)
+                return eval(m["var"], None, locals)  # noqa: S307
 
-        m = re.match(self.EVAL_RE, expr)
+        m = re.match(cls.EVAL_RE, expr)
         if m is not None:
             resolver = m["resolver"] or "eval"
             if resolver == "eval":
                 with js_mode():
-                    return eval(m["expr"], None, locals)
+                    return eval(m["expr"], None, locals)  # noqa: S307
             elif resolver == "env":
                 return os.environ[m["expr"]]
             else:
-                raise ValueError(f"Unsupported resolver '{resolver}'")
+                raise ValueError("Unsupported resolver '%s'", resolver)
 
-        raise ValueError(f"String '{expr}' is not a valid expression.")
+        raise ValueError("String '%s' is not a valid expression.", expr)
 
 
 class Node(MutableMapping):
@@ -208,10 +208,12 @@ class Node(MutableMapping):
 
     def __getitem__(self, key):
         with py_mode():
-            if in_upsert_mode:
-                if isinstance(self.value, dict):
-                    if key not in self.value:
-                        self[key] = {}
+            if (
+                in_upsert_mode
+                and isinstance(self.value, dict)
+                and key not in self.value
+            ):
+                self[key] = {}
 
             value = self.value[key]
 
@@ -250,6 +252,8 @@ class Node(MutableMapping):
             return iter(self.value)
         elif isinstance(self.value, list):
             return (self[i] for i in range(len(self)))
+        else:
+            raise TypeError(type(self.value))
 
     def __repr__(self):
         return f"node({self.value!r})"
@@ -262,6 +266,8 @@ def _render_all(value):
             return {k: _render_all(v) for k, v in value.items()}
         elif isinstance(unwrapped, list):
             return [_render_all(elem) for elem in value]
+        else:
+            raise TypeError(type(value))
     else:
         return value
 
@@ -285,19 +291,18 @@ def _merge(base, other):
         return other
 
     with eval_templates(False):
-        for key, value in other.items():
+        for key in other:
             if key.startswith("$"):
                 continue
             with js_mode():
                 with upsert_mode():
-                    exec(f"base.{key}")
-                exec(f"base.{key} = _merge(base.{key}, value)")
+                    exec(f"base.{key}")  # noqa: S102
+                exec(f"base.{key} = _merge(base.{key}, value)")  # noqa: S102
 
     return base
 
 
 def _apply_preset(base: Node, preset: Node):
-    assert isinstance(preset.value, dict)
     if "$extends" in preset:
         extends: str | list[str] = preset["$extends"]
         if isinstance(extends, str):
@@ -319,7 +324,7 @@ def apply_presets(base: dict, all_presets: dict, presets: list[str]):
 
     for name in presets:
         with js_mode():
-            preset: Node = eval(f"all_presets.{name}")
+            preset: Node = eval(f"all_presets.{name}")  # noqa: S307
         _apply_preset(base, preset)
 
 
@@ -327,7 +332,7 @@ def hide_private(x):
     if isinstance(x, dict):
         r = {}
         for k, v in x.items():
-            if isinstance(k, str) and (k.startswith("_") or k.startswith("$")):
+            if isinstance(k, str) and (k.startswith(("_", "$"))):
                 continue
             r[k] = hide_private(v)
         return r
@@ -416,7 +421,7 @@ def cli(
 
     if args.dump_config:
         json.dump(cfg, sys.stdout)
-        exit(0)
+        sys.exit(0)
 
     return cfg
 
@@ -450,7 +455,7 @@ class Dynamic(Generic[T]):
         cls: str = kwargs["$class"]
         index = cls.rfind(".")
         if index < 0:
-            raise RuntimeError(f"$class value `{cls}` needs to be fully qualified.")
+            raise RuntimeError("$class value `%s` needs to be fully qualified.", cls)
         module = importlib.import_module(cls[:index])
         self.cls: type = getattr(module, cls[index + 1 :])
         del kwargs["$class"]

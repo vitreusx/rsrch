@@ -1,5 +1,4 @@
 import logging
-import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -26,15 +25,16 @@ class Tensorboard(StepMixin, Board):
         self.dir = Path(dir)
         self._writer = tensorboard.SummaryWriter(log_dir=str(self.dir))
         if launch:
-            if shutil.which("tensorboard") is not None:
+            tb_path = shutil.which("tensorboard")
+            if tb_path is None:
+                logger.warning("Tensorboard program could not be found")
+            else:
                 self._proc = subprocess.Popen(
-                    ["tensorboard", "--logdir", str(self.dir), "--port", str(port)],
+                    [tb_path, "--logdir", str(self.dir), "--port", str(port)],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
-                logger.info(f"Started Tensorboard at http://localhost:{port}")
-            else:
-                logger.warning("Tensorboard program could not be found")
+                logger.info("Started Tensorboard at http://localhost:%d", port)
 
     def __del__(self):
         if hasattr(self, "_proc"):

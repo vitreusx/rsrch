@@ -48,7 +48,9 @@ BatchNorm2d = partial(
 
 
 def call_stateful(
-    layer: eqx.Module, input: Array, state: eqx.nn.State
+    layer: eqx.Module,
+    input: Array,
+    state: eqx.nn.State,
 ) -> tuple[Any, eqx.nn.State]:
     """Call a layer, passing the state along if it's stateful.
 
@@ -98,19 +100,36 @@ class BasicBlock(eqx.nn.StatefulLayer):
         keys = key_seq(key)
 
         self.conv1 = eqx.nn.Conv2d(
-            in_channels, out_channels, 3, stride, 1, use_bias=bias, key=next(keys)
+            in_channels,
+            out_channels,
+            3,
+            stride,
+            1,
+            use_bias=bias,
+            key=next(keys),
         )
         self.bn1 = bn1
         self.act = act_layer()
         self.conv2 = eqx.nn.Conv2d(
-            out_channels, out_channels, 3, 1, 1, use_bias=bias, key=next(keys)
+            out_channels,
+            out_channels,
+            3,
+            1,
+            1,
+            use_bias=bias,
+            key=next(keys),
         )
         self.bn2 = bn2
 
         # Skip path
         if in_channels != out_channels or stride > 1:
             conv = eqx.nn.Conv2d(
-                in_channels, out_channels, 1, stride, use_bias=bias, key=next(keys)
+                in_channels,
+                out_channels,
+                1,
+                stride,
+                use_bias=bias,
+                key=next(keys),
             )
             if norm_layer is None:
                 self.downsample = conv
@@ -120,7 +139,7 @@ class BasicBlock(eqx.nn.StatefulLayer):
         else:
             self.downsample = None
 
-    def __call__(self, input: Array, state: eqx.nn.State, *, key=None):
+    def __call__(self, input: Array, state: eqx.nn.State, *, key=None):  # noqa: ARG002
         res = self.conv1(input)
         if self.bn1 is not None:
             res, state = call_stateful(self.bn1, res, state)
@@ -179,24 +198,43 @@ class Bottleneck(eqx.nn.StatefulLayer):
         # for the rationale
 
         self.conv1 = eqx.nn.Conv2d(
-            in_channels, bottleneck, 1, use_bias=bias, key=next(keys)
+            in_channels,
+            bottleneck,
+            1,
+            use_bias=bias,
+            key=next(keys),
         )
         self.bn1 = bn1
         self.act1 = act_layer()
         self.conv2 = eqx.nn.Conv2d(
-            bottleneck, bottleneck, 3, stride, 1, use_bias=bias, key=next(keys)
+            bottleneck,
+            bottleneck,
+            3,
+            stride,
+            1,
+            use_bias=bias,
+            key=next(keys),
         )
         self.bn2 = bn2
         self.act2 = act_layer()
         self.conv3 = eqx.nn.Conv2d(
-            bottleneck, out_channels, 1, use_bias=bias, key=next(keys)
+            bottleneck,
+            out_channels,
+            1,
+            use_bias=bias,
+            key=next(keys),
         )
         self.bn3 = bn3
 
         # Skip path
         if in_channels != out_channels or stride > 1:
             conv = eqx.nn.Conv2d(
-                in_channels, out_channels, 1, stride, use_bias=bias, key=next(keys)
+                in_channels,
+                out_channels,
+                1,
+                stride,
+                use_bias=bias,
+                key=next(keys),
             )
             if norm_layer is None:
                 self.downsample = conv
@@ -206,7 +244,7 @@ class Bottleneck(eqx.nn.StatefulLayer):
         else:
             self.downsample = None
 
-    def __call__(self, input: Array, state: eqx.nn.State, *, key=None):
+    def __call__(self, input: Array, state: eqx.nn.State, *, key=None):  # noqa: ARG002
         res = self.conv1(input)
         if self.bn1 is not None:
             res, state = call_stateful(self.bn1, res, state)
@@ -259,7 +297,8 @@ class Resnet(eqx.nn.StatefulLayer):
         self.in_channels = in_channels
         self.num_classes = num_classes
 
-        assert len(num_blocks) == len(num_channels)
+        if len(num_blocks) != len(num_channels):
+            raise RuntimeError("# of blocks must equal # of channel sizes")
 
         if norm_layer is None:
             bn1 = None
@@ -271,7 +310,13 @@ class Resnet(eqx.nn.StatefulLayer):
         keys = key_seq(key)
 
         self.conv1 = eqx.nn.Conv2d(
-            in_channels, 64, 7, 2, 3, use_bias=bias, key=next(keys)
+            in_channels,
+            64,
+            7,
+            2,
+            3,
+            use_bias=bias,
+            key=next(keys),
         )
         self.bn1 = bn1
         self.relu = act_layer()
@@ -295,7 +340,7 @@ class Resnet(eqx.nn.StatefulLayer):
                     key=next(keys),
                 )
                 for idx in range(len(num_blocks))
-            ]
+            ],
         )
 
         if num_classes is not None:

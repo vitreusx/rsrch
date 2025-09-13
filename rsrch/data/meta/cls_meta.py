@@ -17,7 +17,8 @@ class ClsMetaData(TypedDict):
 class ClsMeta:
     def __init__(self, data: ClsMetaData):
         self.data = data
-        assert is_contiguous([*data["classes"]])
+        if not is_contiguous([*data["classes"]]):
+            raise RuntimeError("Class labels must be contiguous")
 
     @property
     def label_to_name(self):

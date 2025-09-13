@@ -30,14 +30,14 @@ class Distribution:
         with torch.no_grad():
             return self.rsample(sample_shape)
 
-    def rsample(self, sample_shape: tuple[int, ...] = ()) -> Tensor:
+    def rsample(self, sample_shape: tuple[int, ...] = ()) -> Tensor:  # noqa: ARG002
         return NotImplemented
 
-    def log_prob(self, value: Tensor) -> Tensor:
+    def log_prob(self, value: Tensor) -> Tensor:  # noqa: ARG002
         return NotImplemented
 
     def entropy(self) -> Tensor:
         return NotImplemented
 
-    def cdf(self, value: Tensor) -> Tensor:
+    def cdf(self, value: Tensor) -> Tensor:  # noqa: ARG002
         return NotImplemented

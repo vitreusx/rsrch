@@ -4,12 +4,12 @@ import typing
 from enum import Enum
 from functools import wraps
 from textwrap import indent
-from typing import Any, Callable, ParamSpec, Type, TypeVar, get_args, get_origin
+from typing import Any, Callable, ParamSpec, TypeVar, get_args, get_origin
 
 T = TypeVar("T")
 
 
-def cast(x: Any, t: Type[T]) -> T:
+def cast(x: Any, t: type[T]) -> T:  # noqa: PLR0911, PLR0912, PLR0915
     """Cast a value into a given type."""
 
     t_args = get_args(t)
@@ -34,18 +34,17 @@ def cast(x: Any, t: Type[T]) -> T:
         for var_t in t_args:
             try:
                 return cast(x, var_t)
-            except Exception as e:
+            except Exception as e:  # noqa: PERF203
                 errors.append(e)
-                pass
 
         lines = ["Cannot convert value to any of the following types:"]
-        for idx, (ti, err) in enumerate(zip(t_args, errors)):
+        for idx, (ti, err) in enumerate(zip(t_args, errors, strict=False)):
             lines.append(f"(#{idx}) as {ti}:")
             lines.append(indent(str(err), " " * 2))
 
         raise ValueError("\n".join(lines)) from None
 
-    elif t in (typing.Tuple, tuple):
+    elif t in (tuple, tuple):
         x_len, t_len = len(x), len(t_args)
         if t_args[-1] == ...:
             t_args = [*t_args[:-2], *(t_args[-2] for _ in x_len - (t_len - 2))]
@@ -55,10 +54,10 @@ def cast(x: Any, t: Type[T]) -> T:
             raise ValueError("Tuple length is incorrect") from None
 
         values = []
-        for idx, (xi, ti) in enumerate(zip(x, t_args)):
+        for idx, (xi, ti) in enumerate(zip(x, t_args, strict=False)):
             try:
                 values.append(cast(xi, ti))
-            except Exception as e:
+            except Exception as e:  # noqa: PERF203
                 lines = [
                     f"Casting element #{idx} to {ti} raised error:",
                     indent(str(e), " " * 2),
@@ -67,22 +66,22 @@ def cast(x: Any, t: Type[T]) -> T:
 
         return tuple(values)
 
-    elif t in (typing.List, typing.Set, list, set):
+    elif t in (list, set, list, set):
         elem_t = t_args[0] if len(t_args) > 0 else Any
         values = []
         for idx, xi in enumerate(x):
             try:
                 values.append(cast(xi, elem_t))
-            except Exception as e:
+            except Exception as e:  # noqa: PERF203
                 lines = [
                     f"Casting element #{idx} to {elem_t} raised error:",
                     indent(str(e), " " * 2),
                 ]
                 raise ValueError("\n".join(lines)) from None
 
-        return values if t in (typing.List, list) else {*values}
+        return values if t in (list, list) else {*values}
 
-    elif t in (typing.Dict, dict):
+    elif t in (dict, dict):
         if len(t_args) > 0:
             kt, vt = t_args
         else:
@@ -115,7 +114,7 @@ def cast(x: Any, t: Type[T]) -> T:
     elif t == typing.Literal:
         # For Literals, check if the value is one of the allowed values.
         if x not in t_args:
-            raise ValueError(f"Value is not one of {t_args}") from None
+            raise ValueError("Value is not one of %s", t_args) from None
         return x
 
     elif issubclass(t, Enum):
@@ -131,7 +130,7 @@ def cast(x: Any, t: Type[T]) -> T:
         sig = inspect.signature(t)
 
         def get_type_from_ann(ann):
-            if ann == inspect._empty:
+            if ann == inspect._empty:  # noqa: SLF001
                 return Any
             else:
                 return ann
@@ -159,7 +158,7 @@ def cast(x: Any, t: Type[T]) -> T:
         return t(*bound.args, **bound.kwargs)
 
 
-P = ParamSpec("R")
+P = ParamSpec("P")
 R = TypeVar("R")
 
 
@@ -181,7 +180,7 @@ def safe_partial(
     type_map = {}
     for name, param in sig.parameters.items():
         arg_type = param.annotation
-        if arg_type == inspect._empty:
+        if arg_type == inspect._empty:  # noqa: SLF001
             arg_type = Any
 
         if param.kind == param.VAR_POSITIONAL:
@@ -208,7 +207,7 @@ def safe_partial(
     @wraps(func)
     def wrapped(*args2, **kwargs2):
         return_value = func(*args, *args2, **{**kwargs, **kwargs2})
-        if sig.return_annotation != inspect._empty:
+        if sig.return_annotation != inspect._empty:  # noqa: SLF001
             return_value = cast(return_value, sig.return_annotation)
         return return_value
 

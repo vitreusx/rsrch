@@ -54,7 +54,7 @@ def split_into_buckets(
         if min_bucket_token_count is not None:
             # tok_count for bucket is cumul[last - 1] - cumul[begin - 1]
             # so: search for least idx s.t.
-            #   cumul[idx] >= cumul[begin - 1] + min_bucket_tok_count
+            # > cumul[idx] >= cumul[begin - 1] + min_bucket_tok_count
             # and take last := idx + 1
             cur_tok_count = cumul_tok_counts[begin - 1] if begin > 0 else 0
             max_tok_count = cur_tok_count + min_bucket_token_count
@@ -101,7 +101,7 @@ class BucketBatchSampler:
         if batch_size is None:
             for bucket in buckets:
                 avg_len = lengths[bucket].mean()
-                batch_size = int(math.ceil(tokens_per_batch / avg_len))
+                batch_size = math.ceil(tokens_per_batch / avg_len)
                 self.buckets.append((bucket, batch_size))
         else:
             for bucket in buckets:

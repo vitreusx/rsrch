@@ -154,7 +154,8 @@ class Resnet(nn.Module):
         self.norm_layer = norm_layer
         self.act_layer = act_layer
 
-        assert len(num_blocks) == len(num_channels)
+        if len(num_blocks) != len(num_channels):
+            raise RuntimeError("# of blocks must match # of channel sizes")
 
         if norm_layer is None:
             bn1 = None

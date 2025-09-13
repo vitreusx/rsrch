@@ -42,37 +42,34 @@ class Categorical(Distribution, Tensorlike):
 
         self._param_type = param_type
         param = param.to(torch.float32)
-        self._param = self.register("_param", param)
+        self.param = self.register("_param", param)
 
     @cached_property
     def logits(self) -> Tensor:
-        if self._param_type == "logits":
-            logits = self._param
-        else:
-            logits = self.log_probs
+        logits = self.param if self._param_type == "logits" else self.log_probs
         return logits
 
     @cached_property
     def log_probs(self) -> Tensor:
         if self._param_type == "log_probs":
-            log_probs = self._param
+            log_probs = self.param
         elif self._param_type == "logits":
-            logits = self._param
+            logits = self.param
             log_probs = logits - logits.logsumexp(-1, keepdim=True)
         else:
-            probs = self._param
+            probs = self.param
             log_probs = probs.log()
         return log_probs
 
     @cached_property
     def probs(self) -> Tensor:
         if self._param_type == "probs":
-            probs = self._param
+            probs = self.param
         elif self._param_type == "logits":
-            logits = self._param
+            logits = self.param
             probs = F.softmax(logits, -1)
         else:
-            log_probs = self._param
+            log_probs = self.param
             probs = log_probs.exp()
         return probs
 
@@ -82,7 +79,7 @@ class Categorical(Distribution, Tensorlike):
 
     @property
     def mode(self):
-        return self._param.argmax(axis=-1)
+        return self.param.argmax(axis=-1)
 
     @property
     def variance(self):

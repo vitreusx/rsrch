@@ -15,23 +15,23 @@ class ExtractFeaturesHook:
         self._hooks = []
 
         def submodule_hook(path: str):
-            def hook(module: nn.Module, input: Any, output: Any):
+            def hook(module: nn.Module, input: Any, output: Any):  # noqa: ARG001
                 self.features[path] = output
 
             return hook
 
         if pattern is None:
-            pattern = lambda path, module: True
+            pattern = lambda path, module: True  # noqa: ARG005
         elif isinstance(pattern, str):
             pattern_re = re.compile(f"^{pattern}$")
-            pattern = lambda path, module: re.match(pattern_re, path) is not None
+            pattern = lambda path, module: re.match(pattern_re, path) is not None  # noqa: ARG005
 
         for path, submodule in module.named_modules():
             if pattern is None or pattern(path, submodule):
                 hook = submodule.register_forward_hook(submodule_hook(path))
                 self._hooks.append(hook)
 
-        def module_pre_hook(module: nn.Module, input: Any):
+        def module_pre_hook(module: nn.Module, input: Any):  # noqa: ARG001
             self.features.clear()
 
         hook = module.register_forward_pre_hook(module_pre_hook)
@@ -92,7 +92,7 @@ class ExtractGradientsHook:
             return hook
 
         if pattern is None:
-            pattern = lambda path: True
+            pattern = lambda path: True  # noqa: ARG005
         elif isinstance(pattern, str):
             pattern_re = re.compile(f"^{pattern}$")
             pattern = lambda path: re.match(pattern_re, path) is not None
@@ -102,7 +102,7 @@ class ExtractGradientsHook:
                 hook = param.register_hook(param_hook(path))
                 self._hooks.append(hook)
 
-        def module_pre_hook(module: nn.Module, grad_output: Any):
+        def module_pre_hook(module: nn.Module, grad_output: Any):  # noqa: ARG001
             self.gradients.clear()
 
         hook = module.register_full_backward_pre_hook(module_pre_hook)

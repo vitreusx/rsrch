@@ -1,104 +1,105 @@
 [project]
 name = "rsrch"
-description = "Private research code"
 version = "0.0.1"
-readme = "README.md"
+description = "Private research code"
 authors = [{ name = "vitreusx", email = "jakub_bednarz@protonmail.com" }]
-requires-python = '>=3.10,<4.0'
+requires-python = ">=3.10,<3.11"
+readme = "README.md"
 dependencies = [
-    'ipykernel (>=6.22.0,<7.0.0)',
-    'ipywidgets (>=8.0.4,<9.0.0)',
-    'tensorboard (>=2.12.2,<3.0.0)',
-    'moviepy (>=1.0.3,<2.0.0)',
-    'patchelf (>=0.17.2.1,<0.18.0.0)',
-    'h5py (>=3.8.0,<4.0.0)',
-    'sympy (>=1.12,<2.0)',
+    "ipykernel (>=6.22.0,<7.0.0)",
+    "ipywidgets (>=8.0.4,<9.0.0)",
+    "tensorboard (>=2.12.2,<3.0.0)",
+    "moviepy (>=1.0.3,<2.0.0)",
+    "patchelf (>=0.17.2.1,<0.18.0.0)",
+    "h5py (>=3.8.0,<4.0.0)",
+    "sympy (>=1.12,<2.0)",
     "wandb (>=0.21.3,<0.22.0)",
-    'dacite (>=1.8.1,<2.0.0)',
-    'mako (>=1.2.4,<2.0.0)',
-    'ray (>=2.9.0,<3.0.0,!=2.32.0)',
-    'ruamel-yaml (>=0.18.5,<0.19.0)',
-    'lz4 (>=4.3.3,<5.0.0)',
-    'paramiko (>=3.4.0,<4.0.0)',
-    'omegaconf (>=2.3.0,<3.0.0)',
-    'pyparsing (<3)',
-    'tabulate (>=0.9.0,<0.10.0)',
-    'pandas (>=2.2.2,<3.0.0)',
-    'monkeytype (>=23.3.0,<24.0.0)',
-    'opencv-python (>=4.9.0.80,<5.0.0.0)',
-    'torch (==2.7.0)',
-    'torchvision (==0.22.0)',
-    'lpips (>=0.1.4,<0.2.0)',
-    'fast-pytorch-kmeans (>=0.2.0.1,<0.3.0.0)',
-    'fvcore (>=0.1.5.post20221221,<0.2.0)',
-    'colorama (>=0.4.6,<0.5.0)',
-    'numpy (>=1.26.4,<2.0.0)',
-    'kornia (>=0.7.3,<0.8.0)',
-    'datasets (>=3.2.0,<4.0.0)',
-    'torchmetrics (>=1.6.1,<2.0.0)',
-    'safetensors (>=0.5.2,<0.6.0)',
-    'scikit-learn (>=1.6.1,<2.0.0)',
-    'albumentations (>=2.0.5,<3.0.0)',
-    'pycocotools (>=2.0.8,<3.0.0)',
-    'diffusers (>=0.33.1,<0.34.0)',
-    'tokenizers (>=0.21.1,<0.22.0)',
-    'transformers (>=4.52.3,<5.0.0)',
-    'numba (>=0.61.2,<0.62.0)',
-    'segmentation-models-pytorch (>=0.5.0,<0.6.0)',
+    "dacite (>=1.8.1,<2.0.0)",
+    "mako (>=1.2.4,<2.0.0)",
+    "ray (>=2.9.0,<3.0.0,!=2.32.0)",
+    "ruamel-yaml (>=0.18.5,<0.19.0)",
+    "lz4 (>=4.3.3,<5.0.0)",
+    "paramiko (>=3.4.0,<4.0.0)",
+    "omegaconf (>=2.3.0,<3.0.0)",
+    "pyparsing (<3)",
+    "tabulate (>=0.9.0,<0.10.0)",
+    "pandas (>=2.2.2,<3.0.0)",
+    "monkeytype (>=23.3.0,<24.0.0)",
+    "opencv-python (>=4.9.0.80,<5.0.0.0)",
+    "torch (==2.7.0)",
+    "torchvision (==0.22.0)",
+    "lpips (>=0.1.4,<0.2.0)",
+    "fast-pytorch-kmeans (>=0.2.0.1,<0.3.0.0)",
+    "fvcore (>=0.1.5.post20221221,<0.2.0)",
+    "colorama (>=0.4.6,<0.5.0)",
+    "numpy (>=1.26.4,<2.0.0)",
+    "kornia (>=0.7.3,<0.8.0)",
+    "datasets (>=3.2.0,<4.0.0)",
+    "torchmetrics (>=1.6.1,<2.0.0)",
+    "safetensors (>=0.5.2,<0.6.0)",
+    "scikit-learn (>=1.6.1,<2.0.0)",
+    "albumentations (>=2.0.5,<3.0.0)",
+    "pycocotools (>=2.0.8,<3.0.0)",
+    "diffusers (>=0.33.1,<0.34.0)",
+    "tokenizers (>=0.21.1,<0.22.0)",
+    "transformers (>=4.52.3,<5.0.0)",
+    "numba (>=0.61.2,<0.62.0)",
+    "segmentation-models-pytorch (>=0.5.0,<0.6.0)",
     "protobuf (>=6.32.0,<7.0.0)",
     "tensorflow",
 ]
 
 [project.optional-dependencies]
 rl = [
-    'gymnasium[atari,classic-control,toy-text] (>=1.0.0,<2.0.0)',
-    'envpool (>=0.8.4,<0.9.0)',
-    'ale-py (>=0.10.2,<0.11.0)',
-    'dm-control (==1.0.3)',
-    'mujoco (==2.2.1)',
+    "gymnasium[atari,classic-control,toy-text] (>=1.0.0,<2.0.0)",
+    "envpool (>=0.8.4,<0.9.0)",
+    "ale-py (>=0.10.2,<0.11.0)",
+    "dm-control (==1.0.3)",
+    "mujoco (==2.2.1)",
 ]
 jax = [
-    'equinox (>=0.13.0,<0.14.0)',
-    'optax (>=0.2.2,<0.3.0)',
-    'jax[cuda12] (>=0.5.3,<0.6.0)',
+    "equinox (>=0.13.0,<0.14.0)",
+    "optax (>=0.2.2,<0.3.0)",
+    "jax[cuda12] (>=0.5.3,<0.6.0)",
 ]
 
 [build-system]
-requires = ["poetry-core>=2.1.4,<3.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.poetry]
-requires-poetry = '>=2.1.4,<3.0'
+[dependency-groups]
+dev = [
+    "tomli>=2.0.1,<3",
+    "semver>=3.0.2,<4",
+    "nbstripout>=0.7.1,<0.8",
+    "tbparse>=0.0.9,<0.0.10",
+    "nbconvert>=7.3.1,<8",
+    "plotly>=5.15.0,<6",
+    "matplotlib>=3.8.3,<4",
+    "tables>=3.10.1,<4",
+    "kaleido==0.1.0",
+    "parse>=1.20.2,<2",
+    "ruff>=0.12.7,<0.13",
+    "sphinx>=8.1.3,<9",
+    "myst-parser>=4.0.1,<5",
+    "furo>=2025.7.19,<2026",
+    "poetry>=2.1.4,<3",
+    "tensorboard-plugin-profile>=2.20.6,<3",
+    "pre-commit>=4.3.0",
+]
 
-[tool.poetry.dependencies]
-torch = { source = "pytorch-cu126" }
-torchvision = { source = "pytorch-cu126" }
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu126", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchvision = [
+    { index = "pytorch-cu126", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
 
-[tool.poetry.group.dev.dependencies]
-tomli = "^2.0.1"
-semver = "^3.0.2"
-nbstripout = "^0.7.1"
-tbparse = "^0.0.9"
-nbconvert = "^7.3.1"
-plotly = "^5.15.0"
-matplotlib = "^3.8.3"
-tables = "^3.10.1"
-kaleido = "0.1.0"
-parse = "^1.20.2"
-ruff = "^0.12.7"
-sphinx = "^8.1.3"
-myst-parser = "^4.0.1"
-furo = "^2025.7.19"
-poetry = "^2.1.4"
-tensorboard-plugin-profile = "^2.20.6"
-
-[tool.poetry.requires-plugins]
-poetry-dotenv-plugin = "^0.2.0"
-
-[[tool.poetry.source]]
+[[tool.uv.index]]
 name = "pytorch-cu126"
 url = "https://download.pytorch.org/whl/cu126"
-priority = "explicit"
+explicit = true
 
 [tool.black]
 line-length = 88
@@ -113,10 +114,37 @@ docstring-code-format = true
 exclude = ["ext/*"]
 
 [tool.ruff.lint]
-select = ["C", "E", "F"]
+select = ["ALL"]
 ignore = [
-    "E731", # Lambda assignment
-    "C416", # Unnecessary dict comprehension
-    "C901", # ... is too complex
+    "D",       # Documentation
+    "ANN",     # Annotations
+    "FBT",     # Flake Boolean Trap
+    "E731",    # Lambda assignment
+    "C416",    # Unnecessary dict comprehension
+    "C901",    # ... is too complex
+    "UP015",   # [*] Unnecessary mode argument
+    "PTH123",  # `open()` should be replaced by `Path.open()`
+    "PLW2901", # `for` loop variable `batch` overwritten by assignment target
+    "PLR2004", # Magic value used in comparison
+    "RET505",  # [*] Unnecessary `else` after `return` statement
+    "N812",    # Lowercase `functional` imported as non-lowercase
+    "INP001",  # File is part of an implicit namespace package
+    "PLC0415", # `import` should be at the top-level of a file
+    "A002",    # Function argument is shadowing a Python builtin
+    "RET504",  # Unnecessary assignment before `return` statement
+    "A001",    # Variable is shadowing a Python builtin
+    "PLR0913", # Too many arguments in function definition
+    "EM101",   # Exception must not use a string literal, assign to variable first
+    "TRY003",  # Avoid specifying long messages outside the exception class
+    "COM812",  # [*] Trailing comma missing
+    "UP035",   # [*] Import from `collections.abc` instead
+    "RET506",  # [*] Unnecessary `elif` after `raise` statement
+    "S113",    # Probable use of `requests` call without timeout
+    "BLE001",  # Do not catch blind exception
+    "DTZ005",  # `datetime.datetime.now()` called without a `tz` argument
+    "S603",    # `subprocess` call: check for execution of untrusted input
 ]
 exclude = ["ext/*"]
+
+[tool.ruff.lint.per-file-ignores]
+"rsrch/types/tensorlike/*" = ["SLF001"] # Allow private member access

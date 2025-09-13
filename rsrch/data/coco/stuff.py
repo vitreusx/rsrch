@@ -1,13 +1,14 @@
 import json
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from PIL import Image
 
 from rsrch.data.meta import seg_meta
 
-from .utils.schema import DetectAnnFile
+if TYPE_CHECKING:
+    from .utils.schema import DetectAnnFile
 
 
 class COCOStuff(Sequence):

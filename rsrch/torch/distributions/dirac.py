@@ -27,10 +27,10 @@ class Dirac(Distribution, Tensorlike):
     def variance(self):
         return 0.0
 
-    def sample(self, sample_shape=torch.Size()):
+    def sample(self, sample_shape=()):
         return self.rsample(sample_shape).detach()
 
-    def rsample(self, sample_shape=torch.Size()):
+    def rsample(self, sample_shape=()):
         return self.value.expand(*sample_shape, *self.value.shape)
 
     def log_prob(self, other):

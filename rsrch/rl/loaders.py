@@ -67,6 +67,7 @@ class OffPolicyRLLoader(IterableDataset):
 
     def __iter__(self):
         pos_iter = iter(self.sampler)
+        gen = np.random.default_rng()
 
         while True:
             batch = []
@@ -80,7 +81,7 @@ class OffPolicyRLLoader(IterableDataset):
                     seq = self.buf[ep_id]
                     if len(self) < self.slice_len:
                         continue
-                    index = np.random.randint(len(seq) - self.slice_len + 1)
+                    index = gen.integers(len(seq) - self.slice_len + 1)
                 else:
                     ep_id, index = pos
                     seq = self.buf[ep_id]

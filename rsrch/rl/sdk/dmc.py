@@ -10,9 +10,9 @@ import numpy as np
 from dm_control import suite
 
 from rsrch import spaces
+from rsrch.rl import data, gym
 from rsrch.rl.gym.wrappers import RenderEnv, VecFrameSkip, VecRecordStats
 
-from .. import data, gym
 from . import gym as gym_api
 from .utils import GymnasiumFrameSkip, GymnasiumRecordStats
 
@@ -66,21 +66,21 @@ def dmc_to_gym(space):
             dtype=space.dtype,
         )
     else:
-        raise ValueError(f"Casting {space} to gym.spaces.Space is not supported.")
+        raise TypeError("Unsupported space")
 
 
 class DMCGymEnv(gymnasium.Env):
-    def __init__(self, domain: str, task: str, render_opts={}):
+    def __init__(self, domain: str, task: str, render_opts: dict | None = None):
         super().__init__()
         self._env = suite.load(domain, task)
         self.render_mode = "rgb_array"
         self.observation_space = dmc_to_gym(self._env.observation_spec())
         self.action_space = dmc_to_gym(self._env.action_spec())
-        self.render_opts = render_opts
+        self.render_opts = render_opts or {}
 
-    def reset(self, seed=None, options=None):
+    def reset(self, seed=None, options=None):  # noqa: ARG002
         if seed is not None:
-            self._env.task._random = np.random.RandomState(seed)
+            self._env.task._random = np.random.RandomState(seed)  # noqa: SLF001
         step = self._env.reset()
         return step.observation, {}
 
@@ -101,23 +101,23 @@ class FlattenF:
         else:
             return np.asarray(x).ravel()
 
-    def codomain(self, X):
-        if isinstance(X, dict):
-            Xs: list[spaces.np.Box] = [self.codomain(X[k]) for k in X]
+    def codomain(self, xs):
+        if isinstance(xs, dict):
+            xs = [self.codomain(xs[k]) for k in xs]
             return spaces.np.Box(
-                (sum(Xi.shape[0] for Xi in Xs),),
-                low=np.concatenate([Xi.low for Xi in Xs]),
-                high=np.concatenate([Xi.high for Xi in Xs]),
+                (sum(x.shape[0] for x in xs),),
+                low=np.concatenate([x.low for x in xs]),
+                high=np.concatenate([x.high for x in xs]),
             )
-        elif isinstance(X, spaces.np.Box):
+        elif isinstance(xs, spaces.np.Box):
             return spaces.np.Box(
-                (math.prod(X.shape),),
-                low=X.low.ravel(),
-                high=X.high.ravel(),
-                dtype=X.dtype,
+                (math.prod(xs.shape),),
+                low=xs.low.ravel(),
+                high=xs.high.ravel(),
+                dtype=xs.dtype,
             )
         else:
-            raise ValueError(X)
+            raise TypeError(xs)
 
 
 class SDK:
@@ -136,20 +136,20 @@ class SDK:
     def make_envs(
         self,
         num_envs: int,
-        mode: Literal["train", "val"] = "train",
         render: bool = False,
         seed: int | None = None,
     ):
-        if seed is None:
-            seed = np.random.randint(int(2**31))
+        gen = np.random.default_rng(seed=seed)
 
         if self.cfg.use_envpool:
-            envs = self._try_envpool(num_envs, render=render, seed=seed)
+            envs = self._try_envpool(num_envs, render=render, seed=gen.integers(2**31))
             if envs is not None:
                 return envs
 
+        env_seeds = gen.integers(0, 2**31, size=num_envs).tolist()
+
         def env_fn(idx):
-            return lambda: self._env(render=render, seed=seed + idx)
+            return lambda: self._env(render=render, seed=env_seeds[idx])
 
         if num_envs > 1:
             with ThreadPoolExecutor() as pool:
@@ -162,7 +162,7 @@ class SDK:
 
     def _try_envpool(self, num_envs: int, render: bool, seed: int):
         if render or self.cfg.obs_type == "visual":
-            return
+            return None
 
         task_id = f"{self.cfg.domain}_{self.cfg.task}"
         task_id = "".join(s.capitalize() for s in task_id.split("_")) + "-v1"
@@ -179,7 +179,7 @@ class SDK:
                 seed=seed,
             )
         except Exception:
-            return
+            return None
 
         if self.cfg.frame_skip > 1:
             envs = VecRecordStats(envs)

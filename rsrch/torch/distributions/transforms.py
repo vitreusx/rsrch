@@ -32,7 +32,7 @@ class TanhTransform(Transform):
             y = y.clamp(-1.0 + self.eps, 1.0 - self.eps)
         return y.atanh()
 
-    def log_abs_det_jac(self, x, y):
+    def log_abs_det_jac(self, x, y):  # noqa: ARG002
         return 2 * (math.log(2) - x - F.softplus(-2 * x))
 
 
@@ -52,7 +52,7 @@ class AffineTransform(Transform):
     def inv(self, y):
         return (y - self.loc) / self.scale
 
-    def log_abs_det_jac(self, x, y):
+    def log_abs_det_jac(self, x, y):  # noqa: ARG002
         if not isinstance(self.scale, Tensor):
             res = torch.full_like(x, math.log(abs(self.scale)))
         else:

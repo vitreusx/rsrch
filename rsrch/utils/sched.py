@@ -11,7 +11,7 @@ class Constant:
     def __init__(self, value: float):
         self.value = value
 
-    def __call__(self, t):
+    def __call__(self, t: float):  # noqa: ARG002
         return self.value
 
 
@@ -80,11 +80,10 @@ Spec = str | float
 
 
 def make(spec: Spec):
-    classes = [Constant, LogLinear, Linear, Exp, Piecewise]
-    locals = {cls.__name__.lower(): cls for cls in classes}
-
     if isinstance(spec, str):
-        return eval(spec, globals(), locals)
+        classes = [Constant, LogLinear, Linear, Exp, Piecewise]
+        locals = {cls.__name__.lower(): cls for cls in classes}
+        return eval(spec, globals(), locals)  # noqa: S307
     else:
         return Constant(spec)
 

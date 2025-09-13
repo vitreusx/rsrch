@@ -2,7 +2,7 @@ from typing import MutableMapping
 
 import numpy as np
 
-from rsrch.types.rq_tree import rq_tree
+from rsrch.types.rq_tree import RQTree
 
 
 class Buffer(MutableMapping):
@@ -147,6 +147,7 @@ class Sampler:
     def __init__(self):
         self._key_to_idx, self._next_idx = {}, 0
         self._idx_to_key = []
+        self.gen = np.random.default_rng()
 
     def add(self, key):
         index = self._next_idx
@@ -169,7 +170,7 @@ class Sampler:
 
     def sample(self):
         while True:
-            index = np.random.randint(len(self._idx_to_key))
+            index = self.gen.integers(len(self._idx_to_key))
             if self._idx_to_key[index] is not None:
                 return self._idx_to_key[index]
 
@@ -188,10 +189,11 @@ class PSampler:
     """Prioritized sampler."""
 
     def __init__(self, init_size: int = 1024):
-        self.prio_tree = rq_tree(init_size)
-        self.max_tree = rq_tree(init_size, max)
+        self.prio_tree = RQTree(init_size)
+        self.max_tree = RQTree(init_size, max)
         self._key_to_idx, self._next_idx = {}, 0
         self._idx_to_key = []
+        self.gen = np.random.default_rng()
 
     def __setitem__(self, key, prio_value: float):
         if key not in self._key_to_idx:
@@ -208,10 +210,7 @@ class PSampler:
         self.max_tree[key_idx] = prio_value
 
     def add(self, key):
-        if len(self._key_to_idx) == 0:
-            prio = 1.0
-        else:
-            prio = self.max_tree.total
+        prio = 1.0 if len(self._key_to_idx) == 0 else self.max_tree.total
         self[key] = prio
 
     def __getitem__(self, key):
@@ -227,7 +226,7 @@ class PSampler:
         self._idx_to_key[index] = None
 
     def sample(self):
-        unif = np.random.rand() * self.prio_tree.total
+        unif = self.gen.random() * self.prio_tree.total
         key_idx = self.prio_tree.searchsorted(unif)
         return self._idx_to_key[key_idx]
 

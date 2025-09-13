@@ -1,5 +1,3 @@
-from typing import Optional
-
 import torch
 import torch.nn.functional as F
 from torch import Tensor
@@ -11,8 +9,8 @@ from .kl import register_kl
 
 
 class Bernoulli(Distribution, Tensorlike):
-    _probs: Optional[Tensor]
-    _logits: Optional[Tensor]
+    _probs: Tensor | None
+    _logits: Tensor | None
     event_shape: torch.Size
 
     def __init__(
@@ -75,14 +73,13 @@ class Bernoulli(Distribution, Tensorlike):
     @property
     def mode(self):
         mode = (self.probs >= 0.5).to(self.probs)
-        # mode[self.probs == 0.5] = torch.nan
         return mode
 
     @property
     def variance(self):
         return self.probs * (1 - self.probs)
 
-    def sample(self, sample_shape=torch.Size()):
+    def sample(self, sample_shape=()):
         shape = torch.Size([*sample_shape, *self.batch_shape, *self.event_shape])
         with torch.no_grad():
             return torch.bernoulli(self.probs.expand(shape)).to(torch.bool)

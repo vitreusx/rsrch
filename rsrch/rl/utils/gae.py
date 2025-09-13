@@ -8,7 +8,7 @@ def gen_adv_est(
     gamma: Tensor,
     gae_lambda: float,
 ):
-    """Generalized Advantage Estimation (GAE).
+    r"""Generalized Advantage Estimation (GAE).
 
     :param reward: Tensor :math:`r_{1:L}` of shape :math:`(L, N)` of rewards
     upon arriving at the state.
@@ -40,7 +40,7 @@ def gae_only_ret(
     next_gamma: Tensor,
     gae_lambda: float,
 ):
-    """Variant of `gen_adv_est` computing only the returns.
+    r"""Variant of `gen_adv_est` computing only the returns.
 
     :param reward: Tensor :math:`r_{1:L}` of shape :math:`(L, N)` of rewards
     upon arriving at the state.

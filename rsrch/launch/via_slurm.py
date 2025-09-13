@@ -26,7 +26,7 @@ def main():
     if len(extra) > 0:
         index = next((idx for idx, s in enumerate(extra) if s == "--"), len(extra))
         if index != 0:
-            raise ValueError(f"Unknown arguments: {shlex.join(extra[:index])}")
+            raise ValueError("Unknown arguments: %s", shlex.join(extra[:index]))
         extra = extra[1:]
 
     with open(args.commands, "r") as f:
@@ -34,16 +34,16 @@ def main():
 
     grid_slurm = Path(__file__).parent / "grid.slurm"
 
-    CMD = [
+    cmd = [
         "sbatch",
         f"--array=1-{num_cmd}",
         *extra,
         str(grid_slurm),
     ]
     if args.dry_run:
-        print(shlex.join(CMD))
+        print(shlex.join(cmd))  # noqa: T201
     else:
-        subprocess.run(CMD)
+        subprocess.run(cmd, check=False)
 
 
 if __name__ == "__main__":

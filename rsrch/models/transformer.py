@@ -45,7 +45,8 @@ def scaled_dot_product_attention(
     qk = qk * scale
 
     if is_causal:
-        assert attn_mask is None
+        if attn_mask is not None:
+            raise ValueError("attn_mask must be None if is_causal=True")
         src_len, src_dim = qk.shape[-2:]
         attn_mask = torch.ones((src_len, src_dim), device=qk.device)
         attn_mask.tril_()  # attn_mask[i,j] = (i <= j)
@@ -91,10 +92,10 @@ class MultiHeadAttention(nn.Module):
         attn_mask: Tensor | None = None,
         is_causal: bool = False,
     ):
-        # queries: [L, N, D_m]
-        # keys: [S, N, D_m]
-        # values: [S, N, D_m]
-        # attn_mask?: [N, L, S]
+        # queries -> [L, N, D_m]
+        # keys -> [S, N, D_m]
+        # values -> [S, N, D_m]
+        # attn_mask? -> [N, L, S]
 
         # Project input tensors
         q: Tensor = self.q_proj(queries)
@@ -156,15 +157,15 @@ class SelfAttnBlock(nn.Module):
         attn_mask: Tensor | None = None,
         is_causal: bool = False,
     ):
-        # input: (L, N, D)
-        # attn_mask?: (N, L)
+        # input -> (L, N, D)
+        # attn_mask? -> (N, L)
 
         # Self-Attention + Add & Norm
 
         if attn_mask is None:
             attn_mask_2d = None
         else:
-            # attn_mask_2d: (N, L, L)
+            # attn_mask_2d -> (N, L, L)
             attn_mask_2d = attn_mask.unsqueeze(-1) * attn_mask.unsqueeze(-2)
 
         attn = self.attn(
@@ -227,17 +228,17 @@ class CrossAttnBlock(nn.Module):
         is_causal: bool = True,
         context_mask: Tensor | None = None,
     ):
-        # input: (L, N, D)
-        # context: (S, N, D)
-        # input_mask?: (N, L)
-        # context_mask?: (N, S)
+        # input -> (L, N, D)
+        # context -> (S, N, D)
+        # input_mask? -> (N, L)
+        # context_mask? -> (N, S)
 
         # Self-Attention + Add & Norm
 
         if input_mask is None:
             attn_mask_2d = None
         else:
-            # attn_mask_2d: (N, L, L)
+            # attn_mask_2d -> (N, L, L)
             attn_mask_2d = input_mask.unsqueeze(-1) * input_mask.unsqueeze(-2)
 
         attn = self.masked_attn(
@@ -266,7 +267,7 @@ class CrossAttnBlock(nn.Module):
                     (bs, ctx_len), dtype=context.dtype, device=context.device
                 )
 
-            # attn_mask_2d: (N, S, L)
+            # attn_mask_2d -> (N, S, L)
             attn_mask_2d = input_mask.unsqueeze(-1) * context_mask.unsqueeze(-2)
 
         attn = self.cross_attn(
@@ -288,7 +289,8 @@ class SinePositionEncoding(nn.Module):
     def __init__(self, model_dim: int):
         super().__init__()
         self.model_dim = model_dim
-        assert model_dim % 2 == 0
+        if model_dim % 2 != 0:
+            raise ValueError("For sine position encoding, model_dim must be even")
 
         # Note: Not quite matching the equations from the paper, but
         # the equations don't quite match the description "The wavelengths form

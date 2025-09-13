@@ -12,7 +12,7 @@ from .utils import sum_rightmost
 
 
 def _standard_normal(shape, dtype, device):
-    if torch._C._get_tracing_state():
+    if torch._C._get_tracing_state():  # noqa: SLF001
         return torch.normal(
             torch.zeros(shape, dtype=dtype, device=device),
             torch.ones(shape, dtype=dtype, device=device),
@@ -22,7 +22,7 @@ def _standard_normal(shape, dtype, device):
 
 class Normal(Distribution, Tensorlike):
     MSE_SIGMA = 1.0 / math.sqrt(2.0 * math.pi)
-    r"""This value of \sigma for the normal distribution makes log prob equal 
+    r"""This value of \sigma for the normal distribution makes log prob equal
     (up to a scale factor) to (x-\mu)^2. """
 
     def __init__(

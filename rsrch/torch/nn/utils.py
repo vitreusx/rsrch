@@ -28,7 +28,7 @@ def shape_infer_mode(*nets: nn.Module, enabled: bool = True):
                 try:
                     yield
                 finally:
-                    for net, val in zip(nets, prev):
+                    for net, val in zip(nets, prev, strict=False):
                         net.train(mode=val)
         else:
             yield
@@ -106,11 +106,11 @@ def over_seq(_func: Func) -> Func:
 
 class PassGradient(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, value: Tensor, to: Tensor):
+    def forward(ctx, value: Tensor, to: Tensor):  # noqa: ARG004
         return value
 
     @staticmethod
-    def backward(ctx, grad_output: Tensor):
+    def backward(ctx, grad_output: Tensor):  # noqa: ARG004
         return None, grad_output
 
 
@@ -137,8 +137,8 @@ def frozen(*nets: nn.Module):
     try:
         yield
     finally:
-        for net, prev_for_net in zip(nets, prev):
-            for p, v in zip(net.parameters(), prev_for_net):
+        for net, prev_for_net in zip(nets, prev, strict=False):
+            for p, v in zip(net.parameters(), prev_for_net, strict=False):
                 p.requires_grad_(v)
 
 
