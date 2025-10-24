@@ -26,8 +26,7 @@ dependencies = [
     "pandas (>=2.2.2,<3.0.0)",
     "monkeytype (>=23.3.0,<24.0.0)",
     "opencv-python (>=4.9.0.80,<5.0.0.0)",
-    "torch (==2.7.0)",
-    "torchvision (==0.22.0)",
+    "torch (>=2.0.0)",
     "lpips (>=0.1.4,<0.2.0)",
     "fast-pytorch-kmeans (>=0.2.0.1,<0.3.0.0)",
     "fvcore (>=0.1.5.post20221221,<0.2.0)",
@@ -87,19 +86,6 @@ dev = [
     "tensorboard-plugin-profile>=2.20.6,<3",
     "pre-commit>=4.3.0",
 ]
-
-[tool.uv.sources]
-torch = [
-    { index = "pytorch-cu126", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-torchvision = [
-    { index = "pytorch-cu126", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-
-[[tool.uv.index]]
-name = "pytorch-cu126"
-url = "https://download.pytorch.org/whl/cu126"
-explicit = true
 
 [tool.black]
 line-length = 88
