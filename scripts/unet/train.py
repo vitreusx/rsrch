@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 from typing import Literal, TypedDict
 
@@ -107,10 +108,7 @@ class Trainer:
         self.cfg = cfg
 
     def run(self):
-        self.setup_infra()
-        self.setup_data()
-        self.setup_data_loaders()
-        self.setup_model()
+        self.setup()
 
         def get_flag(delta: TimeDelta | None):
             if delta is None:
@@ -130,11 +128,27 @@ class Trainer:
             if should_val:
                 self.val_epoch()
             if should_save:
-                tag = f"model.step={self.step:07d}"
-                self.save_model(tag)
+                self.save_model(tag=f"model.step={self.step:07d}")
             self.train_step()
             self.step += 1
             self.pbar.update()
+
+    def run_test(self):
+        self.setup()
+
+        self.should_log = True
+        self.should_save_samples = True
+        self.should_save_val_samples = True
+
+        self.val_epoch()
+        self.save_model(tag=f"model.step={self.step:07d}")
+        self.train_step()
+
+    def setup(self):
+        self.setup_infra()
+        self.setup_data()
+        self.setup_data_loaders()
+        self.setup_model()
 
     def setup_infra(self):
         self.ddp = auto_detect()
@@ -344,11 +358,23 @@ class Trainer:
 
 
 def main():
+    p = argparse.ArgumentParser()
+    p.add_argument(
+        "--test",
+        action="store_true",
+        help="Run a regression test.",
+    )
+    args = p.parse_args()
+
     yaml = YAML(typ="safe", pure=True)
     with open(Path(__file__).parent / "config.yml", "r") as f:
         cfg = cast(yaml.load(f), Config)
+
     trainer = Trainer(cfg)
-    trainer.run()
+    if args.test:
+        trainer.run_test()
+    else:
+        trainer.run()
 
 
 if __name__ == "__main__":

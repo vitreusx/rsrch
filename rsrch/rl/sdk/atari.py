@@ -397,12 +397,10 @@ class SDK:
             img_w = img_h = self.cfg.screen_size
 
         obs_f = self._envpool_obs_f
-        act_f = self._randomize_act if self.randomize else None
 
         envs = gym.envs.Envpool(
             task_id=f"{self.cfg.env_id}-v5",
             obs_f=obs_f,
-            act_f=act_f,
             num_envs=num_envs,
             max_episode_steps=max_steps,
             img_height=img_h,
@@ -431,20 +429,7 @@ class SDK:
     def _envpool_obs_f(self, obs: np.ndarray):
         if self.cfg.obs_type != "ram":
             obs = np.moveaxis(obs, 0, -1)
-        if self.randomize:
-            obs = self._randomize_obs(obs)
         return obs
-
-    def _randomize_obs(self, obs: np.ndarray):
-        # obs -> [..., C, H, W]
-        if self.flip_w:
-            obs = np.flip(obs, 1)
-        if self.flip_h:
-            obs = np.flip(obs, 0)
-        return obs
-
-    def _randomize_act(self, act: np.ndarray):
-        return self.act_perm[act]
 
     def _env(
         self,
@@ -493,13 +478,6 @@ class SDK:
             env = gymnasium.wrappers.TimeLimit(env, self.cfg.time_limit)
 
         env = gym.envs.GymEnv(env, seed=seed, render=render)
-
-        if self.randomize:
-            env = TransformEnv(
-                env,
-                obs_f=self._randomize_obs,
-                act_f=self._randomize_act,
-            )
 
         return env
 

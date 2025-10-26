@@ -18,7 +18,6 @@ env:
     stack_num: 4
     use_envpool: true
     repeat_action_probability: 0.25 # *-v5 setting
-    randomize: false
 num_train_envs: 8
 num_val_envs: ~
 min_seq_len: 8

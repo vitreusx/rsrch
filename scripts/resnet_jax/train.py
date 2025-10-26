@@ -1,3 +1,4 @@
+import argparse
 import queue
 import threading
 from functools import partial
@@ -199,11 +200,7 @@ class Trainer:
         self.cfg = cfg
 
     def run(self):
-        self.setup_infra()
-        self.setup_data()
-        self.setup_loaders()
-        self.setup_model()
-        self.setup_prof()
+        self.setup()
 
         # Setup loop control flags
         def get_flag(
@@ -236,6 +233,21 @@ class Trainer:
             self.train_step()
             self.step += 1
             self.pbar.update()
+
+    def run_test(self):
+        self.setup()
+
+        self.should_log = True
+
+        self.val_epoch()
+        self.train_step()
+
+    def setup(self):
+        self.setup_infra()
+        self.setup_data()
+        self.setup_loaders()
+        self.setup_model()
+        self.setup_prof()
 
     def setup_infra(self):
         repro.seed_all(self.cfg.seed)
@@ -462,11 +474,23 @@ class Trainer:
 
 
 def main():
+    p = argparse.ArgumentParser()
+    p.add_argument(
+        "--test",
+        action="store_true",
+        help="Run a regression test.",
+    )
+    args = p.parse_args()
+
     yaml = YAML(typ="safe", pure=True)
     with open(Path(__file__).parent / "config.yml", "r") as f:
         cfg = cast(yaml.load(f), Config)
+
     trainer = Trainer(cfg)
-    trainer.run()
+    if args.test:
+        trainer.run_test()
+    else:
+        trainer.run()
 
 
 if __name__ == "__main__":

@@ -1,6 +1,8 @@
+import argparse
 from pathlib import Path
 from typing import Iterable, Sequence, TypedDict
 
+import jinja2
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -87,10 +89,7 @@ class Trainer:
         self.cfg = cfg
 
     def run(self):
-        self.setup_base()
-        self.setup_tokenizer()
-        self.setup_data()
-        self.setup_model()
+        self.setup()
 
         def get_flag(delta: TimeDelta | None):
             if delta is None:
@@ -110,6 +109,21 @@ class Trainer:
             self.train_step()
             self.step += 1
 
+    def run_test(self):
+        self.setup()
+
+        self.should_val = True
+        self.step = 0
+
+        self.val_epoch()
+        self.train_step()
+
+    def setup(self):
+        self.setup_base()
+        self.setup_tokenizer()
+        self.setup_data()
+        self.setup_model()
+
     def setup_base(self):
         self.ddp = ddp.auto_detect()
         repro.seed_all(self.cfg.seed)
@@ -125,6 +139,10 @@ class Trainer:
 
             self.exp.register_step("step", lambda: self.step)
             self.exp.register_step("epoch", lambda: self.epoch)
+
+            j2_loader = jinja2.FileSystemLoader(Path(__file__).parent)
+            j2_env = jinja2.Environment(loader=j2_loader, autoescape=True)
+            self.samples_tmpl = j2_env.get_template("samples.md.j2")
 
     def setup_tokenizer(self):
         self.tokenizer: PreTrainedTokenizer = AutoTokenizer.from_pretrained(
@@ -273,33 +291,24 @@ class Trainer:
         sample_text = self.val_sample
         completions = self.sample(sample_text)
 
-        result_text = ["# Completions"]
-        for idx in range(len(sample_text)):
-            result_text.append(  # noqa: PERF401
-                f"""
-## Sample #{idx:03d}
+        samples_md = self.samples_tmpl.render(
+            samples=[
+                {"text": sample_text[idx], "completion": completions[idx]}
+                for idx in range(len(sample_text))
+            ]
+        )
 
-Prompt:
-```
-{sample_text[idx]}
-```
-
-Completion:
-```
-(...) {completions[idx]}
-```"""
-            )
-
-        result_text = "\n".join(result_text)
-
-        unit = self.cfg.val_every.of
-        time_val = self.should_val.step_fn()
+        if isinstance(self.should_val, cron.Every):
+            unit = self.cfg.val_every.of
+            time_val = self.should_val.step_fn()
+        else:
+            unit, time_val = "step", self.step
         time = f"{unit}={time_val:07d}"
 
         dest = self.exp.dir / "samples" / f"{time}.md"
         dest.parent.mkdir(parents=True, exist_ok=True)
         with open(dest, "w") as f:
-            f.write(result_text)
+            f.write(samples_md)
 
         self.exp.info(f"Completions saved to {dest}")
 
@@ -369,11 +378,23 @@ Completion:
 
 def main():
     """Main function."""
+    p = argparse.ArgumentParser()
+    p.add_argument(
+        "--test",
+        action="store_true",
+        help="Run a regression test.",
+    )
+    args = p.parse_args()
+
     yaml = YAML(typ="safe", pure=True)
     with open(Path(__file__).parent / "config.yml", "r") as f:
         cfg = cast(yaml.load(f), Config)
+
     trainer = Trainer(cfg)
-    trainer.run()
+    if args.test:
+        trainer.run_test()
+    else:
+        trainer.run()
 
 
 if __name__ == "__main__":

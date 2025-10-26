@@ -1,12 +1,12 @@
 import logging
-import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
+import tensorboardX
 import torch
 import torchvision.transforms.functional as tv_F
-from torch.utils import tensorboard
 
 from ._utils import flatten
 from .base import Board, StepMixin
@@ -23,18 +23,22 @@ class Tensorboard(StepMixin, Board):
     ):
         super().__init__()
         self.dir = Path(dir)
-        self._writer = tensorboard.SummaryWriter(log_dir=str(self.dir))
+        self._writer = tensorboardX.SummaryWriter(log_dir=str(self.dir))
         if launch:
-            tb_path = shutil.which("tensorboard")
-            if tb_path is None:
-                logger.warning("Tensorboard program could not be found")
-            else:
-                self._proc = subprocess.Popen(
-                    [tb_path, "--logdir", str(self.dir), "--port", str(port)],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-                logger.info("Started Tensorboard at http://localhost:%d", port)
+            self._proc = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "tensorboard.main",
+                    "--logdir",
+                    str(self.dir),
+                    "--port",
+                    str(port),
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            logger.info("Started Tensorboard at http://localhost:%d", port)
 
     def __del__(self):
         if hasattr(self, "_proc"):
@@ -46,6 +50,8 @@ class Tensorboard(StepMixin, Board):
 
     def add_scalar(self, tag: str, value, *, step=None):
         step = self._get_step(step)
+        if isinstance(value, torch.Tensor):
+            value = value.detach()
         self._writer.add_scalar(tag, float(value), global_step=step)
 
     def add_image(self, tag: str, image, *, step=None):

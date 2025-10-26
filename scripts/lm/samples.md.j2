@@ -1,0 +1,14 @@
+# Completions
+{% for sample in samples %}
+## Sample #{{ "%03d" | format(loop.index) }}
+
+Prompt:
+```
+{{ sample.text }}
+```
+
+Completion:
+```
+(...) {{ sample.completion }}
+```
+{% endfor %}

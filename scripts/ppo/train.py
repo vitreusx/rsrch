@@ -1,3 +1,4 @@
+import argparse
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import cache, partial
@@ -410,9 +411,7 @@ class Trainer:
         self.cfg = cfg
 
     def run(self):
-        self.setup_base()
-        self.setup_envs()
-        self.setup_ppo()
+        self.setup()
 
         should_sample = cron.Every(lambda: self.env_step, self.cfg.sample_every)
 
@@ -420,6 +419,17 @@ class Trainer:
             if should_sample:
                 self.sample_episode()
             self.do_train_step()
+
+    def run_test(self):
+        self.setup()
+
+        self.sample_episode()
+        self.do_train_step()
+
+    def setup(self):
+        self.setup_base()
+        self.setup_envs()
+        self.setup_ppo()
 
     def setup_base(self):
         self.device = torch.device(self.cfg.device)
@@ -570,11 +580,23 @@ class Trainer:
 
 def main():
     """Main function."""
+    p = argparse.ArgumentParser()
+    p.add_argument(
+        "--test",
+        action="store_true",
+        help="Run a regression test.",
+    )
+    args = p.parse_args()
+
     yaml = YAML(typ="safe", pure=True)
     with open(Path(__file__).parent / "config.yml", "r") as f:
         cfg = cast(yaml.load(f), Config)
+
     trainer = Trainer(cfg)
-    trainer.run()
+    if args.test:
+        trainer.run_test()
+    else:
+        trainer.run()
 
 
 if __name__ == "__main__":
