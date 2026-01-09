@@ -1,0 +1,6 @@
+{
+    "recommendations": [
+        "charliermarsh.ruff",
+        "redhat.vscode-yaml"
+    ]
+}
