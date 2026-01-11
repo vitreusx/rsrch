@@ -6,6 +6,7 @@ import jinja2
 import numpy as np
 import torch
 import torch.nn.functional as F
+from datasets import load_dataset
 from platformdirs import user_cache_dir
 from ruamel.yaml import YAML
 from torch import Tensor
@@ -13,7 +14,6 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, PreTrainedTokenizer
 
-from datasets import load_dataset
 from rsrch.exp import Experiment, boards
 from rsrch.lang.data import BucketBatchSampler, split_into_buckets
 from rsrch.models.transformer import Decoder
