@@ -1,0 +1,301 @@
+classes:
+  0:
+    class: beaver
+    superclass: aquatic mammals
+  1:
+    class: dolphin
+    superclass: aquatic mammals
+  2:
+    class: otter
+    superclass: aquatic mammals
+  3:
+    class: seal
+    superclass: aquatic mammals
+  4:
+    class: whale
+    superclass: aquatic mammals
+  5:
+    class: aquarium fish
+    superclass: fish
+  6:
+    class: flatfish
+    superclass: fish
+  7:
+    class: ray
+    superclass: fish
+  8:
+    class: shark
+    superclass: fish
+  9:
+    class: trout
+    superclass: fish
+  10:
+    class: orchids
+    superclass: flowers
+  11:
+    class: poppies
+    superclass: flowers
+  12:
+    class: roses
+    superclass: flowers
+  13:
+    class: sunflowers
+    superclass: flowers
+  14:
+    class: tulips
+    superclass: flowers
+  15:
+    class: bottles
+    superclass: food containers
+  16:
+    class: bowls
+    superclass: food containers
+  17:
+    class: cans
+    superclass: food containers
+  18:
+    class: cups
+    superclass: food containers
+  19:
+    class: plates
+    superclass: food containers
+  20:
+    class: apples
+    superclass: fruit and vegetables
+  21:
+    class: mushrooms
+    superclass: fruit and vegetables
+  22:
+    class: oranges
+    superclass: fruit and vegetables
+  23:
+    class: pears
+    superclass: fruit and vegetables
+  24:
+    class: sweet peppers
+    superclass: fruit and vegetables
+  25:
+    class: clock
+    superclass: household electrical devices
+  26:
+    class: computer keyboard
+    superclass: household electrical devices
+  27:
+    class: lamp
+    superclass: household electrical devices
+  28:
+    class: telephone
+    superclass: household electrical devices
+  29:
+    class: television
+    superclass: household electrical devices
+  30:
+    class: bed
+    superclass: household furniture
+  31:
+    class: chair
+    superclass: household furniture
+  32:
+    class: couch
+    superclass: household furniture
+  33:
+    class: table
+    superclass: household furniture
+  34:
+    class: wardrobe
+    superclass: household furniture
+  35:
+    class: bee
+    superclass: insects
+  36:
+    class: beetle
+    superclass: insects
+  37:
+    class: butterfly
+    superclass: insects
+  38:
+    class: caterpillar
+    superclass: insects
+  39:
+    class: cockroach
+    superclass: insects
+  40:
+    class: bear
+    superclass: large carnivores
+  41:
+    class: leopard
+    superclass: large carnivores
+  42:
+    class: lion
+    superclass: large carnivores
+  43:
+    class: tiger
+    superclass: large carnivores
+  44:
+    class: wolf
+    superclass: large carnivores
+  45:
+    class: bridge
+    superclass: large man-made outdoor things
+  46:
+    class: castle
+    superclass: large man-made outdoor things
+  47:
+    class: house
+    superclass: large man-made outdoor things
+  48:
+    class: road
+    superclass: large man-made outdoor things
+  49:
+    class: skyscraper
+    superclass: large man-made outdoor things
+  50:
+    class: cloud
+    superclass: large natural outdoor scenes
+  51:
+    class: forest
+    superclass: large natural outdoor scenes
+  52:
+    class: mountain
+    superclass: large natural outdoor scenes
+  53:
+    class: plain
+    superclass: large natural outdoor scenes
+  54:
+    class: sea
+    superclass: large natural outdoor scenes
+  55:
+    class: camel
+    superclass: large omnivores and herbivores
+  56:
+    class: cattle
+    superclass: large omnivores and herbivores
+  57:
+    class: chimpanzee
+    superclass: large omnivores and herbivores
+  58:
+    class: elephant
+    superclass: large omnivores and herbivores
+  59:
+    class: kangaroo
+    superclass: large omnivores and herbivores
+  60:
+    class: fox
+    superclass: medium-sized mammals
+  61:
+    class: porcupine
+    superclass: medium-sized mammals
+  62:
+    class: possum
+    superclass: medium-sized mammals
+  63:
+    class: raccoon
+    superclass: medium-sized mammals
+  64:
+    class: skunk
+    superclass: medium-sized mammals
+  65:
+    class: crab
+    superclass: non-insect invertebrates
+  66:
+    class: lobster
+    superclass: non-insect invertebrates
+  67:
+    class: snail
+    superclass: non-insect invertebrates
+  68:
+    class: spider
+    superclass: non-insect invertebrates
+  69:
+    class: worm
+    superclass: non-insect invertebrates
+  70:
+    class: baby
+    superclass: people
+  71:
+    class: boy
+    superclass: people
+  72:
+    class: girl
+    superclass: people
+  73:
+    class: man
+    superclass: people
+  74:
+    class: woman
+    superclass: people
+  75:
+    class: crocodile
+    superclass: reptiles
+  76:
+    class: dinosaur
+    superclass: reptiles
+  77:
+    class: lizard
+    superclass: reptiles
+  78:
+    class: snake
+    superclass: reptiles
+  79:
+    class: turtle
+    superclass: reptiles
+  80:
+    class: hamster
+    superclass: small mammals
+  81:
+    class: mouse
+    superclass: small mammals
+  82:
+    class: rabbit
+    superclass: small mammals
+  83:
+    class: shrew
+    superclass: small mammals
+  84:
+    class: squirrel
+    superclass: small mammals
+  85:
+    class: maple
+    superclass: trees
+  86:
+    class: oak
+    superclass: trees
+  87:
+    class: palm
+    superclass: trees
+  88:
+    class: pine
+    superclass: trees
+  89:
+    class: willow
+    superclass: trees
+  90:
+    class: bicycle
+    superclass: vehicles 1
+  91:
+    class: bus
+    superclass: vehicles 1
+  92:
+    class: motorcycle
+    superclass: vehicles 1
+  93:
+    class: pickup truck
+    superclass: vehicles 1
+  94:
+    class: train
+    superclass: vehicles 1
+  95:
+    class: lawn-mower
+    superclass: vehicles 2
+  96:
+    class: rocket
+    superclass: vehicles 2
+  97:
+    class: streetcar
+    superclass: vehicles 2
+  98:
+    class: tank
+    superclass: vehicles 2
+  99:
+    class: tractor
+    superclass: vehicles 2

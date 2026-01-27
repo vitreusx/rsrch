@@ -1,0 +1,534 @@
+classes:
+  1:
+    isthing: true
+    name: person
+    supercategory: person
+  2:
+    isthing: true
+    name: bicycle
+    supercategory: vehicle
+  3:
+    isthing: true
+    name: car
+    supercategory: vehicle
+  4:
+    isthing: true
+    name: motorcycle
+    supercategory: vehicle
+  5:
+    isthing: true
+    name: airplane
+    supercategory: vehicle
+  6:
+    isthing: true
+    name: bus
+    supercategory: vehicle
+  7:
+    isthing: true
+    name: train
+    supercategory: vehicle
+  8:
+    isthing: true
+    name: truck
+    supercategory: vehicle
+  9:
+    isthing: true
+    name: boat
+    supercategory: vehicle
+  10:
+    isthing: true
+    name: traffic light
+    supercategory: outdoor
+  11:
+    isthing: true
+    name: fire hydrant
+    supercategory: outdoor
+  13:
+    isthing: true
+    name: stop sign
+    supercategory: outdoor
+  14:
+    isthing: true
+    name: parking meter
+    supercategory: outdoor
+  15:
+    isthing: true
+    name: bench
+    supercategory: outdoor
+  16:
+    isthing: true
+    name: bird
+    supercategory: animal
+  17:
+    isthing: true
+    name: cat
+    supercategory: animal
+  18:
+    isthing: true
+    name: dog
+    supercategory: animal
+  19:
+    isthing: true
+    name: horse
+    supercategory: animal
+  20:
+    isthing: true
+    name: sheep
+    supercategory: animal
+  21:
+    isthing: true
+    name: cow
+    supercategory: animal
+  22:
+    isthing: true
+    name: elephant
+    supercategory: animal
+  23:
+    isthing: true
+    name: bear
+    supercategory: animal
+  24:
+    isthing: true
+    name: zebra
+    supercategory: animal
+  25:
+    isthing: true
+    name: giraffe
+    supercategory: animal
+  27:
+    isthing: true
+    name: backpack
+    supercategory: accessory
+  28:
+    isthing: true
+    name: umbrella
+    supercategory: accessory
+  31:
+    isthing: true
+    name: handbag
+    supercategory: accessory
+  32:
+    isthing: true
+    name: tie
+    supercategory: accessory
+  33:
+    isthing: true
+    name: suitcase
+    supercategory: accessory
+  34:
+    isthing: true
+    name: frisbee
+    supercategory: sports
+  35:
+    isthing: true
+    name: skis
+    supercategory: sports
+  36:
+    isthing: true
+    name: snowboard
+    supercategory: sports
+  37:
+    isthing: true
+    name: sports ball
+    supercategory: sports
+  38:
+    isthing: true
+    name: kite
+    supercategory: sports
+  39:
+    isthing: true
+    name: baseball bat
+    supercategory: sports
+  40:
+    isthing: true
+    name: baseball glove
+    supercategory: sports
+  41:
+    isthing: true
+    name: skateboard
+    supercategory: sports
+  42:
+    isthing: true
+    name: surfboard
+    supercategory: sports
+  43:
+    isthing: true
+    name: tennis racket
+    supercategory: sports
+  44:
+    isthing: true
+    name: bottle
+    supercategory: kitchen
+  46:
+    isthing: true
+    name: wine glass
+    supercategory: kitchen
+  47:
+    isthing: true
+    name: cup
+    supercategory: kitchen
+  48:
+    isthing: true
+    name: fork
+    supercategory: kitchen
+  49:
+    isthing: true
+    name: knife
+    supercategory: kitchen
+  50:
+    isthing: true
+    name: spoon
+    supercategory: kitchen
+  51:
+    isthing: true
+    name: bowl
+    supercategory: kitchen
+  52:
+    isthing: true
+    name: banana
+    supercategory: food
+  53:
+    isthing: true
+    name: apple
+    supercategory: food
+  54:
+    isthing: true
+    name: sandwich
+    supercategory: food
+  55:
+    isthing: true
+    name: orange
+    supercategory: food
+  56:
+    isthing: true
+    name: broccoli
+    supercategory: food
+  57:
+    isthing: true
+    name: carrot
+    supercategory: food
+  58:
+    isthing: true
+    name: hot dog
+    supercategory: food
+  59:
+    isthing: true
+    name: pizza
+    supercategory: food
+  60:
+    isthing: true
+    name: donut
+    supercategory: food
+  61:
+    isthing: true
+    name: cake
+    supercategory: food
+  62:
+    isthing: true
+    name: chair
+    supercategory: furniture
+  63:
+    isthing: true
+    name: couch
+    supercategory: furniture
+  64:
+    isthing: true
+    name: potted plant
+    supercategory: furniture
+  65:
+    isthing: true
+    name: bed
+    supercategory: furniture
+  67:
+    isthing: true
+    name: dining table
+    supercategory: furniture
+  70:
+    isthing: true
+    name: toilet
+    supercategory: furniture
+  72:
+    isthing: true
+    name: tv
+    supercategory: electronic
+  73:
+    isthing: true
+    name: laptop
+    supercategory: electronic
+  74:
+    isthing: true
+    name: mouse
+    supercategory: electronic
+  75:
+    isthing: true
+    name: remote
+    supercategory: electronic
+  76:
+    isthing: true
+    name: keyboard
+    supercategory: electronic
+  77:
+    isthing: true
+    name: cell phone
+    supercategory: electronic
+  78:
+    isthing: true
+    name: microwave
+    supercategory: appliance
+  79:
+    isthing: true
+    name: oven
+    supercategory: appliance
+  80:
+    isthing: true
+    name: toaster
+    supercategory: appliance
+  81:
+    isthing: true
+    name: sink
+    supercategory: appliance
+  82:
+    isthing: true
+    name: refrigerator
+    supercategory: appliance
+  84:
+    isthing: true
+    name: book
+    supercategory: indoor
+  85:
+    isthing: true
+    name: clock
+    supercategory: indoor
+  86:
+    isthing: true
+    name: vase
+    supercategory: indoor
+  87:
+    isthing: true
+    name: scissors
+    supercategory: indoor
+  88:
+    isthing: true
+    name: teddy bear
+    supercategory: indoor
+  89:
+    isthing: true
+    name: hair drier
+    supercategory: indoor
+  90:
+    isthing: true
+    name: toothbrush
+    supercategory: indoor
+  92:
+    isthing: false
+    name: banner
+    supercategory: textile
+  93:
+    isthing: false
+    name: blanket
+    supercategory: textile
+  95:
+    isthing: false
+    name: bridge
+    supercategory: building
+  100:
+    isthing: false
+    name: cardboard
+    supercategory: raw-material
+  107:
+    isthing: false
+    name: counter
+    supercategory: furniture-stuff
+  109:
+    isthing: false
+    name: curtain
+    supercategory: textile
+  112:
+    isthing: false
+    name: door-stuff
+    supercategory: furniture-stuff
+  118:
+    isthing: false
+    name: floor-wood
+    supercategory: floor
+  119:
+    isthing: false
+    name: flower
+    supercategory: plant
+  122:
+    isthing: false
+    name: fruit
+    supercategory: food-stuff
+  125:
+    isthing: false
+    name: gravel
+    supercategory: ground
+  128:
+    isthing: false
+    name: house
+    supercategory: building
+  130:
+    isthing: false
+    name: light
+    supercategory: furniture-stuff
+  133:
+    isthing: false
+    name: mirror-stuff
+    supercategory: furniture-stuff
+  138:
+    isthing: false
+    name: net
+    supercategory: structural
+  141:
+    isthing: false
+    name: pillow
+    supercategory: textile
+  144:
+    isthing: false
+    name: platform
+    supercategory: ground
+  145:
+    isthing: false
+    name: playingfield
+    supercategory: ground
+  147:
+    isthing: false
+    name: railroad
+    supercategory: ground
+  148:
+    isthing: false
+    name: river
+    supercategory: water
+  149:
+    isthing: false
+    name: road
+    supercategory: ground
+  151:
+    isthing: false
+    name: roof
+    supercategory: building
+  154:
+    isthing: false
+    name: sand
+    supercategory: ground
+  155:
+    isthing: false
+    name: sea
+    supercategory: water
+  156:
+    isthing: false
+    name: shelf
+    supercategory: furniture-stuff
+  159:
+    isthing: false
+    name: snow
+    supercategory: ground
+  161:
+    isthing: false
+    name: stairs
+    supercategory: furniture-stuff
+  166:
+    isthing: false
+    name: tent
+    supercategory: building
+  168:
+    isthing: false
+    name: towel
+    supercategory: textile
+  171:
+    isthing: false
+    name: wall-brick
+    supercategory: wall
+  175:
+    isthing: false
+    name: wall-stone
+    supercategory: wall
+  176:
+    isthing: false
+    name: wall-tile
+    supercategory: wall
+  177:
+    isthing: false
+    name: wall-wood
+    supercategory: wall
+  178:
+    isthing: false
+    name: water-other
+    supercategory: water
+  180:
+    isthing: false
+    name: window-blind
+    supercategory: window
+  181:
+    isthing: false
+    name: window-other
+    supercategory: window
+  184:
+    isthing: false
+    name: tree-merged
+    supercategory: plant
+  185:
+    isthing: false
+    name: fence-merged
+    supercategory: structural
+  186:
+    isthing: false
+    name: ceiling-merged
+    supercategory: ceiling
+  187:
+    isthing: false
+    name: sky-other-merged
+    supercategory: sky
+  188:
+    isthing: false
+    name: cabinet-merged
+    supercategory: furniture-stuff
+  189:
+    isthing: false
+    name: table-merged
+    supercategory: furniture-stuff
+  190:
+    isthing: false
+    name: floor-other-merged
+    supercategory: floor
+  191:
+    isthing: false
+    name: pavement-merged
+    supercategory: ground
+  192:
+    isthing: false
+    name: mountain-merged
+    supercategory: solid
+  193:
+    isthing: false
+    name: grass-merged
+    supercategory: plant
+  194:
+    isthing: false
+    name: dirt-merged
+    supercategory: ground
+  195:
+    isthing: false
+    name: paper-merged
+    supercategory: raw-material
+  196:
+    isthing: false
+    name: food-other-merged
+    supercategory: food-stuff
+  197:
+    isthing: false
+    name: building-other-merged
+    supercategory: building
+  198:
+    isthing: false
+    name: rock-merged
+    supercategory: solid
+  199:
+    isthing: false
+    name: wall-other-merged
+    supercategory: wall
+  200:
+    isthing: false
+    name: rug-merged
+    supercategory: textile
+ignore_index: 0

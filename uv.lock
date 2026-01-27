@@ -771,6 +771,15 @@ wheels = [
 ]
 
 [[package]]
+name = "docstring-parser"
+version = "0.17.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b2/9d/c3b43da9515bd270df0f80548d9944e389870713cc1fe2b8fb35fe2bcefd/docstring_parser-0.17.0.tar.gz", hash = "sha256:583de4a309722b3315439bb31d64ba3eebada841f2e2cee23b99df001434c912", size = 27442, upload-time = "2025-07-21T07:35:01.868Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/55/e2/2537ebcff11c1ee1ff17d8d0b6f4db75873e3b0fb32c2d4a2ee31ecb310a/docstring_parser-0.17.0-py3-none-any.whl", hash = "sha256:cf2569abd23dce8099b300f9b4fa8191e9582dda731fd533daf54c4551658708", size = 36896, upload-time = "2025-07-21T07:35:00.684Z" },
+]
+
+[[package]]
 name = "docutils"
 version = "0.21.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1756,18 +1765,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/26/2d/ef58fed122b268c69c0aa099da20bc67657cdfb2e222688d5731bd5b971d/jupyterlab_widgets-3.0.16.tar.gz", hash = "sha256:423da05071d55cf27a9e602216d35a3a65a3e41cdf9c5d3b643b814ce38c19e0", size = 897423, upload-time = "2025-11-01T21:11:29.724Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ab/b5/36c712098e6191d1b4e349304ef73a8d06aed77e56ceaac8c0a306c7bda1/jupyterlab_widgets-3.0.16-py3-none-any.whl", hash = "sha256:45fa36d9c6422cf2559198e4db481aa243c7a32d9926b500781c830c80f7ecf8", size = 914926, upload-time = "2025-11-01T21:11:28.008Z" },
-]
-
-[[package]]
-name = "kaleido"
-version = "0.1.0"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/22/f1/8069e549e88b74e28337acb8f5062f90da76734f81222a848be1f960de64/kaleido-0.1.0-py2.py3-none-macosx_10_10_x86_64.whl", hash = "sha256:6a73cd4a69609490f7e13e43e77724d254aef28b062babad120b32e6f32968c2", size = 69489943, upload-time = "2020-12-05T22:27:00.266Z" },
-    { url = "https://files.pythonhosted.org/packages/83/39/1c960a971f8d27e6aa4f1462dc048275c98bbb46f16871269ba941bb4a04/kaleido-0.1.0-py2.py3-none-manylinux1_x86_64.whl", hash = "sha256:8d0403b1eb21080e09d6d728c1ea7170fd4763c415fe89dfea6edf35ec36f8e7", size = 74638312, upload-time = "2020-12-05T22:27:28.101Z" },
-    { url = "https://files.pythonhosted.org/packages/88/50/f3750870a1a0cb2f404d0ab20dc70be969438732346269f263776cc5d810/kaleido-0.1.0-py2.py3-none-manylinux2014_aarch64.whl", hash = "sha256:f3de8e08764115f529351208d689ff80523aa1e9fc0018d342af857f94e3b44e", size = 77506746, upload-time = "2020-12-05T22:27:54.293Z" },
-    { url = "https://files.pythonhosted.org/packages/be/14/1e261ed51fba419ae987bd6726d9114077d5200d1e2b9c67cca66ca73293/kaleido-0.1.0-py2.py3-none-win32.whl", hash = "sha256:c583ed02b2c50a17e11ee3faec76f7d5f9898f8915f8877b583c5f83d0094e91", size = 53233667, upload-time = "2020-12-05T22:28:12.613Z" },
-    { url = "https://files.pythonhosted.org/packages/6f/4e/7ea7a4f7f2cb76d7d7fdac129bcb3fa051d02a538ecf6a05d69d0cf155bb/kaleido-0.1.0-py2.py3-none-win_amd64.whl", hash = "sha256:949e3fc01c56cdca0226e866277cfb5e1b4bf66b5d4045ca43a3211f61bc8446", size = 55954594, upload-time = "2020-12-05T22:28:25.423Z" },
 ]
 
 [[package]]
@@ -3664,7 +3661,6 @@ dependencies = [
     { name = "pycocotools" },
     { name = "pyparsing" },
     { name = "ray" },
-    { name = "rsrch-data" },
     { name = "ruamel-yaml" },
     { name = "safetensors" },
     { name = "scikit-learn" },
@@ -3696,7 +3692,6 @@ rl = [
 [package.dev-dependencies]
 dev = [
     { name = "furo" },
-    { name = "kaleido" },
     { name = "matplotlib" },
     { name = "myst-parser" },
     { name = "nbconvert" },
@@ -3705,6 +3700,7 @@ dev = [
     { name = "plotly" },
     { name = "poetry" },
     { name = "pre-commit" },
+    { name = "pydantic" },
     { name = "ruff" },
     { name = "semver" },
     { name = "sphinx" },
@@ -3712,6 +3708,7 @@ dev = [
     { name = "tbparse" },
     { name = "tensorboard-plugin-profile" },
     { name = "tomli" },
+    { name = "tyro" },
 ]
 
 [package.metadata]
@@ -3751,7 +3748,6 @@ requires-dist = [
     { name = "pycocotools", specifier = ">=2.0.8,<3.0.0" },
     { name = "pyparsing", specifier = "<3" },
     { name = "ray", specifier = ">=2.9.0,!=2.32.0,<3.0.0" },
-    { name = "rsrch-data", editable = "data" },
     { name = "ruamel-yaml", specifier = ">=0.18.5,<0.19.0" },
     { name = "safetensors", specifier = ">=0.5.2,<0.6.0" },
     { name = "scikit-learn", specifier = ">=1.6.1,<2.0.0" },
@@ -3770,7 +3766,6 @@ provides-extras = ["rl", "jax"]
 [package.metadata.requires-dev]
 dev = [
     { name = "furo", specifier = ">=2025.7.19,<2026" },
-    { name = "kaleido", specifier = "==0.1.0" },
     { name = "matplotlib", specifier = ">=3.8.3,<4" },
     { name = "myst-parser", specifier = ">=4.0.1,<5" },
     { name = "nbconvert", specifier = ">=7.3.1,<8" },
@@ -3779,6 +3774,7 @@ dev = [
     { name = "plotly", specifier = ">=5.15.0,<6" },
     { name = "poetry", specifier = ">=2.1.4,<3" },
     { name = "pre-commit", specifier = ">=4.3.0" },
+    { name = "pydantic", specifier = ">=2.12.5" },
     { name = "ruff", specifier = ">=0.12.7,<0.13" },
     { name = "semver", specifier = ">=3.0.2,<4" },
     { name = "sphinx", specifier = ">=8.1.3,<9" },
@@ -3786,43 +3782,7 @@ dev = [
     { name = "tbparse", specifier = ">=0.0.9,<0.0.10" },
     { name = "tensorboard-plugin-profile", specifier = ">=2.20.6,<3" },
     { name = "tomli", specifier = ">=2.0.1,<3" },
-]
-
-[[package]]
-name = "rsrch-data"
-version = "0.1.0"
-source = { editable = "data" }
-dependencies = [
-    { name = "h5py" },
-    { name = "numpy" },
-    { name = "pandas" },
-    { name = "pillow" },
-    { name = "pyarrow" },
-    { name = "pycocotools" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "h5py", specifier = ">=3.15.1" },
-    { name = "numpy", specifier = "<2" },
-    { name = "pandas", specifier = ">=2.3.3" },
-    { name = "pillow", specifier = ">=12.0.0" },
-    { name = "pyarrow", specifier = ">=22.0.0" },
-    { name = "pycocotools", specifier = ">=2.0.10" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "dvc", specifier = ">=3.63.0" },
-    { name = "dvc-s3", specifier = ">=3.2.2" },
-    { name = "huggingface-hub", specifier = ">=1.0.1" },
-    { name = "ipykernel", specifier = ">=7.0.1" },
-    { name = "jupyter", specifier = ">=1.1.1" },
-    { name = "kaggle", specifier = ">=1.7.4.5" },
-    { name = "lxml", specifier = ">=6.0.2" },
-    { name = "pre-commit", specifier = ">=4.5.1" },
-    { name = "ruff", specifier = ">=0.12.12" },
-    { name = "scipy", specifier = ">=1.15.3" },
+    { name = "tyro", specifier = ">=1.0.5" },
 ]
 
 [[package]]
@@ -4582,6 +4542,18 @@ wheels = [
 ]
 
 [[package]]
+name = "typeguard"
+version = "4.4.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c7/68/71c1a15b5f65f40e91b65da23b8224dad41349894535a97f63a52e462196/typeguard-4.4.4.tar.gz", hash = "sha256:3a7fd2dffb705d4d0efaed4306a704c89b9dee850b688f060a8b1615a79e5f74", size = 75203, upload-time = "2025-06-18T09:56:07.624Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1b/a9/e3aee762739c1d7528da1c3e06d518503f8b6c439c35549b53735ba52ead/typeguard-4.4.4-py3-none-any.whl", hash = "sha256:b5f562281b6bfa1f5492470464730ef001646128b180769880468bd84b68b09e", size = 34874, upload-time = "2025-06-18T09:56:05.999Z" },
+]
+
+[[package]]
 name = "typer-slim"
 version = "0.21.1"
 source = { registry = "https://pypi.org/simple" }
@@ -4622,6 +4594,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/55/e3/70399cb7dd41c10ac53367ae42139cf4b1ca5f36bb3dc6c9d33acdb43655/typing_inspection-0.4.2.tar.gz", hash = "sha256:ba561c48a67c5958007083d386c3295464928b01faa735ab8547c5692e87f464", size = 75949, upload-time = "2025-10-01T02:14:41.687Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/dc/9b/47798a6c91d8bdb567fe2698fe81e0c6b7cb7ef4d13da4114b41d239f65d/typing_inspection-0.4.2-py3-none-any.whl", hash = "sha256:4ed1cacbdc298c220f1bd249ed5287caa16f34d44ef4e9c3d0cbad5b521545e7", size = 14611, upload-time = "2025-10-01T02:14:40.154Z" },
+]
+
+[[package]]
+name = "tyro"
+version = "1.0.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "docstring-parser" },
+    { name = "typeguard" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8c/34/1e306bacd2917f694fef5aa21ccd9d39dfa6747ddbe7a0f5c9612c734259/tyro-1.0.5.tar.gz", hash = "sha256:5b28c23cc8e844f284286b1043d06be0e62f7acff6f2b1b5b5db75466c6802fc", size = 453403, upload-time = "2026-01-13T20:50:51.016Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/67/86/eef272685bc6c15a8f79178aa8c6e07d956f0f91d97fab5a4d8af707b21b/tyro-1.0.5-py3-none-any.whl", hash = "sha256:87fcba42a1136cdabef8776a456bb4a05c0d52b81ccc2529e65c75da059ff3cd", size = 181241, upload-time = "2026-01-13T20:50:49.597Z" },
 ]
 
 [[package]]
