@@ -61,6 +61,15 @@ jax = [
     "jax[cuda12] (>=0.5.3,<0.6.0)",
 ]
 
+[project.scripts]
+get_coco = "rsrch.data.coco.setup:main"
+get_cifar = "rsrch.data.cifar.setup:main"
+get_in1k = "rsrch.data.imagenet.setup:main"
+get_mnist = "rsrch.data.mnist.setup:main"
+get_nyu_depth_v2 = "rsrch.data.nyu_depth_v2.setup:main"
+get_open_images_v7 = "rsrch.data.open_images_v7.setup:main"
+get_voc = "rsrch.data.voc.setup:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

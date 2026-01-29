@@ -26,7 +26,7 @@ def download(
         with (
             open(dest, "wb") as file,
             tqdm(
-                desc=str(dest),
+                desc=f"{url} -> {dest}",
                 total=total,
                 unit="iB",
                 unit_scale=True,
