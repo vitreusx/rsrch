@@ -36,7 +36,7 @@ class Board:
         *,
         step: Step = None,
     ):
-        """Add a scalar value. Accepts numbers (also 0-d tensors.)"""
+        """Add a scalar value. Accepts numbers."""
 
     def add_image(
         self,
@@ -54,7 +54,7 @@ class Board:
         *,
         step: Step = None,
     ):
-        """Add a video. Accepts moviepy clips."""
+        """Add a video. Accepts `moviepy` clips."""
 
     def add_dict(
         self,

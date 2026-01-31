@@ -45,6 +45,7 @@ dependencies = [
     "tensorboardx>=2.6.4",
     "tensorboard>=2.20.0",
     "transformers>=2.3.0",
+    "mlflow>=3.9.0",
 ]
 
 [project.optional-dependencies]
@@ -138,6 +139,7 @@ ignore = [
     "BLE001",  # Do not catch blind exception
     "DTZ005",  # `datetime.datetime.now()` called without a `tz` argument
     "S603",    # `subprocess` call: check for execution of untrusted input
+    "S311",    # ... not suitable for cryptographic uses
 ]
 exclude = ["ext/*"]
 

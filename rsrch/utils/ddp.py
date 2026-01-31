@@ -1,5 +1,5 @@
 import os
-from typing import Callable, Literal, Sized, TypeVar
+from typing import Callable, Literal, Sized, TypeAlias, TypeVar
 
 import torch
 import torch.distributed
@@ -10,7 +10,7 @@ from torch.nn.parallel import DistributedDataParallel
 M = TypeVar("M")
 F = TypeVar("F")
 
-ReduceOpType = Literal[
+ReduceOpType: TypeAlias = Literal[
     "sum",
     "avg",
     "product",
@@ -86,7 +86,8 @@ class DDPHelper:
 
     def __init__(self):
         if "LOCAL_RANK" not in os.environ:
-            raise RuntimeError("DDPHelper requires LOCAL_RANK to be set.")
+            os.environ["LOCAL_RANK"] = 0
+            os.environ["WORLD_SIZE"] = 1
 
         local_rank = int(os.environ["LOCAL_RANK"])
         if torch.cuda.is_available():
@@ -98,7 +99,7 @@ class DDPHelper:
             device = "cpu"
 
         torch.distributed.init_process_group(backend=backend)
-        self.num_replicas = torch.distributed.get_world_size()
+        self.world_size = torch.distributed.get_world_size()
         self.rank = torch.distributed.get_rank()
         self.local_rank = local_rank
         self.device = torch.device(device)
@@ -109,10 +110,9 @@ class DDPHelper:
         model = DistributedDataParallel(model)
         return model
 
-    def state_dict(self, model: DistributedDataParallel) -> dict[str, Tensor]:
-        """Get a state dict for a wrapped model."""
-        unwrapped = model.module
-        return unwrapped.state_dict()
+    def unwrap(self, model: M) -> M:
+        """Unwrap a model."""
+        return model.module
 
     @property
     def is_master(self):
@@ -148,7 +148,7 @@ class DDPHelper:
         return DistributedSampler(
             sampler=sampler,
             set_epoch=set_epoch,
-            num_replicas=self.num_replicas,
+            num_replicas=self.world_size,
             rank=self.rank,
             drop_last=drop_last,
         )

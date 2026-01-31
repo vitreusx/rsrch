@@ -293,7 +293,7 @@ class Trainer:
         if not self.cfg.profile:
             return
 
-        if self.ddp.num_replicas > 1:
+        if self.ddp.world_size > 1:
             raise RuntimeError("Profiling is currently disabled for DDP.")
 
         activities = [ProfilerActivity.CPU]
