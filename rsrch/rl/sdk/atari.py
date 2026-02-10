@@ -275,7 +275,7 @@ class AtariSeq(Sequence):
 
 
 class BufferWrapper(data.Wrapper):
-    KEYS = ["obs", "act", "reward", "term", "trunc"]  # noqa: RUF012
+    KEYS = ("obs", "act", "reward", "term", "trunc")
 
     def __init__(
         self,

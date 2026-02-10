@@ -10,81 +10,100 @@ from rsrch.rl import data, gym
 from rsrch.rl.sdk import api
 
 
-class CastF:
+class ToTensorF:
+    """An operator for casting Numpy `np.ndarray`s to Torch tensors.
+
+    The semantics are as follows:
+    1. If the input is a Numpy array:
+        - If it's an image, it's normalized and converted to
+        channel-first format.
+        - Otherwise, it's cast to either `torch.float32` or `torch.long`,
+        depending on input dtype.
+    2. Dicts of arrays are converted to dicts of Tensors.
+    3. Lists of arrays are converted to lists of Tensors."""
+
     def __init__(self, space):
         self.space = space
         if isinstance(self.space, Mapping):
-            self.fs = {k: CastF(v) for k, v in self.space.items()}
+            self.fs = {k: ToTensorF(v) for k, v in self.space.items()}
         elif isinstance(self.space, Sequence):
-            self.fs = tuple(CastF(v) for v in self.space)
+            self.fs = tuple(ToTensorF(v) for v in self.space)
 
-    def __call__(self, x, batched: bool = False):  # noqa: PLR0912
+    def __call__(self, xs: list) -> list:
+        """Process a batch of elements."""
+
         if isinstance(self.space, Mapping):
-            x: Mapping
-            if batched:
-                elem = x[0]
-                y = {k: self.fs[k]([v[k] for v in x], True) for k in elem}
-                return [{k: v[i] for k, v in y.items()} for i in range(len(x))]
-            else:
-                return {k: self.fs[k](v) for k, v in x.items()}
-        elif isinstance(self.space, Sequence):
-            x: Sequence
-            if batched:
-                n = len(x[0])
-                y = tuple(self.fs[i]([v[i] for v in x]) for i in range(n))
-                return [tuple(v[i] for v in y) for i in range(len(x))]
-            else:
-                return tuple(f(v) for f, v in zip(self.fs, x, strict=False))
-        else:
-            if batched:
-                x = np.asarray(x)
+            # Extract values at key `k` to process them together
+            out = [{} for x in xs]
+            for k in self.space:
+                out_k = self.fs[k]([x[k] for x in xs])
+                for out_x, val_k in zip(out, out_k, strict=True):
+                    out_x[k] = [val_k]
 
+        elif isinstance(self.space, Sequence):
+            # Extract values at position `i` to process them together
+            n = len(xs[0])
+            out = tuple([] for x in xs)
+            for i in range(n):
+                out_i = self.fs[i]([x[i] for x in xs])
+                for out_x, val_i in zip(out, out_i, strict=True):
+                    out_x.append(val_i)
+            out = tuple(tuple(seq) for seq in out)
+        else:
+            xs = np.asarray(xs)
             if isinstance(self.space, spaces.np.Image):
-                d = 1 if batched else 0
-                if len(x.shape) == 2 + d:
-                    x = np.expand_dims(x, d)
+                if len(xs.shape) == 3:
+                    # [n, h, w] -> [n, 1, h, w]
+                    xs = np.expand_dims(xs, 1)
                 elif self.space.channel_last:
-                    x = np.moveaxis(x, -1, d)
+                    # [n, h, w, c] -> [n, c, h, w]
+                    xs = np.moveaxis(xs, -1, 1)
 
-                if x.dtype == np.uint8:
-                    x = x / 255.0
+                if xs.dtype == np.uint8:
+                    xs = xs / 255.0
 
-            dtype = torch.float32 if np.issubdtype(x.dtype, np.floating) else torch.long
-            if not x.flags["WRITEABLE"]:
-                x = x.copy()
-            return torch.as_tensor(x, dtype=dtype)
+            dtype = (
+                torch.float32 if np.issubdtype(xs.dtype, np.floating) else torch.long
+            )
+            out = torch.as_tensor(xs, dtype=dtype)
 
-    def inv(self, x, batched: bool = False):
+        return out
+
+    def inv(self, xs: list) -> list:
+        """Invert transformation on a batch of elements."""
+
         if isinstance(self.space, Mapping):
-            if not isinstance(x, Mapping):
-                raise TypeError("Must provide a mapping")
-            if batched:
-                elem = x[0]
-                return {k: self.fs[k].inv([v[k] for v in x], True) for k in elem}
-            else:
-                return {k: self.fs[k].inv(v) for k, v in x.items()}
-        elif isinstance(self.space, Sequence):
-            if not isinstance(x, Sequence):
-                raise TypeError("Must provide a sequence")
-            if batched:
-                n = len(x[0])
-                return tuple(self.fs[i].inv([v[i] for v in x], True) for i in range(n))
-            else:
-                return tuple(f.inv(v) for f, v in zip(self.fs, x, strict=False))
-        else:
-            if batched:
-                x = torch.as_tensor(x)
+            out = [{} for x in xs]
+            for k in self.space:
+                out_k = self.fs[k].inv([x[k] for x in xs])
+                for out_x, val_k in zip(out, out_k, strict=True):
+                    out_x[k] = [val_k]
 
+        elif isinstance(self.space, Sequence):
+            n = len(xs[0])
+            out = tuple([] for x in xs)
+            for i in range(n):
+                out_i = self.fs[i].inv([x[i] for x in xs])
+                for out_x, val_i in zip(out, out_i, strict=True):
+                    out_x.append(val_i)
+            out = tuple(tuple(seq) for seq in out)
+        else:
+            xs = torch.as_tensor(xs)
             if isinstance(self.space, spaces.np.Image):
-                d = 1 if batched else 0
-                x = x.squeeze(d) if x.shape[d] == 1 else x.moveaxis(d, -1)
+                if xs.shape[1] == 1:
+                    xs = torch.squeeze(xs, 1)
+                elif not self.space.channel_last:
+                    xs = torch.moveaxis(1, -1)
 
                 if self.space.dtype == np.uint8:
-                    x = (255.0 * x).astype(torch.uint8)
+                    xs = (255.0 * xs).to(torch.uint8)
 
-            return x.numpy(force=True).astype(self.space.dtype)
+            out = xs.numpy(force=True).astype(self.space.dtype)
+        return out
 
     def codomain(self, space):
+        """Determine the codomain of the operation, given an input
+        space."""
         if isinstance(space, Mapping):
             co = {k: self.fs[k].codomain(v) for k, v in space.items()}
             return spaces.torch.Dict(co)
@@ -110,12 +129,14 @@ class CastF:
 
 
 class LazySeq(Sequence):
+    KEYS = ("obs", "act", "reward", "term", "trunc")
+
     def __init__(
         self,
         seq: Sequence[dict],
         idxes: range,
-        obs_f: CastF,
-        act_f: CastF,
+        obs_f: ToTensorF,
+        act_f: ToTensorF,
     ):
         self.seq = seq
         self.obs_f = obs_f
@@ -131,22 +152,20 @@ class LazySeq(Sequence):
         if self._data is not None:
             return self._data
 
-        KEYS = ("obs", "act", "reward", "term", "trunc")  # noqa: N806
-
         data = defaultdict(list)
         assoc = defaultdict(list)
         for i, t in enumerate(self.idxes):
             step = self.seq[t]
-            for k in KEYS:
+            for k in self.KEYS:
                 if k in step:
                     assoc[k].append(i)
                     data[k].append(step[k])
 
-        data["obs"] = self.obs_f(data["obs"], batched=True)
-        data["act"] = self.act_f(data["act"], batched=True)
+        data["obs"] = self.obs_f(data["obs"])
+        data["act"] = self.act_f(data["act"])
 
         items = [{} for _ in self.idxes]
-        for k in KEYS:
+        for k in self.KEYS:
             for i, v in zip(assoc[k], data[k], strict=False):
                 items[i][k] = v
 
@@ -166,7 +185,12 @@ class LazySeq(Sequence):
 
 
 class TensorBufferWrapper(data.Wrapper):
-    def __init__(self, buf: data.Buffer, obs_f: CastF, act_f: CastF):
+    def __init__(
+        self,
+        buf: data.Buffer,
+        obs_f: ToTensorF,
+        act_f: ToTensorF,
+    ):
         super().__init__(buf)
         self.obs_f = obs_f
         self.act_f = act_f
@@ -182,22 +206,27 @@ class TensorBufferWrapper(data.Wrapper):
 
 
 class TensorVecAgent(gym.vector.AgentWrapper):
-    def __init__(self, agent: gym.vector.Agent, obs_f: CastF, act_f: CastF):
+    def __init__(
+        self,
+        agent: gym.vector.Agent,
+        obs_f: ToTensorF,
+        act_f: ToTensorF,
+    ):
         super().__init__(agent)
         self.obs_f = obs_f
         self.act_f = act_f
 
     def reset(self, idxes, obs_seq):
-        obs_seq = self.obs_f(obs_seq, batched=True)
+        obs_seq = self.obs_f(obs_seq)
         super().reset(idxes, obs_seq)
 
     def policy(self, idxes):
         act_seq: torch.Tensor = super().policy(idxes)
-        return self.act_f.inv(act_seq, batched=True)
+        return self.act_f.inv(act_seq)
 
     def step(self, idxes, act_seq, next_obs_seq):
-        act_seq = self.act_f(act_seq, batched=True)
-        next_obs_seq = self.obs_f(next_obs_seq, batched=True)
+        act_seq = self.act_f(act_seq)
+        next_obs_seq = self.obs_f(next_obs_seq)
         super().step(idxes, act_seq, next_obs_seq)
 
 
@@ -211,19 +240,13 @@ class ToTensor(api.SDK[T_obs, T_act]):
     Given an `SDK` operating on Numpy arrays, converts them to Torch tensors,
     possibly recursively - the SDK supports using dicts and tuples as observation
     and action types.
-
-    The conversions are performed in a following fashion:
-
-    - if the array is an image, it's normalized and permuted to make it channel-first.
-    - otherwise, only dtype casting is performed: floating dtypes to
-    `torch.float32`, and integral types to `torch.long`.
     """
 
     def __init__(self, sdk: api.SDK[T_obs, T_act]):
         self.sdk = sdk
-        self.obs_f = CastF(self.sdk.obs_space)
+        self.obs_f = ToTensorF(self.sdk.obs_space)
         self.obs_space = self.obs_f.codomain(self.sdk.obs_space)
-        self.act_f = CastF(self.sdk.act_space)
+        self.act_f = ToTensorF(self.sdk.act_space)
         self.act_space = self.act_f.codomain(self.sdk.act_space)
 
     def make_envs(self, num_envs: int, **kwargs):

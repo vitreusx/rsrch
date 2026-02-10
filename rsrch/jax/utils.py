@@ -3,7 +3,11 @@ from typing import Iterable
 import jax
 
 
-def key_seq(key: jax.Array) -> Iterable[jax.Array]:
+def key_seq(key: jax.Array | None) -> Iterable[jax.Array | None]:
+    """Get a sequence of keys for initializing JAX modules."""
     while True:
-        key, sub = jax.random.split(key)
-        yield sub
+        if key is None:
+            yield None
+        else:
+            key, sub = jax.random.split(key)
+            yield sub

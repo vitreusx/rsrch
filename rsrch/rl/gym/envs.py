@@ -5,7 +5,12 @@ from queue import Queue
 from typing import Any, Callable, Literal
 
 import cloudpickle
-import envpool
+
+from rsrch.utils import is_envpool_available
+
+if is_envpool_available():
+    import envpool
+
 import gymnasium as gym
 import numpy as np
 from PIL import Image
