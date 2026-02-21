@@ -1,45 +1,41 @@
 from collections import defaultdict
-from typing import Callable, Literal, Sequence, TypedDict
+from collections.abc import Iterable
+from typing import Any, Callable, Literal, Protocol, Sequence, TypedDict
 
 import numpy as np
-import torch
-from torch import Tensor
-from torch.utils.data import IterableDataset, Sampler
 
 from .data import Buffer
 
 
-def stack(batch: list[dict | Tensor]):
-    if isinstance(batch[0], dict):
-        return {k: stack([v[k] for v in batch]) for k in batch[0]}
-    else:
-        return torch.stack(batch)
+class StackFn(Protocol):
+    def __call__(self, batch: list) -> Any:
+        pass
 
 
-def unflatten(batch: dict | Tensor, shape):
-    if isinstance(batch, dict):
-        return {k: unflatten(batch[k], shape) for k in batch}
-    else:
-        return batch.reshape(*shape, *batch.shape[1:])
+class ReshapeFn(Protocol):
+    def __call__(self, array: Any, shape: tuple[int, ...]) -> Any:
+        pass
 
 
 class Data(TypedDict):
-    obs: dict | Tensor
-    act: dict | Tensor
-    reward: Tensor
-    term: Tensor
+    obs: Any
+    act: Any
+    reward: Any
+    term: Any
 
 
-class OffPolicyRLLoader(IterableDataset):
+class OffPolicyRLLoader(Iterable):
     """An RL data loader for off-policy algorithms."""
 
     def __init__(
         self,
         buf: Buffer,
-        sampler: Sampler,
+        sampler: Iterable[int],
         sampler_type: Literal["episodes", "slices"],
         batch_size: int,
         slice_len: int,
+        stack_fn: StackFn,
+        reshape_fn: ReshapeFn,
     ):
         """Create an off-policy RL loader.
 
@@ -50,6 +46,8 @@ class OffPolicyRLLoader(IterableDataset):
         :param batch_size: Batch size for the loader.
         :param slice_len: Length (as in, number of observations) for each slice in the
             batch.
+        :param stack_fn: Function to use for stacking arrays (of observations, actions
+            etc.)
         """
 
         super().__init__()
@@ -58,6 +56,8 @@ class OffPolicyRLLoader(IterableDataset):
         self.sampler_type = sampler_type
         self.batch_size = batch_size
         self.slice_len = slice_len
+        self.stack_fn = stack_fn
+        self.reshape_fn = reshape_fn
 
     def empty(self):
         if self.sampler_type == "episodes":
@@ -102,19 +102,19 @@ class OffPolicyRLLoader(IterableDataset):
                     act.append(batch[idx][t]["act"])
                     reward.append(batch[idx][t]["reward"])
 
-        obs = stack(obs)
-        obs = unflatten(obs, (self.slice_len, self.batch_size))
-        act = stack(act)
-        act = unflatten(act, (self.slice_len - 1, self.batch_size))
-        reward = torch.tensor(np.array(reward, dtype=np.float32))
-        reward = reward.reshape(self.slice_len - 1, self.batch_size)
-        term = torch.tensor(np.array(term))
-        term = term.reshape(self.slice_len, self.batch_size)
+        obs = self.stack_fn(obs)
+        obs = self.reshape_fn(obs, (self.slice_len, self.batch_size))
+        act = self.stack_fn(act)
+        act = self.reshape_fn(act, (self.slice_len - 1, self.batch_size))
+        reward = self.stack_fn(reward)
+        reward = self.reshape_fn(reward, (self.slice_len - 1, self.batch_size))
+        term = self.stack_fn(term)
+        term = self.reshape_fn(term, (self.slice_len, self.batch_size))
 
         return Data(obs=obs, act=act, reward=reward, term=term)
 
 
-class OnPolicyRLLoader(IterableDataset):
+class OnPolicyRLLoader(Iterable):
     """An RL data loader for on-policy algorithms."""
 
     def __init__(
@@ -123,6 +123,7 @@ class OnPolicyRLLoader(IterableDataset):
         temp_buf: Buffer,
         steps_per_batch: int,
         min_seq_len: int,
+        stack_fn: StackFn,
     ):
         """Create an on-policy RL loader.
 
@@ -136,7 +137,8 @@ class OnPolicyRLLoader(IterableDataset):
         :param min_seq_len: A minimum length of an RL sequence to return in the
             batch. Can be set to avoid returning sequences too small to be
             used in practice.
-
+        :param stack_fn: Function to use for stacking arrays (observations,
+            actions etc.)
         """
 
         super().__init__()
@@ -144,6 +146,7 @@ class OnPolicyRLLoader(IterableDataset):
         self.temp_buf = temp_buf
         self.steps_per_batch = steps_per_batch
         self.min_seq_len = min_seq_len
+        self.stack_fn = stack_fn
 
     def empty(self):
         return False
@@ -174,10 +177,10 @@ class OnPolicyRLLoader(IterableDataset):
                 if len(seq) < self.min_seq_len:
                     continue
 
-                obs = stack([step["obs"] for step in seq])
-                act = stack([step["act"] for step in seq[1:]])
-                reward = torch.tensor(np.array([step["reward"] for step in seq[1:]]))
-                term = torch.tensor(np.array([step.get("term", False) for step in seq]))
+                obs = self.stack_fn([step["obs"] for step in seq])
+                act = self.stack_fn([step["act"] for step in seq[1:]])
+                reward = self.stack_fn([step["reward"] for step in seq[1:]])
+                term = self.stack_fn([step.get("term", False) for step in seq])
 
                 batch.append(Data(obs=obs, act=act, reward=reward, term=term))
 

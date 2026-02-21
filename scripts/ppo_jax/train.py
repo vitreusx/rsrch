@@ -8,7 +8,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+import tyro
+from config import Config
 from pydantic import BaseModel
+from ruamel.yaml import YAML
 from tqdm.auto import tqdm
 
 from rsrch import rl
@@ -25,15 +28,14 @@ if TYPE_CHECKING:
     from rsrch.spaces import jax as spaces_jax
 
 
-class Flatten(eqx.Module):
-    def __init__(self, start_dim: int = 1, end_dim: int = -1):
-        super().__init__()
-        self.start_dim = start_dim
-        self.end_dim = end_dim
+class Apply(eqx.Module):
+    fn: Any
 
-    def __call__(self, x: jax.Array, *, key=None):  # noqa: ARG002
-        end_dim = range(len(x.shape))[self.end_dim]
-        return x.reshape(*x.shape[: self.start_dim], -1, *x.shape[end_dim + 1 :])
+    def __init__(self, fn):
+        self.fn = fn
+
+    def __call__(self, x: jax.Array, key=None):  # noqa: ARG002
+        return self.fn(x)
 
 
 class AtariEncoder(eqx.nn.Sequential):
@@ -48,14 +50,14 @@ class AtariEncoder(eqx.nn.Sequential):
         super().__init__(
             [
                 eqx.nn.Conv2d(space.num_channels, 32, 8, 4, key=next(keys)),
-                jax.nn.relu,
+                Apply(jax.nn.relu),
                 eqx.nn.Conv2d(32, 64, 4, 2, key=next(keys)),
-                jax.nn.relu,
+                Apply(jax.nn.relu),
                 eqx.nn.Conv2d(64, 64, 3, 1, key=next(keys)),
-                jax.nn.relu,
-                Flatten(),
+                Apply(jax.nn.relu),
+                Apply(jnp.ravel),
                 eqx.nn.Linear(64 * 7 * 7, self.out_features, key=next(keys)),
-                jax.nn.relu,
+                Apply(jax.nn.relu),
             ]
         )
 
@@ -79,7 +81,7 @@ class Actor(eqx.Module):
         )
 
     def __call__(self, obs: jax.Array, state: eqx.nn.State, *, key=None):
-        features = self.encoder(obs, state, key=key)
+        features, state = self.encoder(obs, state, key=key)
         logits = self.head(features)
         dist = Categorical(logits=logits)
         return dist, state
@@ -101,9 +103,9 @@ class Critic(eqx.Module):
         self.head = eqx.nn.Linear(self.encoder.out_features, 1, key=next(keys))
 
     def __call__(self, obs: jax.Array, state: eqx.nn.State, *, key=None):
-        features = self.encoder(obs, state, key=key)
-        values = self.head(features).ravel()
-        return values, state
+        features, state = self.encoder(obs, state, key=key)
+        value = self.head(features).reshape(())
+        return value, state
 
 
 class Agent(rl.VecAgent):
@@ -114,15 +116,17 @@ class Agent(rl.VecAgent):
         obs_space: spaces_jax.Array,
         act_space: spaces_jax.Array,
         mode: Literal["train", "val"] = "train",
-        *,
-        key: jax.Array,
+        key: jax.Array | None = None,
     ):
         super().__init__(obs_space, act_space)
         self.batch_actor = jax.jit(
             jax.vmap(actor, in_axes=(0, None), out_axes=(0, None))
         )
         self.state = state
-        self.keys = iter(key_seq(key))
+        if key is not None:
+            self.keys = iter(key_seq(key))
+        else:
+            self.keys = None
         self.mode = mode
         self._obs = None
 
@@ -207,13 +211,35 @@ def gen_adv_est(
     gamma: jax.Array,
     gae_lambda: float,
 ):
+    r"""Generalized Advantage Estimation (GAE).
+
+    :param reward: Array :math:`r_{1:L}` of shape :math:`(L)` of rewards obtained
+        upon reaching a state.
+    :param value: Array :math:`v_{0:L} of shape :math:`(L+1)` of value
+        estimates.
+    :param gamma: Array :math:`\gamma_{0:L}` of shape :math:`(L+1)` of the discount
+        values for each state. Usually, :math:`\gamma_t = \gamma` for
+        non-terminal states, and :math:`\gamma_t = 0` for terminal and
+        post-terminal states.
+    :param gae_lambda: :math:`\lambda` discount value.
+    """
+
     delta = (reward + gamma[1:] * value[1:]) - value[:-1]
-    adv = [delta[-1]]
-    for t in range(len(reward) - 1, 0, -1):
-        adv.append(delta[t - 1] + gae_lambda * gamma[t] * adv[-1])
-    adv.reverse()
-    adv = jnp.stack(adv)
+
+    def scan_fn(prev_adv, cur):
+        gamma, delta = cur
+        next_adv = delta + gae_lambda * gamma * prev_adv
+        return next_adv, next_adv
+
+    _, adv = jax.lax.scan(
+        scan_fn,
+        init=delta[-1],
+        xs=(gamma[1:-1], delta[:-1]),
+        reverse=True,
+    )
+    adv = jnp.concat((delta[-1:], adv))
     ret = value[:-1] + adv
+
     return adv, ret
 
 
@@ -261,14 +287,19 @@ class PPO:
         self.ent_coef = ent_coef
 
         self.actor = actor
-        self.critic = make_critic()
+        self.critic = make_critic(key=key)
         if custom_fwd is not None:
             self.ac_forward = custom_fwd
         else:
             self.ac_forward = self.default_ac_forward
 
-        self.actor = actor
-        self.critic = make_critic(key=key)
+        self.batch_ac_forward = eqx.filter_jit(
+            jax.vmap(
+                self.ac_forward,
+                in_axes=(None, None, 0, None, None),
+                out_axes=(0, 0, None),
+            )
+        )
 
         self.opt = opt
         models = (self.actor, self.critic)
@@ -278,6 +309,8 @@ class PPO:
         self.target_critic = target_critic
         if self.target_critic is not None:
             self.critic_t = make_critic(key=key)
+        else:
+            self.critic_t = None
 
     @staticmethod
     def default_ac_forward(
@@ -285,7 +318,6 @@ class PPO:
         critics: tuple[Critic, ...],
         obs: jax.Array,
         state: eqx.nn.State,
-        *,
         key: jax.Array | None = None,
     ):
         keys = iter(key_seq(key))
@@ -294,9 +326,8 @@ class PPO:
         for critic in critics:
             value, state = critic(obs, state, key=next(keys))
             values.append(value)
-        return policy, values, state
+        return policy, tuple(values), state
 
-    @eqx.filter_jit
     def preprocess(
         self,
         batch: list[RLSlices],
@@ -304,22 +335,18 @@ class PPO:
         *,
         key: jax.Array | None = None,
     ):
-        lengths = jnp.array([len(seq.obs for seq in batch)])
-        end = jnp.cumsum(lengths, 0)
-        start = end - lengths
-
         obs = jnp.concat([seq.obs[:-1] for seq in batch])
         all_obs = jnp.concat([seq.obs for seq in batch])
         act = jnp.concat([seq.act for seq in batch])
 
         if self.critic_t is None:
-            policy, (val,) = self.ac_forward(
-                self.actor, (self.critic,), all_obs, state=state, key=key
+            policy, (val,), _ = self.batch_ac_forward(
+                self.actor, (self.critic,), all_obs, state, key
             )
             val_t = val
         else:
-            policy, (val, val_t) = self.ac_forward(
-                self.actor, (self.critic, self.critic_t), state=state, key=key
+            policy, (val, val_t), _ = self.batch_ac_forward(
+                self.actor, (self.critic, self.critic_t), all_obs, state, key
             )
 
         act_for_logp = []
@@ -329,23 +356,30 @@ class PPO:
         logp = policy.log_prob(act_for_logp)
 
         logps, advs, rets, vals, weights = ([] for _ in range(5))
-        for idx, seq in enumerate(batch):
+        offset = 0
+
+        for seq in batch:
             cont = 1.0 - seq.term.astype(jnp.float32)
             seq_wt = jnp.concat([jnp.ones_like(cont[:1]), cont])
             seq_wt = jnp.cumprod(seq_wt, 0)
             weights.append(seq_wt[:-2])
 
-            gamma = self.gamma * cont
-            seq_val_t = val_t[start[idx] : end[idx]]
+            seq_len = len(seq.obs)
+            seq_val_t = val_t[offset : offset + seq_len]
+            seq_logp = logp[offset : offset + seq_len - 1]
+            seq_val = val[offset : offset + seq_len - 1]
+            offset += seq_len
+
+            logps.append(seq_logp)
+            vals.append(seq_val)
+
             reward = seq.reward
             if self.transform_reward is not None:
                 reward = self.transform_reward(reward)
+            gamma = self.gamma * cont
             adv, ret = gen_adv_est(reward, seq_val_t, gamma, self.gae_lambda)
             advs.append(adv)
             rets.append(ret)
-
-            logps.append(logp[start[idx] : end[idx] - 1])
-            vals.append(val[start[idx] : end[idx] - 1])
 
         logp = jnp.concat(logps)
         adv = jnp.concat(advs)
@@ -378,7 +412,7 @@ class PPO:
             actor, critic = models
             data, state, key = aux
 
-            new_policy, (new_val,), state = self.ac_forward(
+            new_policy, (new_val,), state = self.batch_ac_forward(
                 actor, (critic,), data.obs, state, key=key
             )
             new_logp = new_policy.log_prob(data.act)
@@ -440,9 +474,9 @@ class PPO:
                     weight=None if data.weight is None else data.weight[idxes],
                 )
 
-                loss, grads, (state, true_adv) = compute_loss(
-                    models=(actor, critic),
-                    aux=(minibatch, state, next(keys)),
+                (loss, (state, true_adv)), grads = compute_loss(
+                    (actor, critic),
+                    (minibatch, state, next(keys)),
                 )
 
                 updates, opt_state = opt.update(grads, opt_state, (actor, critic))
@@ -458,27 +492,11 @@ class PPO:
         )
 
 
-class Config(BaseModel):
-    env: sdk.Config
-    num_envs: int
-    seed: int
-    steps_per_batch: int
-    min_seq_len: int
-    adamw_lr: float
-    adamw_eps: float
-    # PPO config
-    update_epochs: int
-    mb_size: int | None
-    adv_norm: bool
-    clip_coef: float
-    clip_vloss: bool
-    gamma: float
-    gae_lambda: float
-    clip_grad: float | None
-    vf_coef: float
-    ent_coef: float
-    target_critic: polyak.Config
-    rew_transform: Literal["id", "clip", "sign"]
+def jax_stack(items: list):
+    if isinstance(items[0], jax.Array):
+        return jnp.stack(items)
+    else:
+        return jnp.asarray(items)
 
 
 class Trainer:
@@ -522,19 +540,13 @@ class Trainer:
             key=next(self.keys),
         )
 
-        self.opt = optax.adamw(
-            learning_rate=self.cfg.adamw_lr,
-            eps=self.cfg.adamw_eps,
-        )
-        params = eqx.filter((self.actor, self.ppo.critic), eqx.is_inexact_array)
-        self.opt_state = self.opt.init(params)
-
         self.train_agent = Agent(
             actor=self.actor,
             state=self.state,
             obs_space=self.sdk.obs_space,
             act_space=self.sdk.act_space,
             mode="train",
+            key=next(self.keys),
         )
 
         self.env_iter = iter(self.sdk.rollout(self.train_envs, self.train_agent))
@@ -546,6 +558,7 @@ class Trainer:
             temp_buf=self.sdk.wrap_buffer(data.Buffer()),
             steps_per_batch=self.cfg.steps_per_batch,
             min_seq_len=self.cfg.min_seq_len,
+            stack_fn=jax_stack,
         )
         self.train_iter = iter(self.train_loader)
 
@@ -554,7 +567,8 @@ class Trainer:
             state=self.state,
             obs_space=self.sdk.obs_space,
             act_space=self.sdk.act_space,
-            mode="train",
+            mode="val",
+            key=None,
         )
 
     def do_env_step(self):
@@ -583,6 +597,11 @@ class Trainer:
             "sign": jnp.sign,
         }
 
+        self.opt = optax.adamw(
+            learning_rate=self.cfg.adamw_lr,
+            eps=self.cfg.adamw_eps,
+        )
+
         self.ppo = PPO(
             actor=self.actor,
             make_critic=make_critic,
@@ -602,11 +621,16 @@ class Trainer:
             target_critic=self.cfg.target_critic,
         )
 
+        params = eqx.filter((self.actor, self.ppo.critic), eqx.is_inexact_array)
+        self.opt_state = self.opt.init(params)
+
     def do_train_step(self):
         batch = next(self.train_iter)
+        batch = [RLSlices(**seq) for seq in batch]
         data = self.ppo.preprocess(batch, self.state, key=next(self.keys))
         output = self.ppo.opt_step(
-            (self.actor, self.ppo.critic),
+            actor=self.actor,
+            critic=self.ppo.critic,
             opt=self.opt,
             opt_state=self.opt_state,
             data=data,
@@ -619,3 +643,23 @@ class Trainer:
         self.state = output.state
 
         self.exp.add_scalar("train/loss", output.loss)
+
+
+class Args(BaseModel):
+    config: str | None
+
+
+def main():
+    args = tyro.cli(Args)
+
+    yaml = YAML(typ="safe", pure=True)
+    with open(args.config) as f:
+        cfg_d = yaml.load(f)
+
+    cfg = Config(**cfg_d)
+    trainer = Trainer(cfg)
+    trainer.run()
+
+
+if __name__ == "__main__":
+    main()

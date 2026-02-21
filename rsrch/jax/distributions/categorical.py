@@ -8,7 +8,6 @@ class Categorical(eqx.Module):
     probs: jax.Array | None = None
     logits: jax.Array | None = None
     log_probs: jax.Array | None = None
-    event_dims: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -100,11 +99,13 @@ class Categorical(eqx.Module):
         return samples
 
     @jax.jit
+    @jax.vmap
     def log_prob(self, value: jax.Array):
         logits = self.get_logits()
         num_classes = logits.shape[-1]
         ce = optax.softmax_cross_entropy_with_integer_labels(
-            logits.reshape(-1, num_classes), value
+            logits.reshape(1, num_classes),
+            value[None],
         )
         return -ce.sum()
 

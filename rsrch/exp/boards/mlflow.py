@@ -12,6 +12,7 @@ from .base import Board, Step, StepMixin
 
 class MLflow(StepMixin, Board):
     def __init__(self, exp_name: str):
+        super().__init__()
         self.exp = mlflow.set_experiment(experiment_name=exp_name)
 
         # We temporarily revert to "true" RNG in order to make

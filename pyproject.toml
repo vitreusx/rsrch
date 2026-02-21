@@ -46,6 +46,7 @@ dependencies = [
     "tensorboard>=2.20.0",
     "transformers>=2.3.0",
     "mlflow>=3.9.0",
+    "pygame>=2.6.1",
 ]
 
 [project.optional-dependencies]
