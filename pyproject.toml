@@ -47,6 +47,8 @@ dependencies = [
     "transformers>=2.3.0",
     "mlflow>=3.9.0",
     "pygame>=2.6.1",
+    "rsrch-data",
+    "pre-commit>=4.5.1",
 ]
 
 [project.optional-dependencies]
@@ -55,6 +57,7 @@ rl = [
     "ale-py (>=0.10.2,<0.11.0)",
     "dm-control (==1.0.3)",
     "mujoco (==2.2.1)",
+    "envpool>=0.8.4,<0.9 ; sys_platform == 'linux'",
 ]
 jax = [
     "equinox (>=0.13.0,<0.14.0)",
@@ -62,15 +65,6 @@ jax = [
     "jax>=0.5.3,<0.6.0 ; sys_platform == 'darwin'",
     "optax (>=0.2.2,<0.3.0)",
 ]
-
-[project.scripts]
-get_coco = "rsrch.data.coco.setup:main"
-get_cifar = "rsrch.data.cifar.setup:main"
-get_in1k = "rsrch.data.imagenet.setup:main"
-get_mnist = "rsrch.data.mnist.setup:main"
-get_nyu_depth_v2 = "rsrch.data.nyu_depth_v2.setup:main"
-get_open_images_v7 = "rsrch.data.open_images_v7.setup:main"
-get_voc = "rsrch.data.voc.setup:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -145,10 +139,18 @@ ignore = [
 exclude = ["ext/*"]
 
 [tool.ruff.lint.per-file-ignores]
-"rsrch/types/tensorlike/*" = ["SLF001"] # Allow private member access
+"src/rsrch/types/tensorlike/*" = ["SLF001"] # Allow private member access
 
 [tool.uv]
 required-environments = [
     "sys_platform == 'linux' and platform_machine == 'x86_64'",
     "sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
+
+[tool.uv.workspace]
+members = [
+    "ext/rsrch_data",
+]
+
+[tool.uv.sources]
+rsrch-data = { workspace = true }

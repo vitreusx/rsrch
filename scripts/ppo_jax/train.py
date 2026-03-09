@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from functools import partial
 from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol
 
 import equinox as eqx
@@ -21,7 +22,6 @@ from rsrch.jax.distributions import Categorical
 from rsrch.jax.utils import key_seq
 from rsrch.rl import data, sdk
 from rsrch.rl.loaders import OnPolicyRLLoader
-from rsrch.rl.sdk.wrappers.jax import ToArray
 
 if TYPE_CHECKING:
     from rsrch.rl.utils import polyak
@@ -172,11 +172,11 @@ class PPOConfig(BaseModel):
 class ACForward(Protocol):
     def __call__(
         self,
+        /,
         actor: Actor,
         critics: tuple[Critic, ...],
         obs: jax.Array,
         state: eqx.nn.State,
-        *,
         key: jax.Array | None = None,
     ) -> tuple[Any, tuple[jax.Array, ...], eqx.nn.State]:
         pass
@@ -204,7 +204,6 @@ class PPOData(eqx.Module):
     weight: jax.Array | None
 
 
-@jax.jit
 def gen_adv_est(
     reward: jax.Array,
     value: jax.Array,
@@ -293,14 +292,6 @@ class PPO:
         else:
             self.ac_forward = self.default_ac_forward
 
-        self.batch_ac_forward = eqx.filter_jit(
-            jax.vmap(
-                self.ac_forward,
-                in_axes=(None, None, 0, None, None),
-                out_axes=(0, 0, None),
-            )
-        )
-
         self.opt = opt
         models = (self.actor, self.critic)
         params = eqx.filter(models, eqx.is_inexact_array)
@@ -313,6 +304,12 @@ class PPO:
             self.critic_t = None
 
     @staticmethod
+    @eqx.filter_jit
+    @partial(
+        eqx.filter_vmap,
+        in_axes=(None, None, 0, None, None),
+        out_axes=(0, 0, None),
+    )
     def default_ac_forward(
         actor: Actor,
         critics: tuple[Critic, ...],
@@ -340,13 +337,21 @@ class PPO:
         act = jnp.concat([seq.act for seq in batch])
 
         if self.critic_t is None:
-            policy, (val,), _ = self.batch_ac_forward(
-                self.actor, (self.critic,), all_obs, state, key
+            policy, (val,), _ = self.ac_forward(
+                self.actor,
+                (self.critic,),
+                all_obs,
+                state,
+                key,
             )
             val_t = val
         else:
-            policy, (val, val_t), _ = self.batch_ac_forward(
-                self.actor, (self.critic, self.critic_t), all_obs, state, key
+            policy, (val, val_t), _ = self.ac_forward(
+                self.actor,
+                (self.critic, self.critic_t),
+                all_obs,
+                state,
+                key,
             )
 
         act_for_logp = []
@@ -412,7 +417,7 @@ class PPO:
             actor, critic = models
             data, state, key = aux
 
-            new_policy, (new_val,), state = self.batch_ac_forward(
+            new_policy, (new_val,), state = self.ac_forward(
                 actor, (critic,), data.obs, state, key=key
             )
             new_logp = new_policy.log_prob(data.act)
@@ -525,7 +530,6 @@ class Trainer:
 
     def setup_envs(self):
         self.sdk = sdk.make(self.cfg.env)
-        self.sdk = ToArray(self.sdk)
 
         self.obs_space = self.sdk.obs_space
         self.act_space = self.sdk.act_space

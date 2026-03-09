@@ -1,0 +1,3 @@
+[submodule "ext/rsrch_data"]
+	path = ext/rsrch_data
+	url = https://github.com/vitreusx/datasets

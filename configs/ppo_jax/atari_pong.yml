@@ -11,7 +11,7 @@ env:
     term_on_life_loss: true
     time_limit: 108e3
     stack_num: 4
-    use_envpool: false
+    use_envpool: true
     repeat_action_probability: 0.25 # *-v5 setting
 num_envs: 1
 seed: 0
